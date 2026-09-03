@@ -1,0 +1,199 @@
+package agent
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/elecbug/kpl-v3/internal/model"
+)
+
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/health", s.handleHealth)
+	mux.HandleFunc("/api/v1/status", s.handleStatus)
+	mux.HandleFunc("/api/v1/nodes", s.handleNodes)
+	mux.HandleFunc("/api/v1/nodes/", s.handleNodeAction)
+	mux.HandleFunc("/api/v1/telemetry", s.handleTelemetry)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if s.config.Token != "" && r.Method != http.MethodGet && r.Header.Get("Authorization") != "Bearer "+s.config.Token {
+			writeError(w, http.StatusUnauthorized, "valid bearer token required")
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "agentId": s.config.ID})
+}
+
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, model.AgentHeartbeat{
+		Agent: model.Agent{ID: s.config.ID, Name: s.config.Name, URL: s.config.AdvertiseURL, Capacity: s.config.Capacity, ActiveNodes: activeNodeCount(s.nodes()), State: model.AgentOnline, StartedAt: s.startedAt, LastSeen: time.Now().UTC()},
+		Nodes: s.nodes(),
+	})
+}
+
+func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, s.nodes())
+	case http.MethodPost:
+		var request model.CreateNodeRequest
+		if err := decodeJSON(w, r, &request); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		node, err := s.createNode(context.Background(), request)
+		if err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, node)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/nodes/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) == 1 && r.Method == http.MethodDelete {
+		if err := s.stopNode(parts[0]); err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	if len(parts) != 2 || parts[0] == "" {
+		http.NotFound(w, r)
+		return
+	}
+	switch parts[1] {
+	case "status":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w)
+			return
+		}
+		var node model.Node
+		if err := decodeJSON(w, r, &node); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if node.ID != parts[0] {
+			writeError(w, http.StatusBadRequest, "node id does not match path")
+			return
+		}
+		if err := s.updateNode(node); err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	case "publish":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w)
+			return
+		}
+		var request model.PublishRequest
+		if err := decodeJSON(w, r, &request); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := s.proxyPublish(r.Context(), parts[0], request); err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (s *Server) proxyPublish(ctx context.Context, nodeID string, request model.PublishRequest) error {
+	s.mu.RLock()
+	proc, ok := s.processes[nodeID]
+	s.mu.RUnlock()
+	if !ok || proc.node.State != model.NodeReady {
+		return fmt.Errorf("node %q is not ready", nodeID)
+	}
+	data, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, proc.apiURL+"/publish", bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if s.config.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+s.config.Token)
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		message, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("peer returned %s: %s", resp.Status, strings.TrimSpace(string(message)))
+	}
+	return nil
+}
+
+func (s *Server) handleTelemetry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	var batch model.EventBatch
+	if err := decodeJSON(w, r, &batch); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(batch.Events) > 5000 {
+		writeError(w, http.StatusRequestEntityTooLarge, "event batch cannot exceed 5000 events")
+		return
+	}
+	s.enqueueEvents(batch)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("invalid JSON: %w", err)
+	}
+	return nil
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func methodNotAllowed(w http.ResponseWriter) {
+	writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+}

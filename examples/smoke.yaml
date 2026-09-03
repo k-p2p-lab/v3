@@ -1,0 +1,65 @@
+version: 1
+name: gossip-smoke
+seed: 42
+
+phases:
+  - name: boot nodes
+    action: join
+    group: boot
+    role: boot
+    count: 2
+    interval:
+      model: fixed
+      value: 300ms
+    node:
+      topics: [kpl/default]
+
+  - name: boot barrier
+    action: wait-ready
+    group: boot
+    readyRatio: 1
+    timeout: 45s
+
+  - name: worker nodes
+    action: join
+    group: worker
+    role: worker
+    count: 12
+    interval:
+      model: exponential
+      mean: 250ms
+    lifetime:
+      model: pareto
+      xm: 45s
+      alpha: 2.5
+      max: 3m
+    node:
+      topics: [kpl/default]
+      d: 6
+      dLow: 4
+      dHigh: 12
+      dOut: 2
+      dLazy: 6
+      heartbeat: 1s
+
+  - name: mesh barrier
+    action: wait-ready
+    group: worker
+    readyRatio: 0.9
+    timeout: 60s
+
+  - name: publish sample
+    action: publish
+    group: worker
+    count: 10
+    payloadSize: 1024
+    interval:
+      model: fixed
+      value: 1s
+
+  - name: settle
+    action: wait
+    duration: 5s
+
+  - name: cleanup
+    action: stop-all

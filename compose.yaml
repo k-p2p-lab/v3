@@ -1,0 +1,71 @@
+services:
+  controller:
+    build: .
+    command: ["controller", "--listen", ":8080", "--data-dir", "/var/lib/kpl/data"]
+    environment:
+      KPL_API_TOKEN: "${KPL_API_TOKEN:-}"
+    ports:
+      - "8080:8080"
+    volumes:
+      - controller-data:/var/lib/kpl/data
+    networks: [control]
+    restart: unless-stopped
+
+  agent-a:
+    build: .
+    command:
+      - agent
+      - --id
+      - agent-a
+      - --name
+      - Seoul A
+      - --listen
+      - :8090
+      - --advertise-url
+      - http://agent-a:8090
+      - --self-url
+      - http://127.0.0.1:8090
+      - --controller-url
+      - http://controller:8080
+      - --capacity
+      - "50"
+      - --data-dir
+      - /var/lib/kpl/agent
+    environment:
+      KPL_API_TOKEN: "${KPL_API_TOKEN:-}"
+    depends_on: [controller]
+    networks: [control, data-plane]
+    restart: unless-stopped
+
+  agent-b:
+    build: .
+    command:
+      - agent
+      - --id
+      - agent-b
+      - --name
+      - Seoul B
+      - --listen
+      - :8090
+      - --advertise-url
+      - http://agent-b:8090
+      - --self-url
+      - http://127.0.0.1:8090
+      - --controller-url
+      - http://controller:8080
+      - --capacity
+      - "50"
+      - --data-dir
+      - /var/lib/kpl/agent
+    environment:
+      KPL_API_TOKEN: "${KPL_API_TOKEN:-}"
+    depends_on: [controller]
+    networks: [control, data-plane]
+    restart: unless-stopped
+
+networks:
+  control:
+  data-plane:
+
+volumes:
+  controller-data:

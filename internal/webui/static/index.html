@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="K-P2PLab 에이전트와 GossipSub 네트워크 실험 상태를 실시간으로 관측합니다.">
+  <title>K-P2PLab Control Room</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-block">
+      <div class="brand-mark" aria-hidden="true">K3</div>
+      <div>
+        <h1>K-P2PLab</h1>
+        <p>Control Room</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span class="connection-state" id="connectionState"><i></i> 연결 중</span>
+      <time id="updatedAt">—</time>
+      <button class="primary-button" id="openScenario" type="button">실험 실행</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="metric-grid" aria-label="클러스터 핵심 지표">
+      <article class="metric-card accent-cyan">
+        <span>온라인 에이전트</span>
+        <strong id="agentMetric">0 / 0</strong>
+        <small id="capacityMetric">가용 슬롯 0</small>
+      </article>
+      <article class="metric-card accent-green">
+        <span>준비된 피어</span>
+        <strong id="peerMetric">0</strong>
+        <small id="connectionMetric">연결 0개</small>
+      </article>
+      <article class="metric-card accent-amber">
+        <span>전파 지연 P95</span>
+        <strong id="latencyMetric">—</strong>
+        <small id="averageLatencyMetric">평균 —</small>
+      </article>
+      <article class="metric-card accent-violet">
+        <span>도달률</span>
+        <strong id="reachMetric">—</strong>
+        <small id="deliveryMetric">전달 0 · 중복 0</small>
+      </article>
+    </section>
+
+    <section class="workspace-grid">
+      <article class="panel topology-panel">
+        <header class="panel-header">
+          <div>
+            <p class="eyebrow">LIVE TOPOLOGY</p>
+            <h2>네트워크 상황</h2>
+          </div>
+          <div class="legend" aria-label="노드 상태 범례">
+            <span><i class="legend-dot boot"></i>Boot</span>
+            <span><i class="legend-dot ready"></i>Worker</span>
+            <span><i class="legend-dot issue"></i>Issue</span>
+          </div>
+        </header>
+        <div class="topology-stage" id="topologyStage">
+          <svg id="topology" role="img" aria-label="피어 연결 토폴로지"></svg>
+          <div class="empty-state" id="topologyEmpty">
+            <strong>관측 중인 피어가 없습니다</strong>
+            <span>에이전트를 연결하거나 실험을 실행하면 토폴로지가 표시됩니다.</span>
+          </div>
+        </div>
+      </article>
+
+      <aside class="panel run-panel">
+        <header class="panel-header">
+          <div>
+            <p class="eyebrow">EXPERIMENTS</p>
+            <h2>실험 진행</h2>
+          </div>
+          <span class="count-badge" id="runCount">0</span>
+        </header>
+        <div class="run-list" id="runList">
+          <div class="empty-copy">실행 기록이 없습니다.</div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="detail-grid">
+      <article class="panel agents-panel">
+        <header class="panel-header">
+          <div>
+            <p class="eyebrow">FLEET</p>
+            <h2>에이전트 상태</h2>
+          </div>
+        </header>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>에이전트</th><th>상태</th><th>호스트</th><th>피어</th><th>사용률</th><th>마지막 확인</th></tr></thead>
+            <tbody id="agentRows"><tr><td colspan="6" class="empty-cell">등록된 에이전트가 없습니다.</td></tr></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="panel events-panel">
+        <header class="panel-header">
+          <div>
+            <p class="eyebrow">EVENT STREAM</p>
+            <h2>최근 네트워크 이벤트</h2>
+          </div>
+        </header>
+        <ol class="event-list" id="eventList">
+          <li class="empty-copy">수집된 이벤트가 없습니다.</li>
+        </ol>
+      </article>
+    </section>
+  </main>
+
+  <dialog id="scenarioDialog">
+    <form method="dialog" class="dialog-shell" id="scenarioForm">
+      <header>
+        <div>
+          <p class="eyebrow">NEW RUN</p>
+          <h2>시나리오 실행</h2>
+        </div>
+        <button class="icon-button" value="cancel" aria-label="닫기" type="submit">×</button>
+      </header>
+      <label for="scenarioText">YAML 시나리오</label>
+      <textarea id="scenarioText" spellcheck="false"></textarea>
+      <label for="apiToken">API 토큰 <small>Controller에 토큰을 설정한 경우에만 입력</small></label>
+      <input id="apiToken" type="password" autocomplete="off" placeholder="선택 사항">
+      <footer>
+        <span id="scenarioError" role="alert"></span>
+        <button class="secondary-button" value="cancel" type="submit">취소</button>
+        <button class="primary-button" id="runScenario" type="button">실행</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
