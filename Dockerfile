@@ -6,7 +6,10 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/kpl ./cmd/kpl
 
-FROM alpine:3.22
+FROM builder AS test
+RUN CGO_ENABLED=0 go test -buildvcs=false ./... -timeout 120s
+
+FROM alpine:3.22 AS runtime
 RUN apk add --no-cache ca-certificates tzdata docker-cli iproute2 iproute2-tc \
     && addgroup -S kpl \
     && adduser -S -G kpl kpl

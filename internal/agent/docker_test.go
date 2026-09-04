@@ -114,9 +114,17 @@ func TestDockerCLIHelper(t *testing.T) {
 		}
 		fmt.Println(code)
 	case "logs":
-		fmt.Fprint(os.Stderr, "tc: specified qdisc kind is unknown")
+		if count, _ := strconv.Atoi(os.Getenv("KPL_DOCKER_LOG_BYTES")); count > 0 {
+			fmt.Print(strings.Repeat("x", count))
+		} else {
+			fmt.Fprint(os.Stderr, "tc: specified qdisc kind is unknown")
+		}
 	case "ps":
 		fmt.Print(os.Getenv("KPL_DOCKER_PS"))
+		count, _ := strconv.Atoi(os.Getenv("KPL_DOCKER_PS_COUNT"))
+		for i := 0; i < count; i++ {
+			fmt.Printf("%064x\n", i)
+		}
 	case "rm":
 		if os.Getenv("KPL_DOCKER_MISSING") == "1" {
 			fmt.Fprint(os.Stderr, "Error response from daemon: No such container: "+args[len(args)-1])
@@ -457,6 +465,7 @@ func TestDockerCheckRejectsSharedNetworkAndNonAttachableOverlay(t *testing.T) {
 		{"host", "host", "", false},
 		{"builtin", "bridge", "", false},
 		{"builtin-id", "network-id", `[{"Name":"bridge","Driver":"bridge"}]`, false},
+		{"missing-name", "network-id", `[{"Driver":"bridge"}]`, false},
 		{"non-attachable", "kpl-v3-peers", `[{"Name":"kpl-v3-peers","Driver":"overlay","Attachable":false}]`, false},
 		{"host-driver", "kpl-v3-peers", `[{"Name":"kpl-v3-peers","Driver":"host"}]`, false},
 	} {
@@ -468,6 +477,42 @@ func TestDockerCheckRejectsSharedNetworkAndNonAttachableOverlay(t *testing.T) {
 				t.Fatalf("check error = %v, valid = %v", err, test.valid)
 			}
 		})
+	}
+}
+
+func TestDockerNetworkIDResolvesForCreationAndReconciliation(t *testing.T) {
+	d, logPath := fakeDocker(t, nil)
+	d.network = strings.Repeat("a", 64)
+	if err := d.check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if d.network != "kpl-v3-peers" {
+		t.Fatalf("network identity was not resolved: %q", d.network)
+	}
+	node, config := dockerTestConfig(t, false)
+	_, apiURL, err := d.create(context.Background(), node, config)
+	if err != nil || apiURL != "http://172.25.0.8:18000" {
+		t.Fatalf("create using network ID = %q, %v", apiURL, err)
+	}
+	if err := d.removeAgentContainers(context.Background(), node.AgentID); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range dockerCalls(t, logPath) {
+		joined := strings.Join(call.Args, " ")
+		switch call.Args[0] {
+		case "network":
+			if len(call.Args) != 5 || call.Args[2] != "--format" || strings.Contains(call.Args[3], ".Containers") {
+				t.Fatalf("network check must select metadata without the growing container inventory: %v", call.Args)
+			}
+		case "create":
+			if !strings.Contains(joined, "--network kpl-v3-peers") || !strings.Contains(joined, "--label io.kpl.network=kpl-v3-peers") {
+				t.Fatalf("create did not use canonical network identity: %v", call.Args)
+			}
+		case "ps":
+			if !strings.Contains(joined, "--filter label=io.kpl.network=kpl-v3-peers") {
+				t.Fatalf("reconciliation did not use canonical network identity: %v", call.Args)
+			}
+		}
 	}
 }
 
@@ -485,5 +530,44 @@ func TestDockerReconcileOnlyListsManagedAgentContainers(t *testing.T) {
 	}
 	if calls[1].Args[2] != fakeContainerID {
 		t.Fatalf("remove args = %v", calls[1].Args)
+	}
+}
+
+func TestDockerReconcileInventoryExceedsDiagnosticOutputLimit(t *testing.T) {
+	const count = 600 // 39 KB of full IDs exceeds the 32 KiB diagnostic limit.
+	d, _ := fakeDocker(t, map[string]string{"PS_COUNT": strconv.Itoa(count)})
+	ids, err := d.agentContainerIDs(context.Background(), "agent-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != count {
+		t.Fatalf("container inventory was truncated: got %d IDs, want %d", len(ids), count)
+	}
+	for i, id := range ids {
+		if want := fmt.Sprintf("%064x", i); id != want {
+			t.Fatalf("inventory ID %d = %q, want %q", i, id, want)
+		}
+	}
+}
+
+func TestDockerReconcileRejectsMalformedInventoryBeforeRemovingPeers(t *testing.T) {
+	d, logPath := fakeDocker(t, map[string]string{"PS": fakeContainerID + "\ntruncated-id\n"})
+	err := d.removeAgentContainers(context.Background(), "agent-a")
+	if err == nil || !strings.Contains(err.Error(), "invalid container ID") {
+		t.Fatalf("malformed inventory error = %v", err)
+	}
+	if calls := dockerCalls(t, logPath); len(calls) != 1 || calls[0].Args[0] != "ps" {
+		t.Fatalf("malformed inventory caused partial deletion: %v", calls)
+	}
+}
+
+func TestDockerPeerLogsRemainBounded(t *testing.T) {
+	d, _ := fakeDocker(t, map[string]string{"LOG_BYTES": "65536"})
+	output, err := d.run(context.Background(), nil, "logs", "--tail", "30", fakeContainerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(output) != 32*1024 {
+		t.Fatalf("peer logs length = %d, want diagnostic limit 32768", len(output))
 	}
 }

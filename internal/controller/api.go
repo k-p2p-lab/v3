@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -16,9 +17,23 @@ import (
 )
 
 func (s *Server) Run(ctx context.Context) error {
+	if err := prepareDataDir(s.config.DataDir); err != nil {
+		return err
+	}
+	listener, err := net.Listen("tcp", s.config.Listen)
+	if err != nil {
+		return err
+	}
+	return s.serve(ctx, listener)
+}
+
+func (s *Server) serve(ctx context.Context, listener net.Listener) error {
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 	server := &http.Server{
 		Addr:              s.config.Listen,
-		Handler:           s.Handler(ctx),
+		Handler:           s.Handler(runCtx),
+		BaseContext:       func(net.Listener) context.Context { return runCtx },
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      0,
@@ -29,25 +44,44 @@ func (s *Server) Run(ctx context.Context) error {
 		defer ticker.Stop()
 		for {
 			select {
-			case <-ctx.Done():
+			case <-runCtx.Done():
 				return
 			case <-ticker.C:
 				s.state.markStaleAgents(10 * time.Second)
 			}
 		}
 	}()
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
-	}()
 	s.logger.Info("controller listening", "address", s.config.Listen)
-	err := server.ListenAndServe()
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
+	served := make(chan error, 1)
+	go func() { served <- server.Serve(listener) }()
+	var err error
+	select {
+	case err = <-served:
+	case <-runCtx.Done():
 	}
-	return err
+	// Close admission before waiting: no concurrent POST may add a run after
+	// Wait starts, including requests already accepted by the HTTP listener.
+	s.cancelMu.Lock()
+	s.shuttingDown = true
+	for _, cancel := range s.cancels {
+		cancel()
+	}
+	s.cancelMu.Unlock()
+	cancelRun()
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownErr := server.Shutdown(shutdownCtx)
+	cancelShutdown()
+	if shutdownErr != nil {
+		_ = server.Close()
+	}
+	// Scenario cancellation fences Agent creates, removes peers, and persists
+	// the final experiment state. Returning sooner would let main exit while
+	// those goroutines still own resources, especially after Linux SIGTERM.
+	s.runs.Wait()
+	if errors.Is(err, http.ErrServerClosed) {
+		err = nil
+	}
+	return errors.Join(err, shutdownErr)
 }
 
 func (s *Server) Handler(ctx context.Context) http.Handler {
@@ -230,6 +264,12 @@ func (s *Server) handleExperiments(ctx context.Context) http.HandlerFunc {
 		case http.MethodGet:
 			writeJSON(w, http.StatusOK, s.state.snapshot().Experiments)
 		case http.MethodPost:
+			// Cancel a slow upload immediately during shutdown; canceling a
+			// request context alone does not unblock a server-side body Read.
+			stopDeadline := context.AfterFunc(ctx, func() {
+				_ = http.NewResponseController(w).SetReadDeadline(time.Now())
+			})
+			defer stopDeadline()
 			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 			raw, err := io.ReadAll(r.Body)
 			if err != nil {

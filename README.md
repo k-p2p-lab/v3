@@ -27,6 +27,8 @@ Controller ─── scenario state machine / registry / event store / dashboard
 
 ## Quick start
 
+Linux is the deployment target. See the [Linux deployment guide (Korean)](docs/linux-deployment.md) for kernel checks, remote access, permissions, and graceful shutdown. Run `sh scripts/check-linux.sh` on the Linux host after building the image; `make test-linux` runs the test suite inside Linux.
+
 Docker Engine with Linux containers and Docker Compose is the recommended setup. Compose builds the shared `kpl-v3:local` image and starts the Controller and two Agents on the `kpl-v3-peers` network. Agents create Peer containers on that same network when an experiment runs.
 
 ```bash
@@ -34,6 +36,8 @@ docker compose up --build
 ```
 
 Open `http://localhost:8080` and select **실험 실행** (Run experiment) to run the default smoke scenario. To protect mutating API operations, set `KPL_API_TOKEN` before starting the stack and enter the same value in the dashboard's run dialog.
+
+All UI ports bind to localhost by default. Use SSH forwarding for a remote Linux server, or explicitly set `KPL_BIND_ADDRESS`/`KPL_HTTP_PORT` for the Controller. For shutdown, `make stop` keeps Agents available while the Controller cancels experiments and removes Peers.
 
 ```bash
 export KPL_API_TOKEN='replace-me'

@@ -11,7 +11,10 @@ import (
 )
 
 // Apply impairments before opening any P2P connections. Process mode must never
-// change the shared host (or Agent container) network namespace.
+// change the shared host (or Agent container) network namespace. The Agent's
+// Docker runtime must validate the network driver and create a private peer
+// namespace: /.dockerenv alone does not distinguish --network=host or shared
+// container namespaces from an isolated container.
 func prepareNetwork(ctx context.Context, config model.PeerProcessConfig) error {
 	if err := config.NodeConfig.WithDefaults().Validate(); err != nil {
 		return fmt.Errorf("validate peer config before network setup: %w", err)

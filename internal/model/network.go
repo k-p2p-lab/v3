@@ -56,6 +56,12 @@ func (c NetworkConfig) Validate() error {
 	if err != nil {
 		return err
 	}
+	// Linux netem's tabledist() uses a signed 32-bit nanosecond jitter.
+	// netem_change() silently clamps larger values even when tc accepts them.
+	// Reject them here so the effective impairment matches experiment metadata.
+	if jitter > time.Duration(math.MaxInt32) {
+		return fmt.Errorf("jitter must not exceed %dns (Linux netem limit)", int64(math.MaxInt32))
+	}
 	if c.DelayDistribution != nil {
 		if c.Delay != "" {
 			return fmt.Errorf("delay and delayDistribution are mutually exclusive")

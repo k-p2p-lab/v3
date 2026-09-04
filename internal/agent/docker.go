@@ -65,7 +65,10 @@ func (d *dockerRuntime) check(ctx context.Context) error {
 	if strings.TrimSpace(string(output)) != "linux" {
 		return fmt.Errorf("Docker peer image %q must be a Linux image", d.image)
 	}
-	output, err = d.run(ctx, nil, "network", "inspect", d.network)
+	// Full network inspection includes every attached container. Select only
+	// startup requirements so large experiments fit the diagnostic output limit.
+	networkFormat := `[{"Name":{{json .Name}},"Driver":{{json .Driver}},"Attachable":{{json .Attachable}}}]`
+	output, err = d.run(ctx, nil, "network", "inspect", "--format", networkFormat, d.network)
 	if err != nil {
 		return fmt.Errorf("inspect peer network %q (create it first): %w", d.network, err)
 	}
@@ -78,12 +81,16 @@ func (d *dockerRuntime) check(ctx context.Context) error {
 		return fmt.Errorf("invalid Docker network inspect response for %q", d.network)
 	}
 	network := networks[0]
-	if network.Name == "bridge" || (network.Driver != "bridge" && network.Driver != "overlay") {
+	if !dockerNetworkName.MatchString(network.Name) || network.Name == "bridge" || (network.Driver != "bridge" && network.Driver != "overlay") {
 		return fmt.Errorf("peer network %q must use a user-defined bridge or overlay driver", d.network)
 	}
 	if network.Driver == "overlay" && !network.Attachable {
 		return fmt.Errorf("peer overlay network %q must be attachable", d.network)
 	}
+	// Docker accepts a network ID as well as a name, but container inspection
+	// keys NetworkSettings.Networks by canonical name. Use that same identity
+	// for creation, address lookup and reconciliation labels.
+	d.network = network.Name
 	return nil
 }
 
@@ -264,22 +271,38 @@ func (d *dockerRuntime) waitUntilRemoved(ctx context.Context, id string) error {
 // removeAgentContainers reclaims peers left behind by an Agent crash. Agent IDs
 // must be unique for all Agents using the same Docker daemon and peer network.
 func (d *dockerRuntime) removeAgentContainers(ctx context.Context, agentID string) error {
-	if agentID == "" {
-		return fmt.Errorf("agent ID is required for Docker reconciliation")
-	}
-	output, err := d.run(ctx, nil, "ps", "--all", "--quiet", "--no-trunc",
-		"--filter", "label="+managedContainerLabel, "--filter", "label=io.kpl.agent="+agentID,
-		"--filter", "label=io.kpl.network="+d.network)
+	ids, err := d.agentContainerIDs(ctx, agentID)
 	if err != nil {
-		return fmt.Errorf("list previous Agent containers: %w", err)
+		return err
 	}
 	var failures []error
-	for _, id := range strings.Fields(string(output)) {
+	for _, id := range ids {
 		if err := d.remove(ctx, id); err != nil {
 			failures = append(failures, err)
 		}
 	}
 	return errors.Join(failures...)
+}
+
+func (d *dockerRuntime) agentContainerIDs(ctx context.Context, agentID string) ([]string, error) {
+	if agentID == "" {
+		return nil, fmt.Errorf("agent ID is required for Docker reconciliation")
+	}
+	// A large experiment can leave more IDs than the diagnostic output limit.
+	// Collect the complete scoped inventory so a restart reclaims every peer.
+	output, err := d.runWithOutput(ctx, nil, &bytes.Buffer{}, "ps", "--all", "--quiet", "--no-trunc",
+		"--filter", "label="+managedContainerLabel, "--filter", "label=io.kpl.agent="+agentID,
+		"--filter", "label=io.kpl.network="+d.network)
+	if err != nil {
+		return nil, fmt.Errorf("list previous Agent containers: %w", err)
+	}
+	ids := strings.Fields(string(output))
+	for _, id := range ids {
+		if !dockerContainerID.MatchString(id) {
+			return nil, fmt.Errorf("Docker container inventory returned an invalid container ID")
+		}
+	}
+	return ids, nil
 }
 
 func peerContainerName(node model.Node) (string, error) {
@@ -310,30 +333,40 @@ func peerConfigArchive(data []byte) ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// CLI output is bounded so a noisy Docker daemon or peer cannot grow the Agent
-// indefinitely. The command still drains output after the limit is reached.
-type limitedDockerOutput struct{ bytes.Buffer }
+// Diagnostic CLI output is bounded so a noisy Docker daemon or peer cannot grow
+// the Agent indefinitely. Keep the buffer private: embedding it exposes
+// io.ReaderFrom, allowing io.Copy in os/exec to bypass the Write limit.
+type limitedDockerOutput struct{ buffer bytes.Buffer }
+
+func (b *limitedDockerOutput) Bytes() []byte { return b.buffer.Bytes() }
 
 func (b *limitedDockerOutput) Write(data []byte) (int, error) {
 	n := len(data)
-	if remaining := 32*1024 - b.Len(); remaining > 0 {
+	if remaining := 32*1024 - b.buffer.Len(); remaining > 0 {
 		if len(data) > remaining {
 			data = data[:remaining]
 		}
-		_, _ = b.Buffer.Write(data)
+		_, _ = b.buffer.Write(data)
 	}
 	return n, nil
 }
 
 func (d *dockerRuntime) run(ctx context.Context, input io.Reader, args ...string) ([]byte, error) {
+	return d.runWithOutput(ctx, input, &limitedDockerOutput{}, args...)
+}
+
+func (d *dockerRuntime) runWithOutput(ctx context.Context, input io.Reader, output interface {
+	io.Writer
+	Bytes() []byte
+}, args ...string) ([]byte, error) {
 	commandContext := d.commandContext
 	if commandContext == nil {
 		commandContext = exec.CommandContext
 	}
 	command := commandContext(ctx, d.binary, args...)
 	command.Stdin = input
-	var output, stderr limitedDockerOutput
-	command.Stdout = &output
+	var stderr limitedDockerOutput
+	command.Stdout = output
 	command.Stderr = &stderr
 	err := command.Run()
 	if ctx.Err() != nil {

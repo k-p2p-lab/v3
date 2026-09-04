@@ -6,10 +6,11 @@ services:
     environment:
       KPL_API_TOKEN: "${KPL_API_TOKEN:-}"
     ports:
-      - "8080:8080"
+      - "${KPL_BIND_ADDRESS:-127.0.0.1}:${KPL_HTTP_PORT:-8080}:8080"
     volumes:
       - controller-data:/var/lib/kpl/data
     networks: [peers, monitoring]
+    stop_grace_period: 7m
     restart: unless-stopped
 
   agent-a:

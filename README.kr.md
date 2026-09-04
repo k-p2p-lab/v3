@@ -27,6 +27,8 @@ Controller ─── scenario state machine / registry / event store / dashboard
 
 ## 빠른 실행
 
+최종 배포 대상은 Linux입니다. 커널 사전 점검, 원격 접속, 권한 및 정상 종료 순서는 [Linux 운영 가이드](docs/linux-deployment.md)를 참고하십시오. 이미지를 빌드한 후 대상 서버에서 `sh scripts/check-linux.sh`를 실행하며, `make test-linux`로 Linux 컨테이너 안에서 전체 테스트를 실행할 수 있습니다.
+
 Linux 컨테이너를 실행하는 Docker Engine과 Docker Compose 사용을 권장합니다. Compose는 공통 이미지 `kpl-v3:local`을 빌드하고 `kpl-v3-peers` 네트워크에 Controller와 Agent 두 개를 실행합니다. 실험을 시작하면 Agent가 같은 네트워크에 Peer 컨테이너를 생성합니다.
 
 ```bash
@@ -34,6 +36,8 @@ docker compose up --build
 ```
 
 브라우저에서 `http://localhost:8080`을 열고 **실험 실행**을 누르면 기본 smoke 시나리오를 실행할 수 있습니다. API 보호가 필요하면 실행 전에 환경 변수 `KPL_API_TOKEN`을 설정하고 대시보드 실행 창에도 같은 값을 입력합니다.
+
+화면 포트는 기본적으로 localhost에만 게시합니다. 원격 Linux 서버는 SSH 터널로 접속하거나 Controller의 `KPL_BIND_ADDRESS`/`KPL_HTTP_PORT`를 명시하십시오. 종료할 때 `make stop`을 사용하면 Agent가 살아 있는 동안 Controller가 실험 취소와 Peer 정리를 마칩니다.
 
 ```bash
 export KPL_API_TOKEN='replace-me'

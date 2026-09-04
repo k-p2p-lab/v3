@@ -31,13 +31,15 @@ type ServerConfig struct {
 }
 
 type Server struct {
-	config   ServerConfig
-	state    *state
-	client   *http.Client
-	logger   *slog.Logger
-	cancelMu sync.Mutex
-	cancels  map[string]context.CancelFunc
-	nodeSeq  atomic.Uint64
+	config       ServerConfig
+	state        *state
+	client       *http.Client
+	logger       *slog.Logger
+	cancelMu     sync.Mutex
+	cancels      map[string]context.CancelFunc
+	shuttingDown bool
+	runs         sync.WaitGroup
+	nodeSeq      atomic.Uint64
 }
 
 func New(config ServerConfig, logger *slog.Logger) *Server {
@@ -64,6 +66,14 @@ func (s *Server) StartScenario(parent context.Context, raw []byte) (model.Experi
 	if err != nil {
 		return model.Experiment{}, err
 	}
+	s.cancelMu.Lock()
+	defer s.cancelMu.Unlock()
+	if s.shuttingDown {
+		return model.Experiment{}, fmt.Errorf("controller is shutting down")
+	}
+	if err := parent.Err(); err != nil {
+		return model.Experiment{}, err
+	}
 	runID := fmt.Sprintf("run-%s-%04x", time.Now().UTC().Format("20060102T150405Z"), rand.New(rand.NewSource(time.Now().UnixNano())).Intn(65536))
 	experiment := model.Experiment{
 		ID:           runID,
@@ -86,10 +96,13 @@ func (s *Server) StartScenario(parent context.Context, raw []byte) (model.Experi
 	s.state.notify()
 
 	ctx, cancel := context.WithCancel(parent)
-	s.cancelMu.Lock()
 	s.cancels[runID] = cancel
-	s.cancelMu.Unlock()
-	go s.runScenario(ctx, experiment, spec)
+	s.runs.Add(1)
+	go func() {
+		defer s.runs.Done()
+		defer cancel()
+		s.runScenario(ctx, experiment, spec)
+	}()
 	return experiment, nil
 }
 
@@ -1159,7 +1172,7 @@ func (s *Server) persistExperiment(experiment model.Experiment) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "experiment.json"), metadata, 0o644)
+	return writeFileAtomic(filepath.Join(dir, "experiment.json"), metadata, 0o644)
 }
 
 func sleepContext(ctx context.Context, duration time.Duration) error {

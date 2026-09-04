@@ -165,6 +165,7 @@ func TestApplyRejectsInvalidInputsWithoutExecutingTC(t *testing.T) {
 	}{
 		{"invalid config", model.NetworkConfig{LossPercent: floatPtr(101)}, 20000, []networkInterface{ipv4Interface("eth0")}},
 		{"bad duration", model.NetworkConfig{Delay: "1ms; echo injected"}, 20000, []networkInterface{ipv4Interface("eth0")}},
+		{"kernel jitter clamp", model.NetworkConfig{Delay: "3s", Jitter: "2147483648ns"}, 20000, []networkInterface{ipv4Interface("eth0")}},
 		{"bad port", model.NetworkConfig{Delay: "1ms"}, 65536, []networkInterface{ipv4Interface("eth0")}},
 		{"no interface", model.NetworkConfig{Delay: "1ms"}, 20000, nil},
 	} {
