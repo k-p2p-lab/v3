@@ -135,6 +135,7 @@ type Snapshot struct {
 }
 
 type PeerProcessConfig struct {
+	Runtime       string     `json:"runtime,omitempty"`
 	Node          Node       `json:"node"`
 	NodeConfig    NodeConfig `json:"nodeConfig"`
 	Seed          int64      `json:"seed"`

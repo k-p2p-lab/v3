@@ -25,6 +25,10 @@ import (
 )
 
 type Config struct {
+	Runtime       string
+	DockerBinary  string
+	DockerImage   string
+	DockerNetwork string
 	ID            string
 	Name          string
 	Listen        string
@@ -41,14 +45,17 @@ type Config struct {
 }
 
 type process struct {
-	node       model.Node
-	apiURL     string
-	configPath string
-	command    *exec.Cmd
-	cancel     context.CancelFunc
-	lease      *portLease
-	exited     bool
-	proxyRefs  int
+	node        model.Node
+	apiURL      string
+	configPath  string
+	command     *exec.Cmd
+	cancel      context.CancelFunc
+	lease       *portLease
+	exited      bool
+	proxyRefs   int
+	containerID string
+	done        chan struct{}
+	cleanupErr  error
 }
 
 type Server struct {
@@ -56,17 +63,34 @@ type Server struct {
 	logger         *slog.Logger
 	client         *http.Client
 	commandContext func(context.Context, string, ...string) *exec.Cmd
+	docker         *dockerRuntime
 	startedAt      time.Time
 	mu             sync.RWMutex
 	processes      map[string]*process
 	ports          portPool
 	runFences      map[string]uint64
+	shuttingDown   bool
 	eventsMu       sync.Mutex
 	events         []model.TraceEvent
 	flushNow       chan struct{}
 }
 
 func New(config Config, logger *slog.Logger) (*Server, error) {
+	if config.Runtime == "" {
+		config.Runtime = "docker"
+	}
+	if config.Runtime != "docker" && config.Runtime != "process" {
+		return nil, fmt.Errorf("runtime must be docker or process")
+	}
+	if config.DockerBinary == "" {
+		config.DockerBinary = "docker"
+	}
+	if config.DockerImage == "" {
+		config.DockerImage = "kpl-v3:local"
+	}
+	if config.DockerNetwork == "" {
+		config.DockerNetwork = "kpl-v3-peers"
+	}
 	if config.ID == "" {
 		return nil, fmt.Errorf("agent id is required")
 	}
@@ -99,12 +123,28 @@ func New(config Config, logger *slog.Logger) (*Server, error) {
 		config.Executable = executable
 	}
 	if config.SelfURL == "" {
-		config.SelfURL = localURL(config.Listen)
+		if config.Runtime == "docker" {
+			config.SelfURL = config.AdvertiseURL
+		} else {
+			config.SelfURL = localURL(config.Listen)
+		}
+	}
+	if config.Runtime == "docker" {
+		for name, raw := range map[string]string{"controller-url": config.ControllerURL, "self-url": config.SelfURL} {
+			parsed, err := url.Parse(raw)
+			if err != nil || parsed.Hostname() == "" || parsed.Scheme != "http" && parsed.Scheme != "https" {
+				return nil, fmt.Errorf("%s must be an HTTP(S) URL reachable from peer containers", name)
+			}
+			ip := net.ParseIP(parsed.Hostname())
+			if strings.EqualFold(parsed.Hostname(), "localhost") || ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+				return nil, fmt.Errorf("%s must be reachable from peer containers; loopback and unspecified addresses refer to the peer itself", name)
+			}
+		}
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{
+	s := &Server{
 		config:         config,
 		logger:         logger,
 		client:         &http.Client{Timeout: 10 * time.Second},
@@ -113,13 +153,30 @@ func New(config Config, logger *slog.Logger) (*Server, error) {
 		processes:      make(map[string]*process),
 		runFences:      make(map[string]uint64),
 		flushNow:       make(chan struct{}, 1),
-	}, nil
+	}
+	if config.Runtime == "docker" {
+		s.docker = &dockerRuntime{binary: config.DockerBinary, image: config.DockerImage, network: config.DockerNetwork, commandContext: exec.CommandContext}
+	}
+	return s, nil
 }
 
 func (s *Server) Run(ctx context.Context) error {
+	// Bind before reconciling: a duplicate local Agent must not remove the
+	// running Agent's peers and only then discover that its port is occupied.
 	listener, err := net.Listen("tcp", s.config.Listen)
 	if err != nil {
 		return err
+	}
+	defer listener.Close()
+	if s.docker != nil {
+		checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if err := s.docker.check(checkCtx); err != nil {
+			return fmt.Errorf("Docker runtime: %w", err)
+		}
+		if err := s.docker.removeAgentContainers(checkCtx, s.config.ID); err != nil {
+			return fmt.Errorf("clean up previous peer containers: %w", err)
+		}
 	}
 	server := &http.Server{
 		Handler:           s.Handler(),
@@ -128,10 +185,11 @@ func (s *Server) Run(ctx context.Context) error {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
+	defer func() { s.beginShutdown(); s.waitStopped(25 * time.Second) }()
 	go s.controlLoop(ctx)
 	go func() {
 		<-ctx.Done()
-		s.stopAll()
+		s.beginShutdown()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
@@ -228,7 +286,14 @@ func (s *Server) createNode(ctx context.Context, request model.CreateNodeRequest
 	if err := resolvedConfig.Validate(); err != nil {
 		return model.Node{}, fmt.Errorf("invalid node config: %w", err)
 	}
+	if resolvedConfig.Network.Enabled() && s.config.Runtime != "docker" {
+		return model.Node{}, fmt.Errorf("network conditions require the docker runtime; process mode cannot isolate network changes")
+	}
 	s.mu.Lock()
+	if s.shuttingDown {
+		s.mu.Unlock()
+		return model.Node{}, fmt.Errorf("agent is shutting down")
+	}
 	if fence, exists := s.runFences[request.RunID]; exists && request.Generation <= fence {
 		s.mu.Unlock()
 		return model.Node{}, fmt.Errorf("run %q generation %d is fenced at generation %d", request.RunID, request.Generation, fence)
@@ -241,10 +306,14 @@ func (s *Server) createNode(ctx context.Context, request model.CreateNodeRequest
 		s.mu.Unlock()
 		return model.Node{}, fmt.Errorf("agent capacity reached")
 	}
-	lease, ok := s.ports.acquire(s.config.PeerAPIPort, s.config.PeerP2PPort)
-	if !ok {
-		s.mu.Unlock()
-		return model.Node{}, fmt.Errorf("peer port range exhausted")
+	var lease *portLease
+	if s.config.Runtime != "docker" {
+		var ok bool
+		lease, ok = s.ports.acquire(s.config.PeerAPIPort, s.config.PeerP2PPort)
+		if !ok {
+			s.mu.Unlock()
+			return model.Node{}, fmt.Errorf("peer port range exhausted")
+		}
 	}
 	now := time.Now().UTC()
 	profile := request.Profile
@@ -263,6 +332,7 @@ func (s *Server) createNode(ctx context.Context, request model.CreateNodeRequest
 		Profile:    profile,
 		State:      model.NodeStarting,
 		Metadata: map[string]string{
+			"runtime":       s.config.Runtime,
 			"profile":       profile,
 			"pubsubRouter":  resolvedConfig.GossipSub.Router,
 			"pubsubEnabled": strconv.FormatBool(resolvedConfig.GossipSub.Enabled != nil && *resolvedConfig.GossipSub.Enabled),
@@ -277,14 +347,22 @@ func (s *Server) createNode(ctx context.Context, request model.CreateNodeRequest
 		LastSeen:  now,
 	}
 	processCtx, cancel := context.WithCancel(ctx)
+	apiListen, p2pListen := "0.0.0.0:18000", "/ip4/0.0.0.0/tcp/20000"
+	if lease != nil {
+		apiListen = fmt.Sprintf("127.0.0.1:%d", lease.apiPort)
+		p2pListen = fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", lease.p2pPort)
+	}
+	networkJSON, _ := json.Marshal(resolvedConfig.Network)
+	node.Metadata["network"] = string(networkJSON)
 	peerConfig := model.PeerProcessConfig{
+		Runtime:       s.config.Runtime,
 		Node:          node,
 		NodeConfig:    resolvedConfig,
 		Seed:          request.Seed,
 		ControllerURL: strings.TrimRight(s.config.ControllerURL, "/"),
 		AgentURL:      strings.TrimRight(s.config.SelfURL, "/"),
-		APListen:      fmt.Sprintf("127.0.0.1:%d", lease.apiPort),
-		P2PListen:     fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", lease.p2pPort),
+		APListen:      apiListen,
+		P2PListen:     p2pListen,
 		Token:         s.config.Token,
 	}
 	configPath, err := s.writePeerConfig(peerConfig)
@@ -293,6 +371,20 @@ func (s *Server) createNode(ctx context.Context, request model.CreateNodeRequest
 		s.ports.release(lease)
 		s.mu.Unlock()
 		return model.Node{}, err
+	}
+	if s.config.Runtime == "docker" {
+		data, err := json.Marshal(peerConfig)
+		if err != nil {
+			cancel()
+			s.mu.Unlock()
+			return model.Node{}, err
+		}
+		proc := &process{node: node, configPath: configPath, cancel: cancel, done: make(chan struct{})}
+		s.processes[request.ID] = proc
+		s.mu.Unlock()
+		go s.runDockerProcess(processCtx, proc, data)
+		scheduleLifetimeStop(processCtx, request.Lifetime, func() { _ = s.stopNode(request.ID) })
+		return node, nil
 	}
 	commandContext := s.commandContext
 	if commandContext == nil {
@@ -313,7 +405,7 @@ func (s *Server) createNode(ctx context.Context, request model.CreateNodeRequest
 		s.mu.Unlock()
 		return model.Node{}, err
 	}
-	proc := &process{node: node, apiURL: fmt.Sprintf("http://127.0.0.1:%d", lease.apiPort), configPath: configPath, command: command, cancel: cancel, lease: lease}
+	proc := &process{node: node, apiURL: fmt.Sprintf("http://127.0.0.1:%d", lease.apiPort), configPath: configPath, command: command, cancel: cancel, lease: lease, done: make(chan struct{})}
 	if err := command.Start(); err != nil {
 		cancel()
 		s.ports.release(lease)
@@ -403,20 +495,29 @@ func (s *Server) pipeLogs(nodeID, stream string, reader io.Reader) {
 
 func (s *Server) waitProcess(nodeID string, proc *process) {
 	err := proc.command.Wait()
+	s.finishProcess(nodeID, proc, err, nil)
+}
+
+func (s *Server) finishProcess(nodeID string, proc *process, runErr, cleanupErr error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	proc.exited = true
+	proc.cleanupErr = cleanupErr
 	current, ok := s.processes[nodeID]
 	if ok && current == proc {
 		current.node.LastSeen = time.Now().UTC()
-		if current.node.State == model.NodeStopping || err == nil {
+		if cleanupErr == nil && (current.node.State == model.NodeStopping || runErr == nil) {
 			current.node.State = model.NodeStopped
+			current.node.Error = ""
 		} else {
 			current.node.State = model.NodeFailed
-			current.node.Error = err.Error()
+			current.node.Error = errors.Join(runErr, cleanupErr).Error()
 		}
 	}
 	s.releaseProcessPortsLocked(proc)
-	s.mu.Unlock()
+	if proc.done != nil {
+		close(proc.done)
+	}
 }
 
 func (s *Server) releaseProcessPortsLocked(proc *process) {
@@ -433,6 +534,9 @@ func (s *Server) stopNode(nodeID string) error {
 		return fmt.Errorf("node %q not found", nodeID)
 	}
 	if proc.node.State == model.NodeStopped || proc.node.State == model.NodeFailed {
+		if proc.cleanupErr != nil && proc.containerID != "" {
+			s.retryContainerCleanupLocked(proc)
+		}
 		s.mu.Unlock()
 		return nil
 	}
@@ -473,7 +577,13 @@ func (s *Server) stopRunGeneration(runID string, generation uint64) {
 	now := time.Now().UTC()
 	cancels := make([]context.CancelFunc, 0)
 	for _, proc := range s.processes {
-		if proc.node.RunID != runID || proc.node.Generation > fence || proc.exited {
+		if proc.node.RunID != runID || proc.node.Generation > fence {
+			continue
+		}
+		if proc.exited {
+			if proc.cleanupErr != nil && proc.containerID != "" {
+				s.retryContainerCleanupLocked(proc)
+			}
 			continue
 		}
 		if proc.node.State == model.NodeStopping || proc.node.State == model.NodeStopped || proc.node.State == model.NodeFailed {
@@ -502,7 +612,11 @@ func (s *Server) updateNode(update model.Node) error {
 		return nil
 	}
 	proc.node.PeerID = update.PeerID
-	proc.node.State = update.State
+	// A Docker peer may report before inspect has resolved its control endpoint.
+	// Keep it starting until Agent can actually route publish requests to it.
+	if update.State != model.NodeReady || proc.apiURL != "" || s.config.Runtime != "docker" {
+		proc.node.State = update.State
+	}
 	proc.node.Addresses = append([]string(nil), update.Addresses...)
 	proc.node.ConnectedPeers = append([]string(nil), update.ConnectedPeers...)
 	proc.node.TopicPeers = update.TopicPeers

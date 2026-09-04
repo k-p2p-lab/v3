@@ -25,6 +25,7 @@ type NodeConfig struct {
 	Libp2p       Libp2pConfig    `json:"libp2p,omitempty" yaml:"libp2p,omitempty"`
 	Kademlia     KademliaConfig  `json:"kademlia,omitempty" yaml:"kademlia,omitempty"`
 	GossipSub    GossipSubConfig `json:"gossipsub,omitempty" yaml:"gossipsub,omitempty"`
+	Network      NetworkConfig   `json:"network,omitempty" yaml:"network,omitempty"`
 }
 
 type Libp2pConfig struct {
@@ -494,6 +495,9 @@ func (c NodeConfig) WithDefaults() NodeConfig {
 
 func (c NodeConfig) Validate() error {
 	c = c.WithDefaults()
+	if err := c.Network.Validate(); err != nil {
+		return fmt.Errorf("network: %w", err)
+	}
 	if c.Type == "" {
 		return fmt.Errorf("node type is required")
 	}

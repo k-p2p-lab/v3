@@ -245,7 +245,11 @@ function renderTopology(nodes, edges) {
     const metadata = node.metadata || {};
     const pubsubText = metadata.pubsubEnabled === "false" ? "off" : `${metadata.pubsubRouter || "pubsub"}/${metadata.topicMode || "subscribe"}`;
     const dhtText = metadata.dhtEnabled === "false" ? "off" : metadata.dhtMode || "server";
-    title.textContent = `${node.id}\n${node.type || node.role} · ${node.state} · ${node.connectedPeers?.length || 0} connections${scoreText}\nPubSub ${pubsubText} · DHT ${dhtText} · ${metadata.topics || "no topics"}`;
+    let network = {};
+    try { network = JSON.parse(metadata.network || "{}"); } catch { /* older Agents may omit network metadata */ }
+    const networkText = [network.delay && `delay ${network.delay}`, network.jitter && `jitter ${network.jitter}`, network.lossPercent != null && `loss ${network.lossPercent}%`, network.rateMbps > 0 && `${network.rateMbps} Mbps`].filter(Boolean).join(" · ");
+    const runtimeText = metadata.runtime ? `\nRuntime ${metadata.runtime}${metadata.containerId ? ` · ${metadata.containerId.slice(0, 12)}` : ""}` : "";
+    title.textContent = `${node.id}\n${node.type || node.role} · ${node.state} · ${node.connectedPeers?.length || 0} connections${scoreText}\nPubSub ${pubsubText} · DHT ${dhtText} · ${metadata.topics || "no topics"}${runtimeText}${networkText ? `\n${networkText}` : ""}`;
     circle.append(title);
     svg.append(circle);
   });

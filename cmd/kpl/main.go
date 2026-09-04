@@ -71,7 +71,7 @@ func runAgent(ctx context.Context, logger *slog.Logger, args []string) error {
 	name := flags.String("name", "", "human-readable agent name")
 	listen := flags.String("listen", ":8090", "HTTP listen address")
 	advertiseURL := flags.String("advertise-url", "", "controller-reachable agent URL")
-	selfURL := flags.String("self-url", "", "local URL used by child peers")
+	selfURL := flags.String("self-url", "", "agent URL reachable from peer containers (defaults to advertise-url in Docker mode)")
 	controllerURL := flags.String("controller-url", "http://127.0.0.1:8080", "controller URL")
 	capacity := flags.Int("capacity", 100, "maximum active peers")
 	dataDir := flags.String("data-dir", "data-agent", "agent data directory")
@@ -79,6 +79,10 @@ func runAgent(ctx context.Context, logger *slog.Logger, args []string) error {
 	peerAPIPort := flags.Int("peer-api-port", 18000, "first peer control API port")
 	peerP2PPort := flags.Int("peer-p2p-port", 20000, "first peer libp2p port")
 	labels := flags.String("labels", "", "comma-separated key=value labels")
+	runtime := flags.String("runtime", "docker", "peer runtime: docker or process")
+	dockerBinary := flags.String("docker-binary", "docker", "Docker CLI executable")
+	dockerImage := flags.String("docker-image", "kpl-v3:local", "local Docker image for peer containers")
+	dockerNetwork := flags.String("docker-network", "kpl-v3-peers", "user-defined bridge or attachable overlay network")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -86,6 +90,7 @@ func runAgent(ctx context.Context, logger *slog.Logger, args []string) error {
 		ID: *id, Name: *name, Listen: *listen, AdvertiseURL: *advertiseURL, SelfURL: *selfURL,
 		ControllerURL: *controllerURL, Capacity: *capacity, DataDir: *dataDir, Token: *token,
 		PeerAPIPort: *peerAPIPort, PeerP2PPort: *peerP2PPort, Labels: parseLabels(*labels),
+		Runtime: *runtime, DockerBinary: *dockerBinary, DockerImage: *dockerImage, DockerNetwork: *dockerNetwork,
 	}, logger)
 	if err != nil {
 		return err

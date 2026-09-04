@@ -1,0 +1,75 @@
+version: 2
+name: per-peer-network-conditions
+seed: 42
+
+# Run with the Docker Agent runtime. Each worker's Linux netem rules affect
+# only its outgoing P2P TCP traffic; Agent and Peer control HTTP bypass them.
+profiles:
+  network-boot:
+    type: boot
+    gossipsub:
+      enabled: true
+      topics: [kpl/network]
+
+  constrained-worker:
+    type: full
+    gossipsub:
+      topics: [kpl/network]
+    network:
+      delay: 100ms
+      jitter: 10ms
+      lossPercent: 1
+      duplicatePercent: 0.1
+      corruptPercent: 0.1
+      reorderPercent: 1
+      rateMbps: 10
+      queueLimit: 1000
+
+phases:
+  - name: create bootstrap nodes
+    action: join
+    group: boot
+    role: boot
+    profile: network-boot
+    count: 2
+
+  - name: wait for bootstrap initialization
+    action: wait-ready
+    group: boot
+    readyRatio: 1
+    timeout: 1m
+
+  - name: create workers with network conditions
+    action: join
+    group: worker
+    role: worker
+    profile: constrained-worker
+    count: 4
+
+  - name: wait for worker initialization
+    action: wait-ready
+    group: worker
+    readyRatio: 1
+    timeout: 2m
+
+  # Readiness confirms initialization; it does not assert mesh convergence.
+  - name: allow the mesh to settle
+    action: wait
+    duration: 10s
+
+  - name: publish sample messages
+    action: publish
+    group: worker
+    topic: kpl/network
+    count: 4
+    payloadSize: 1024
+    interval:
+      model: fixed
+      value: 1s
+
+  - name: allow delivery events to settle
+    action: wait
+    duration: 5s
+
+  - name: stop all experiment nodes
+    action: stop-all

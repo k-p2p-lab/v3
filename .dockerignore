@@ -1,7 +1,10 @@
 .git
 .gitignore
+.tmp
 data
 data-agent*
 *.log
 kpl
 dist
+bin
+*.exe

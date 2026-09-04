@@ -1,5 +1,6 @@
 services:
   controller:
+    image: kpl-v3:local
     build: .
     command: ["controller", "--listen", ":8080", "--data-dir", "/var/lib/kpl/data"]
     environment:
@@ -8,11 +9,13 @@ services:
       - "8080:8080"
     volumes:
       - controller-data:/var/lib/kpl/data
-    networks: [control]
+    networks: [peers]
     restart: unless-stopped
 
   agent-a:
+    image: kpl-v3:local
     build: .
+    user: "0:0"
     command:
       - agent
       - --id
@@ -24,21 +27,32 @@ services:
       - --advertise-url
       - http://agent-a:8090
       - --self-url
-      - http://127.0.0.1:8090
+      - http://agent-a:8090
       - --controller-url
       - http://controller:8080
       - --capacity
       - "50"
       - --data-dir
       - /var/lib/kpl/agent
+      - --runtime
+      - docker
+      - --docker-image
+      - kpl-v3:local
+      - --docker-network
+      - kpl-v3-peers
     environment:
       KPL_API_TOKEN: "${KPL_API_TOKEN:-}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on: [controller]
-    networks: [control, data-plane]
+    networks: [peers]
+    stop_grace_period: 30s
     restart: unless-stopped
 
   agent-b:
+    image: kpl-v3:local
     build: .
+    user: "0:0"
     command:
       - agent
       - --id
@@ -50,22 +64,32 @@ services:
       - --advertise-url
       - http://agent-b:8090
       - --self-url
-      - http://127.0.0.1:8090
+      - http://agent-b:8090
       - --controller-url
       - http://controller:8080
       - --capacity
       - "50"
       - --data-dir
       - /var/lib/kpl/agent
+      - --runtime
+      - docker
+      - --docker-image
+      - kpl-v3:local
+      - --docker-network
+      - kpl-v3-peers
     environment:
       KPL_API_TOKEN: "${KPL_API_TOKEN:-}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on: [controller]
-    networks: [control, data-plane]
+    networks: [peers]
+    stop_grace_period: 30s
     restart: unless-stopped
 
 networks:
-  control:
-  data-plane:
+  peers:
+    name: kpl-v3-peers
+    driver: bridge
 
 volumes:
   controller-data:

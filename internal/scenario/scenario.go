@@ -98,7 +98,7 @@ func (s *Scenario) Validate() error {
 		return fmt.Errorf("onExit must be cancel or drain")
 	}
 	if s.JobShutdownTimeout == "" {
-		s.JobShutdownTimeout = "10s"
+		s.JobShutdownTimeout = "30s"
 	}
 	shutdownTimeout, err := time.ParseDuration(s.JobShutdownTimeout)
 	if err != nil {

@@ -112,7 +112,7 @@ func (s *Server) runScenario(parentCtx context.Context, experiment model.Experim
 	jobs := newPhaseJobs()
 	shutdownTimeout, _ := time.ParseDuration(spec.JobShutdownTimeout)
 	if shutdownTimeout <= 0 {
-		shutdownTimeout = 10 * time.Second
+		shutdownTimeout = 30 * time.Second
 	}
 
 	var asyncMu sync.Mutex
@@ -965,7 +965,15 @@ func (s *Server) callAgent(ctx context.Context, baseURL, method, path string, in
 	if s.config.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+s.config.Token)
 	}
-	resp, err := s.client.Do(req)
+	client := s.client
+	if method == http.MethodDelete && strings.HasPrefix(path, "/api/v1/runs/") {
+		// Removing Docker namespaces/filesystems can exceed the ordinary 10s
+		// control request timeout. The scenario context still bounds cleanup.
+		cleanupClient := *s.client
+		cleanupClient.Timeout = 30 * time.Second
+		client = &cleanupClient
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

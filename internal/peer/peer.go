@@ -71,6 +71,9 @@ func Run(ctx context.Context, configPath string, logger *slog.Logger) error {
 	if err := json.Unmarshal(data, &config); err != nil {
 		return fmt.Errorf("decode peer config: %w", err)
 	}
+	if err := prepareNetwork(ctx, config); err != nil {
+		return err
+	}
 	server, err := New(ctx, config, logger)
 	if err != nil {
 		return err
@@ -255,6 +258,10 @@ func (s *Server) handler() http.Handler {
 }
 
 func (s *Server) handlePublish(w http.ResponseWriter, r *http.Request) {
+	if nodeID := r.Header.Get("X-KPL-Node-ID"); nodeID != "" && nodeID != s.config.Node.ID {
+		http.Error(w, "peer identity does not match publish target", http.StatusConflict)
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return

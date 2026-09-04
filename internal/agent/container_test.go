@@ -1,0 +1,178 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/k-p2p-lab/v3/internal/model"
+)
+
+func TestDockerIsDefaultAndRequiresContainerReachableURLs(t *testing.T) {
+	config := Config{ID: "test", AdvertiseURL: "http://agent:8090", ControllerURL: "http://controller:8080"}
+	server, err := New(config, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server.config.Runtime != "docker" || server.docker == nil || server.config.SelfURL != config.AdvertiseURL {
+		t.Fatalf("Docker defaults not applied: %+v", server.config)
+	}
+	for _, endpoint := range []string{"http://localhost:8090", "http://127.0.0.1:8090", "http://[::1]:8090", "http://0.0.0.0:8090"} {
+		config.SelfURL = endpoint
+		if _, err := New(config, nil); err == nil {
+			t.Fatalf("accepted unreachable container callback %s", endpoint)
+		}
+	}
+}
+
+func TestProcessRuntimeRejectsNetworkConditions(t *testing.T) {
+	server := newRuntimeTestServer(t, 18000, 20000)
+	_, err := server.createNode(context.Background(), model.CreateNodeRequest{
+		ID: "peer", RunID: "run", Group: "workers", Config: model.NodeConfig{Network: model.NetworkConfig{Delay: "20ms"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "require the docker runtime") {
+		t.Fatalf("error = %v", err)
+	}
+	if len(server.nodes()) != 0 {
+		t.Fatal("process was started despite unsupported network conditions")
+	}
+}
+
+func newContainerTestServer(t *testing.T, settings map[string]string) (*Server, string) {
+	t.Helper()
+	server, err := New(Config{ID: "agent", AdvertiseURL: "http://agent:8090", ControllerURL: "http://controller:8080", DataDir: t.TempDir()}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, path := fakeDocker(t, settings)
+	server.docker = d
+	t.Cleanup(func() { server.stopAll(); server.waitStopped(5 * time.Second) })
+	return server, path
+}
+
+func waitDockerCall(t *testing.T, path, command string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, call := range dockerCalls(t, path) {
+			if call.Args[0] == command {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("Docker %s did not start", command)
+}
+
+func TestContainerLifecycleStopsAndReportsCleanupFailures(t *testing.T) {
+	for _, failCleanup := range []bool{false, true} {
+		t.Run(map[bool]string{false: "removed", true: "cleanup-error"}[failCleanup], func(t *testing.T) {
+			settings := map[string]string{"HANG": "wait"}
+			if failCleanup {
+				settings["FAIL"] = "rm"
+			}
+			server, path := newContainerTestServer(t, settings)
+			request := model.CreateNodeRequest{ID: "peer", RunID: "run", Group: "workers", Generation: 2}
+			node, err := server.createNode(context.Background(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if node.Metadata["runtime"] != "docker" {
+				t.Fatalf("metadata = %v", node.Metadata)
+			}
+			waitDockerCall(t, path, "wait")
+			server.mu.RLock()
+			proc := server.processes[node.ID]
+			configPath, containerID, lease := proc.configPath, proc.containerID, proc.lease
+			server.mu.RUnlock()
+			if containerID != fakeContainerID || lease != nil {
+				t.Fatal("Docker peer must have a container and no host port lease")
+			}
+			data, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var config model.PeerProcessConfig
+			if err := json.Unmarshal(data, &config); err != nil {
+				t.Fatal(err)
+			}
+			if config.Runtime != "docker" || config.APListen != "0.0.0.0:18000" || config.P2PListen != "/ip4/0.0.0.0/tcp/20000" || config.AgentURL != "http://agent:8090" {
+				t.Fatalf("container configuration = %+v", config)
+			}
+			server.stopRunGeneration("run", 2)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			err = server.waitRunContainers(ctx, "run", 2)
+			if (err != nil) != failCleanup {
+				t.Fatalf("cleanup error = %v, want error %v", err, failCleanup)
+			}
+			wantState := model.NodeStopped
+			if failCleanup {
+				wantState = model.NodeFailed
+			}
+			waitForNodeState(t, server, "peer", wantState)
+			if failCleanup {
+				delete(settings, "FAIL")
+				server.stopRunGeneration("run", 2)
+				if err := server.waitRunContainers(ctx, "run", 2); err != nil {
+					t.Fatalf("cleanup retry did not recover: %v", err)
+				}
+				waitForNodeState(t, server, "peer", model.NodeStopped)
+			}
+			if _, err := server.createNode(context.Background(), model.CreateNodeRequest{ID: "late", RunID: "run", Group: "workers", Generation: 2}); err == nil {
+				t.Fatal("late container create bypassed generation fence")
+			}
+		})
+	}
+}
+
+func TestAgentShutdownRejectsLateContainerCreate(t *testing.T) {
+	server, path := newContainerTestServer(t, nil)
+	server.beginShutdown()
+	_, err := server.createNode(context.Background(), model.CreateNodeRequest{ID: "late", RunID: "run", Group: "workers"})
+	if err == nil || !strings.Contains(err.Error(), "shutting down") {
+		t.Fatalf("late create error = %v", err)
+	}
+	if len(dockerCalls(t, path)) != 0 {
+		t.Fatal("late create reached Docker after shutdown")
+	}
+}
+
+func TestDuplicateAgentDoesNotRemoveRunningPeers(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	server, path := newContainerTestServer(t, nil)
+	server.config.Listen = listener.Addr().String()
+	if err := server.Run(context.Background()); err == nil {
+		t.Fatal("duplicate Agent accepted occupied listen address")
+	}
+	if len(dockerCalls(t, path)) != 0 {
+		t.Fatal("duplicate Agent touched Docker before acquiring its listen address")
+	}
+}
+
+func TestContainerFenceCancelsAnInFlightCreate(t *testing.T) {
+	server, path := newContainerTestServer(t, map[string]string{"HANG": "create"})
+	_, err := server.createNode(context.Background(), model.CreateNodeRequest{ID: "peer", RunID: "run", Group: "workers"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitDockerCall(t, path, "create")
+	server.stopRunGeneration("run", 0)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := server.waitRunContainers(ctx, "run", 0); err != nil {
+		t.Fatal(err)
+	}
+	waitDockerCall(t, path, "rm")
+	waitForNodeState(t, server, "peer", model.NodeStopped)
+}

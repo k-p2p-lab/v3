@@ -7,11 +7,12 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/kpl ./cmd/kpl
 
 FROM alpine:3.22
-RUN apk add --no-cache ca-certificates tzdata \
+RUN apk add --no-cache ca-certificates tzdata docker-cli iproute2 iproute2-tc \
     && addgroup -S kpl \
     && adduser -S -G kpl kpl
 COPY --from=builder /out/kpl /usr/local/bin/kpl
 WORKDIR /var/lib/kpl
-RUN chown -R kpl:kpl /var/lib/kpl
+RUN mkdir -p /var/lib/kpl/data /var/lib/kpl/agent \
+    && chown -R kpl:kpl /var/lib/kpl
 USER kpl
 ENTRYPOINT ["kpl"]

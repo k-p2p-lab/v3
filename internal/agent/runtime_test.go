@@ -315,6 +315,7 @@ func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) 
 func newRuntimeTestServer(t *testing.T, apiPort, p2pPort int) *Server {
 	t.Helper()
 	server, err := New(Config{
+		Runtime:       "process",
 		ID:            "agent-test",
 		ControllerURL: "http://127.0.0.1:1",
 		AdvertiseURL:  "http://127.0.0.1:8090",

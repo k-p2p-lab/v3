@@ -21,13 +21,13 @@ Controller ─── scenario state machine / registry / event store / dashboard
 ```
 
 - **Controller**: Agent와 Peer 상태, bootstrap registry, 시나리오 실행, 이벤트 저장, REST API와 웹 대시보드를 제공합니다.
-- **Agent**: 물리/가상 호스트마다 하나씩 실행합니다. Peer 프로세스의 시작·종료·발행을 담당하고 telemetry를 묶어서 Controller로 전달합니다.
-- **Peer**: 결정적인 `(run ID, seed)` namespace로 ID를 생성하고 선택한 Kademlia와 PubSub 설정으로 실행됩니다.
+- **Agent**: 물리/가상 호스트마다 하나씩 실행합니다. 기본적으로 Peer마다 Docker 컨테이너를 생성해 시작·종료·발행을 담당하고 telemetry를 묶어서 Controller로 전달합니다. 로컬 개발용 process 런타임도 제공합니다.
+- **Peer**: 결정적인 `(run ID, seed)` namespace로 ID를 생성하고 선택한 Kademlia와 PubSub 설정으로 실행됩니다. Docker Peer는 별도 network namespace에서 선택적인 네트워크 조건을 적용합니다.
 - **Dashboard**: Agent 용량, Peer 준비 상태, 연결 토폴로지, peer score 요약, 실험 단계, 전파 지연과 최근 이벤트를 SSE로 갱신합니다.
 
 ## 빠른 실행
 
-Go 1.24 이상 또는 Docker Compose가 필요합니다.
+Linux 컨테이너를 실행하는 Docker Engine과 Docker Compose 사용을 권장합니다. Compose는 공통 이미지 `kpl-v3:local`을 빌드하고 `kpl-v3-peers` 네트워크에 Controller와 Agent 두 개를 실행합니다. 실험을 시작하면 Agent가 같은 네트워크에 Peer 컨테이너를 생성합니다.
 
 ```bash
 docker compose up --build
@@ -40,12 +40,16 @@ export KPL_API_TOKEN='replace-me'
 docker compose up --build
 ```
 
-로컬 바이너리로 실행하려면 Controller와 하나 이상의 Agent를 별도 프로세스로 실행합니다.
+Peer 컨테이너는 내부 API 포트 `18000`과 P2P TCP 포트 `20000`을 사용하며 호스트에는 해당 포트를 공개하지 않습니다. 각 Agent의 `--self-url`은 Peer 컨테이너에서 접근할 수 있어야 하므로 Compose에서는 `http://agent-a:8090`, `http://agent-b:8090`을 사용하고 Controller 주소는 `http://controller:8080`을 사용합니다.
+
+Compose는 Agent가 형제 Peer 컨테이너를 관리할 수 있도록 Agent에 `/var/run/docker.sock`을 마운트하고 `0:0` 사용자로 실행합니다. Peer에는 Docker socket을 마운트하지 않습니다. 이미지에는 Docker CLI와 `tc`를 제공하는 Alpine [iproute2-tc 패키지](https://pkgs.alpinelinux.org/package/v3.22/main/x86_64/iproute2-tc)가 포함됩니다.
+
+Docker 없이 로컬 개발을 하려면 Go 1.24 이상을 설치하고 `--runtime process`를 명시하십시오. 이 런타임은 노드별 네트워크 조건을 지원하지 않습니다.
 
 ```bash
 go build -o bin/kpl ./cmd/kpl
 ./bin/kpl controller --listen :8080
-./bin/kpl agent --id local-a --advertise-url http://127.0.0.1:8090 --controller-url http://127.0.0.1:8080
+./bin/kpl agent --runtime process --id local-a --advertise-url http://127.0.0.1:8090 --controller-url http://127.0.0.1:8080
 ```
 
 시나리오 검증:
@@ -53,6 +57,14 @@ go build -o bin/kpl ./cmd/kpl
 ```bash
 ./bin/kpl validate --scenario examples/smoke.yaml
 ```
+
+### 런타임과 여러 호스트 구성
+
+Agent의 기본값은 `--runtime docker`, `--docker-image kpl-v3:local`, `--docker-network kpl-v3-peers`, `--docker-binary docker`입니다. 각 Agent의 Docker daemon에 이미지가 준비되어 있어야 하며 컨테이너에서 Controller와 Agent 주소에 접근할 수 있어야 합니다. `--runtime process`는 기존 로컬 자식 프로세스 방식을 사용합니다.
+
+Agent를 재시작하면 동일 Docker daemon·network에서 같은 Agent ID의 관리 label이 붙은 이전 Peer 컨테이너를 제거합니다. 기존 실험을 복구하거나 재개하지는 않습니다. Agent ID는 같은 daemon·network 내에서 고유해야 합니다. 컨테이너 제거가 일시적으로 실패하면 오류를 보고하며 후속 종료 요청으로 다시 정리할 수 있습니다.
+
+기본 Compose bridge는 같은 Docker 호스트의 컨테이너만 연결합니다. 여러 호스트에서는 Docker 호스트를 같은 Swarm에 참여시키고 공통 attachable overlay 네트워크를 사용하십시오. 예를 들어 Swarm manager에서 `docker network create --driver overlay --attachable kpl-v3-peers`를 실행합니다. 각 Agent의 `--docker-network`를 해당 네트워크로 지정하고 Controller와 Agent도 여기에 연결하며, 고유한 Agent ID와 접근 가능한 `--advertise-url`, `--self-url`, `--controller-url`을 설정해야 합니다. 미리 생성한 overlay에 Compose를 연결할 경우 `networks.peers` 정의를 `name: kpl-v3-peers`, `external: true`로 바꾸십시오. 호스트별 bridge만으로는 호스트 간 Peer 연결이 되지 않습니다. 세부 조건은 [Docker overlay 네트워크 문서](https://docs.docker.com/engine/network/drivers/overlay/)를 참고하십시오.
 
 ## 모듈 경로
 
@@ -85,7 +97,7 @@ version: 2
 name: mixed-workers
 seed: 42
 onExit: cancel
-jobShutdownTimeout: 10s
+jobShutdownTimeout: 30s
 
 profiles:
   tuned-mesh:
@@ -150,6 +162,41 @@ RandomSub에서 `randomDegree`는 libp2p의 process-global `RandomSubD`를 통�
 
 `appSpecificWeight`는 의도적으로 지원하지 않습니다. PeerScore의 P5 항목에는 프로세스 내부의 애플리케이션 전용 score callback이 필요하지만 직렬화되는 scenario 또는 REST 설정으로는 이를 전달할 수 없습니다. 값은 `0`으로 유지해야 하며, 0이 아닌 값은 효과 없이 받아들이는 대신 설정 검증에서 명시적으로 오류가 됩니다.
 
+### 노드별 네트워크 조건
+
+Docker 런타임에서는 profile 또는 join 단계의 `node` 블록에 `network`를 추가할 수 있습니다. Linux `tc netem`은 각 Peer 컨테이너 안에서 출발지 또는 목적지 포트가 `20000`인 송신 P2P TCP 패킷에만 설정을 적용합니다. Controller, Agent, Peer의 HTTP 제어 트래픽에는 적용하지 않습니다. `delay`는 편도 egress 추가 지연이며 왕복 지연의 목표값이 아닙니다.
+
+```yaml
+node:
+  network:
+    delay: 100ms
+    jitter: 10ms
+    lossPercent: 1
+    duplicatePercent: 0.1
+    corruptPercent: 0.1
+    reorderPercent: 1
+    rateMbps: 10
+    queueLimit: 1000
+```
+
+| 필드 | 의미 |
+|---|---|
+| `delay`, `jitter` | 추가 지연과 변동 폭을 Go duration으로 지정합니다. jitter에는 양수 delay가 필요합니다. |
+| `lossPercent`, `duplicatePercent`, `corruptPercent`, `reorderPercent` | `0`~`100` 범위의 패킷 비율입니다. 재정렬에는 양수 delay가 필요합니다. |
+| `rateMbps` | 음수가 아닌 송신 속도 제한(Mbps)입니다. `0`은 속도 제한을 해제합니다. |
+| `queueLimit` | netem 큐의 최대 패킷 수이며 양의 정수입니다. |
+
+네트워크 조건을 적용하는 Peer에는 Linux `NET_ADMIN`과 호스트 커널의 `sch_netem` 지원이 필요합니다. Docker 런타임은 해당 Peer에만 `NET_ADMIN`을 추가합니다. 커널 지원이 없거나 `tc` 명령이 실패하면 노드 시작도 명시적인 오류로 실패합니다. process 런타임 Agent는 공유 호스트 인터페이스를 변경하지 않으며 네트워크 조건이 있는 요청을 거부합니다.
+
+[`examples/network-conditions.yaml`](examples/network-conditions.yaml)은 bootstrap 노드 두 개와 네트워크 조건이 적용된 worker 네 개를 생성하고, 초기화 대기와 메시지 발행 후 모든 노드를 종료합니다. 대시보드에서 실행하거나 다음과 같이 제출할 수 있습니다.
+
+```bash
+curl -X POST http://localhost:8080/api/v1/experiments \
+  -H 'Content-Type: application/yaml' \
+  -H "Authorization: Bearer ${KPL_API_TOKEN:-}" \
+  --data-binary @examples/network-conditions.yaml
+```
+
 ## 시나리오와 잡
 
 권장 시나리오 형식은 version 2 YAML입니다. v2의 중요한 실행 제어를 유지하면서 명시적인 job 추적과 readiness barrier를 추가했습니다. 기존 줄 단위 `.kpl` DSL 자체를 직접 읽지는 않으므로 해당 명령을 phase로 변환해야 합니다.
@@ -169,7 +216,7 @@ RandomSub에서 `randomDegree`는 libp2p의 process-global `RandomSubD`를 통�
 
 phase 목록이 자연스럽게 끝났을 때 background job을 처리하는 방식은 최상위 `onExit`으로 결정합니다. 기본값 `cancel`은 남은 job을 취소한 다음 종료될 때까지 기다립니다. `onExit: drain`은 job이 자연스럽게 완료될 때까지 기다립니다. 자연스럽게 성공한 실행에서는 이 job 정책만 적용하며, 명시적인 `stop-all` phase가 없으면 Peer 프로세스는 계속 실행됩니다.
 
-`jobShutdownTimeout`의 기본값은 `10s`입니다. 사용자 또는 API 요청이 scenario를 취소하거나 phase 또는 background job이 실패하면 Controller는 남은 job을 취소하고 이 제한 안에서 종료를 기다린 뒤, 모든 Agent에 현재 generation까지 generation fence를 설정하고 Peer를 정리하도록 요청합니다. 명시적인 `stop-all`도 같은 제한 시간 내 job 종료를 적용하고 job 추적 상태를 초기화한 뒤 현재 run generation을 fence로 설정합니다. Agent는 일치하는 프로세스를 종료하기 전에 단조 증가하는 fence를 기록합니다. 따라서 generation N의 늦은 create는 fence보다 먼저 완료되어 cleanup에 포함되거나, generation이 fence 이하이므로 거부됩니다. `stop-all`이 성공하면 scenario는 generation N+1로 진행하므로 이후 phase에서 같은 run ID로 새 노드를 만들고 job ID도 다시 사용할 수 있습니다.
+`jobShutdownTimeout`의 기본값은 `30s`입니다. 사용자 또는 API 요청이 scenario를 취소하거나 phase 또는 background job이 실패하면 Controller는 남은 job을 취소하고 이 제한 안에서 종료를 기다린 뒤, 모든 Agent에 현재 generation까지 generation fence를 설정하고 Peer를 정리하도록 요청합니다. 명시적인 `stop-all`도 같은 제한 시간 내 job 종료를 적용하고 job 추적 상태를 초기화한 뒤 현재 run generation을 fence로 설정합니다. Agent는 일치하는 프로세스를 종료하기 전에 단조 증가하는 fence를 기록합니다. 따라서 generation N의 늦은 create는 fence보다 먼저 완료되어 cleanup에 포함되거나, generation이 fence 이하이므로 거부됩니다. `stop-all`이 성공하면 scenario는 generation N+1로 진행하므로 이후 phase에서 같은 run ID로 새 노드를 만들고 job ID도 다시 사용할 수 있습니다.
 
 `wait-ready`는 실패, 종료 중, 종료된 노드를 포함하여 현재 run generation에서 조건에 맞는 전체 cohort를 검사하며 이전 generation의 노드는 무시합니다. cohort에 실패한 노드가 하나라도 있으면 barrier는 성공하지 않으며, 준비 상태로 보고된 노드도 해당 Agent가 online일 때만 ready 수에 포함됩니다. 이 cohort 역시 지금까지 관측된 노드로만 구성되므로 `await: false` join 다음의 `wait-ready`에는 `jobs: [job-id]` 또는 `minCount` 중 하나가 필요합니다. `jobs`는 지정 producer job이 완료된 뒤 readiness를 검사합니다. `minCount`는 producer를 계속 실행하면서 일부만 생성된 그룹이 준비율을 너무 일찍 만족하지 못하게 합니다.
 
@@ -264,6 +311,6 @@ Agent는 Controller가 cleanup에 사용하는 다음 내부 운영 endpoint를 
 
 전파 메시지에는 발행 시각이 포함됩니다. 서로 다른 물리 서버의 지연을 비교하려면 모든 Agent 호스트에 chrony/NTP를 적용해야 하며, 음수 지연이 감지되면 이벤트에 `clockSkewDetected`가 기록됩니다.
 
-현재 기본 Agent 런타임은 여러 Peer 프로세스를 직접 관리하는 scale 모드입니다. 노드별 Linux `netem` 격리가 필요한 실험은 별도 network namespace 또는 container runtime을 Agent에 추가해야 합니다. HopWave는 지원하지 않습니다.
+Docker 런타임은 Peer마다 네트워크를 격리하고 노드별 P2P egress 조건을 지원합니다. `wait-ready`는 Peer 초기화와 API 준비 완료를 확인하며 mesh 수렴을 검증하지 않습니다. 필요한 실험에는 별도 안정화 대기 단계를 추가하십시오. scenario seed는 앞서 설명한 조건에서 애플리케이션 sampling과 순서를 재현하지만, 커널의 packet impairment나 네트워크 타이밍까지 동일하게 재현하지는 않습니다. HopWave는 지원하지 않습니다.
 
 종료된 노드의 이력은 현재 메모리에 유지되며 Agent heartbeat와 Controller snapshot에도 포함됩니다. 장기간 대규모 churn을 실행할 때 control-plane 상태와 payload가 계속 증가하지 않도록 제한된 보존 정책과 별도의 pagination 기반 history API가 추가로 필요합니다.

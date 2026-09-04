@@ -50,6 +50,14 @@ func (s *Server) handleRunAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.stopRunGeneration(parts[0], generation)
+	if s.config.Runtime == "docker" {
+		cleanupCtx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+		defer cancel()
+		if err := s.waitRunContainers(cleanupCtx, parts[0], generation); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -173,6 +181,9 @@ func (s *Server) proxyPublish(ctx context.Context, nodeID string, request model.
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// Container IPs can be recycled during churn. A late request must never
+	// publish through a different peer that inherited an old IP address.
+	req.Header.Set("X-KPL-Node-ID", nodeID)
 	if s.config.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+s.config.Token)
 	}

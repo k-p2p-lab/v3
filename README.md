@@ -21,13 +21,13 @@ Controller ─── scenario state machine / registry / event store / dashboard
 ```
 
 - **Controller** provides Agent and Peer state, the bootstrap registry, scenario execution, event persistence, the REST API, and the web dashboard.
-- **Agent** runs once per physical or virtual host. It starts and stops Peer processes, forwards publish requests, and batches telemetry for the Controller.
-- **Peer** derives its identity from a deterministic `(run ID, seed)` namespace and runs a selected Kademlia and PubSub configuration.
+- **Agent** runs once per physical or virtual host. It starts and stops one Docker container per Peer by default, forwards publish requests, and batches telemetry for the Controller. A process runtime is also available for local development.
+- **Peer** derives its identity from a deterministic `(run ID, seed)` namespace and runs a selected Kademlia and PubSub configuration. Each Docker Peer has its own network namespace for optional traffic conditions.
 - **Dashboard** uses SSE to update Agent capacity, Peer readiness, connection topology, peer-score summaries, experiment phases, propagation latency, and recent events.
 
 ## Quick start
 
-Go 1.24 or later, or Docker Compose, is required.
+Docker Engine with Linux containers and Docker Compose is the recommended setup. Compose builds the shared `kpl-v3:local` image and starts the Controller and two Agents on the `kpl-v3-peers` network. Agents create Peer containers on that same network when an experiment runs.
 
 ```bash
 docker compose up --build
@@ -40,12 +40,16 @@ export KPL_API_TOKEN='replace-me'
 docker compose up --build
 ```
 
-To run local binaries, start the Controller and at least one Agent as separate processes.
+Peer containers use internal API port `18000` and P2P TCP port `20000`; those ports are not published to the host. Each Agent's `--self-url` must be reachable from its Peer containers, so Compose uses `http://agent-a:8090` and `http://agent-b:8090`, with `http://controller:8080` for the Controller.
+
+Compose mounts `/var/run/docker.sock` into the Agents and runs them as `0:0` so they can manage sibling Peer containers. The Docker socket is not mounted into Peers. The image includes Docker CLI and Alpine's [iproute2-tc package](https://pkgs.alpinelinux.org/package/v3.22/main/x86_64/iproute2-tc), which supplies `tc`.
+
+For local development without Docker, install Go 1.24 or later and explicitly select `--runtime process`. This runtime does not support node network conditions.
 
 ```bash
 go build -o bin/kpl ./cmd/kpl
 ./bin/kpl controller --listen :8080
-./bin/kpl agent --id local-a --advertise-url http://127.0.0.1:8090 --controller-url http://127.0.0.1:8080
+./bin/kpl agent --runtime process --id local-a --advertise-url http://127.0.0.1:8090 --controller-url http://127.0.0.1:8080
 ```
 
 Validate a scenario without running it:
@@ -53,6 +57,14 @@ Validate a scenario without running it:
 ```bash
 ./bin/kpl validate --scenario examples/smoke.yaml
 ```
+
+### Runtime and multiple hosts
+
+The Agent defaults are `--runtime docker`, `--docker-image kpl-v3:local`, `--docker-network kpl-v3-peers`, and `--docker-binary docker`. The image must be available on each Agent's Docker daemon, and Controller/Agent URLs must be reachable from the containers. `--runtime process` retains the local child-process backend.
+
+On restart, an Agent removes previously managed Peer containers with its Agent ID on the same Docker daemon and network. It does not restore or resume previous experiments. Agent IDs must be unique within that daemon/network. Container removal failures are reported; a later stop request retries cleanup after a temporary daemon outage.
+
+The supplied Compose bridge connects containers on a single Docker host. For multiple hosts, join the Docker hosts to a Swarm and use a shared attachable overlay network, for example `docker network create --driver overlay --attachable kpl-v3-peers` on a Swarm manager. Configure each Agent's `--docker-network` to use that network, attach the Controller and Agents to it, and provide unique Agent IDs and reachable `--advertise-url`, `--self-url`, and `--controller-url` values. If reusing Compose with a pre-created overlay, replace its `networks.peers` definition with `name: kpl-v3-peers` and `external: true`; a host-local bridge cannot provide cross-host Peer connectivity. See the [Docker overlay network requirements](https://docs.docker.com/engine/network/drivers/overlay/).
 
 ## Module path
 
@@ -85,7 +97,7 @@ version: 2
 name: mixed-workers
 seed: 42
 onExit: cancel
-jobShutdownTimeout: 10s
+jobShutdownTimeout: 30s
 
 profiles:
   tuned-mesh:
@@ -150,6 +162,41 @@ When `gossipsub.score` is enabled, `scoreInspectInterval` defaults to `1s`. Each
 
 `appSpecificWeight` is intentionally unsupported. PeerScore's P5 term requires an in-process application-specific scoring callback, which cannot be supplied by the serializable scenario or REST configuration. Keep it at `0`; any non-zero value fails configuration validation explicitly instead of being accepted without effect.
 
+### Per-node network conditions
+
+With the Docker runtime, add `network` to a profile or a join phase's `node` block. Linux `tc netem` applies the settings inside each Peer container to outgoing P2P TCP packets with source or destination port `20000`. Controller, Agent, and Peer HTTP control traffic bypasses these rules. A configured delay is a one-way egress delay, not a round-trip latency target.
+
+```yaml
+node:
+  network:
+    delay: 100ms
+    jitter: 10ms
+    lossPercent: 1
+    duplicatePercent: 0.1
+    corruptPercent: 0.1
+    reorderPercent: 1
+    rateMbps: 10
+    queueLimit: 1000
+```
+
+| Field | Meaning |
+|---|---|
+| `delay`, `jitter` | Go durations for added delay and its variation. Jitter requires a positive delay. |
+| `lossPercent`, `duplicatePercent`, `corruptPercent`, `reorderPercent` | Packet percentages from `0` to `100`; reordering requires a positive delay. |
+| `rateMbps` | Non-negative egress rate in megabits per second; `0` disables the rate limit. |
+| `queueLimit` | Positive integer specifying the maximum packets in the netem queue. |
+
+Peers with network conditions require Linux `NET_ADMIN` and host-kernel `sch_netem` support. The Docker runtime adds `NET_ADMIN` only to those Peers. Missing kernel support or a failed `tc` command fails node startup explicitly. A process-runtime Agent rejects network conditions rather than applying rules to its shared host interface.
+
+[`examples/network-conditions.yaml`](examples/network-conditions.yaml) creates two bootstrap nodes and four constrained workers, waits for initialization, publishes sample messages, and stops all nodes. Run it from the dashboard or submit it with:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/experiments \
+  -H 'Content-Type: application/yaml' \
+  -H "Authorization: Bearer ${KPL_API_TOKEN:-}" \
+  --data-binary @examples/network-conditions.yaml
+```
+
 ## Scenarios and jobs
 
 The recommended scenario format is version 2 YAML. It preserves the important v2 execution controls while adding explicit job tracking and readiness barriers. The old line-oriented `.kpl` DSL is not parsed directly; translate its commands into phases.
@@ -169,7 +216,7 @@ For `join`, `count` is the exact number of create operations. For `publish` and 
 
 Background-job behavior at the natural end of the phase list is controlled by top-level `onExit`. Its default, `cancel`, cancels remaining jobs and then waits for them to stop. `onExit: drain` instead waits for them to complete naturally. A naturally successful completion applies this job policy but leaves Peer processes running unless the scenario contains an explicit `stop-all`.
 
-`jobShutdownTimeout` defaults to `10s`. When a user or API request cancels a scenario, or when any scenario phase or background job fails, the Controller cancels outstanding jobs and waits for their termination within this bound, then asks every Agent to generation-fence and clean up Peer processes through the current generation. An explicit `stop-all` uses the same bounded job shutdown, resets job tracking, and fences the current run generation. The Agent records the monotonically increasing fence before stopping matching processes: a late create at generation N either committed before the fence and is included in cleanup, or is rejected because its generation is at or below the fence. After `stop-all` succeeds, the scenario advances to generation N+1, so later phases may create new nodes under the same run ID and may reuse job IDs.
+`jobShutdownTimeout` defaults to `30s`. When a user or API request cancels a scenario, or when any scenario phase or background job fails, the Controller cancels outstanding jobs and waits for their termination within this bound, then asks every Agent to generation-fence and clean up Peer processes through the current generation. An explicit `stop-all` uses the same bounded job shutdown, resets job tracking, and fences the current run generation. The Agent records the monotonically increasing fence before stopping matching processes: a late create at generation N either committed before the fence and is included in cleanup, or is rejected because its generation is at or below the fence. After `stop-all` succeeds, the scenario advances to generation N+1, so later phases may create new nodes under the same run ID and may reuse job IDs.
 
 `wait-ready` evaluates the complete matching cohort in the current run generation, including failed, stopping, and stopped nodes; nodes from previous generations are ignored. A failed cohort member prevents the barrier from succeeding, and a node reported as ready contributes to the ready count only while its Agent is online. Because the cohort still contains only nodes observed so far, `wait-ready` after an `await: false` join must specify either `jobs: [job-id]` or `minCount`. `jobs` waits for the selected producer jobs to finish before checking readiness; `minCount` leaves them running but prevents a partially created group from satisfying the ratio too early.
 
@@ -264,6 +311,6 @@ The same four job counters are present in `/api/v1/snapshot` and SSE snapshots. 
 
 Propagation messages include the publisher's timestamp. Synchronize all Agent hosts with chrony or NTP before comparing latency across physical machines. Events with a negative observed latency are marked with `clockSkewDetected`.
 
-The default Agent runtime is a scale mode that manages multiple Peer processes directly. Experiments requiring per-node Linux `netem` isolation need an additional network-namespace or container runtime backend for the Agent. HopWave is not supported.
+The Docker runtime isolates each Peer and supports per-node P2P egress conditions. `wait-ready` confirms Peer initialization and API readiness; it does not verify mesh convergence. Add a settling phase when the experiment needs it. Scenario seeds reproduce application sampling and ordering under the documented conditions, but do not promise identical kernel packet impairment or network timing. HopWave is not supported.
 
 Stopped-node history is currently retained in memory and included in Agent heartbeats and Controller snapshots. Long-running, high-volume churn still needs a bounded retention policy and a separate paginated history API to prevent control-plane state and payloads from growing indefinitely.
