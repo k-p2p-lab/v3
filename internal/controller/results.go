@@ -556,7 +556,7 @@ func (snapshot *resultSnapshot) writeZIP(ctx context.Context, output io.Writer) 
 			break
 		}
 	}
-	metrics, err := summarizeRunEvents(snapshot.result.ID, resultContextReader{ctx: ctx, reader: eventLog})
+	metrics, err := summarizeRunEvents(snapshot.result.ID, resultContextReader{ctx: ctx, reader: eventLog}, snapshot.exportedAt)
 	if err != nil {
 		return fmt.Errorf("summarize saved events: %w", err)
 	}

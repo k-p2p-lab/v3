@@ -53,13 +53,14 @@ phases:
     group: worker
     count: 10
     payloadSize: 1024
+    deliveryWindow: 10s
     interval:
       model: fixed
       value: 1s
 
   - name: settle
     action: wait
-    duration: 5s
+    duration: 15s
 
   - name: cleanup
     action: stop-all

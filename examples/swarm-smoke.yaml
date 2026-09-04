@@ -23,6 +23,6 @@ phases:
   - {action: join, group: worker, role: worker, profile: worker, count: 5, placement: balanced, parallel: true, parallelism: 4}
   - {action: wait-ready, group: worker, readyRatio: 1, timeout: 2m}
   - {action: wait, duration: 20s}
-  - {action: publish, group: worker, topic: kpl/swarm, count: 5, repeat: 10, payloadSize: 4096, interval: {model: fixed, value: 200ms}}
+  - {action: publish, group: worker, topic: kpl/swarm, count: 5, repeat: 10, payloadSize: 4096, deliveryWindow: 10s, interval: {model: fixed, value: 200ms}}
   - {action: wait, duration: 1m}
   - {action: stop-all}

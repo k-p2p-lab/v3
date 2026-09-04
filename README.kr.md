@@ -26,7 +26,7 @@ Controller ─── scenario state machine / registry / event store / dashboard
 - **Agent**: 물리/가상 호스트마다 하나씩 실행합니다. 기본적으로 Peer마다 Docker 컨테이너를 생성해 시작·종료·발행을 담당하고 telemetry를 묶어서 Controller로 전달합니다. 로컬 개발용 process 런타임도 제공합니다.
 - **Peer**: 결정적인 `(run ID, seed)` namespace로 ID를 생성하고 선택한 Kademlia와 PubSub 설정으로 실행됩니다. Docker Peer는 별도 network namespace에서 선택적인 네트워크 조건을 적용합니다.
 - **Dashboard**: Agent 용량, Peer 준비 상태, peer score 요약, 실험 단계, 전파 지연과 최근 이벤트를 SSE로 갱신합니다. 전체 폭의 [대화형 토폴로지](docs/topology.kr.md)는 같은 크기의 Agent별 부채꼴 안에 번호가 있는 Peer를 배치하고 Kademlia 라우팅 테이블, GRAFT 기반 GossipSub mesh, transport 연결을 구분합니다. Peer는 표시된 연결을 기준으로 소속 영역 안에서 자리를 잡으며 레이어·topic 필터, 움직임 일시 정지·재개, 확대·이동과 이웃 강조로 관계를 확인할 수 있습니다.
-- **실험 분석**: 발행 직전 원격 수신 대상을 고정해 churn 도달률, 첫 수신 지연, 평균 중복 수를 집계합니다. Agent 번호로 토폴로지와 상태 표를 연결하고 종료된 Peer는 토폴로지에서 숨깁니다. 웹에서 1~100회 순차 실행, 결과 ZIP 다운로드와 삭제를 지원합니다. [지표 정의와 사용법](docs/experiment-metrics.kr.md)을 참고하십시오.
+- **실험 분석**: 지정한 시간 동안 계속 구독한 세션의 기한 내 도달률을 집계하고, 발행 당시 세션 전체의 도달률·지속 구독 비중·관측 불확실성을 함께 표시합니다. 첫 수신 지연과 평균 중복 수에도 같은 적격 대상을 적용합니다. Agent 번호로 토폴로지와 상태 표를 연결하고 종료된 Peer는 토폴로지에서 숨깁니다. 웹에서 1~100회 순차 실행, 결과 ZIP 다운로드와 삭제를 지원합니다. [지표 정의와 사용법](docs/experiment-metrics.kr.md)을 참고하십시오.
 
 ## 빠른 실행
 
@@ -259,7 +259,7 @@ curl -X POST http://localhost:8080/api/v1/experiments \
 |---|---|
 | `join` | Agent 용량을 고려하여 노드를 생성합니다. |
 | `wait-ready` | 필요하면 지정 job 완료 또는 `minCount` 하한을 먼저 확인한 뒤 그룹/type의 목표 준비율을 기다립니다. |
-| `publish` | 준비된 노드를 그룹에서 선택해 메시지를 발행합니다. |
+| `publish` | 준비된 노드를 그룹에서 선택해 메시지를 발행합니다. `deliveryWindow`는 메시지별 수신 기한입니다(기본 `10s`, 양수, 최대 `1h`). |
 | `leave` | 지정 그룹에서 노드를 선택해 종료합니다. |
 | `wait` / `sleep` | 지정 시간 동안 기다립니다. `sleep`은 v2 호환 alias입니다. |
 | `wait-jobs` | `jobs`에 지정한 background job을 기다리며, 목록이 비어 있으면 모든 job을 기다립니다. |

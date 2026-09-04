@@ -46,6 +46,7 @@ type Phase struct {
 	MinCount        int              `json:"minCount,omitempty" yaml:"minCount,omitempty"`
 	PayloadSize     int              `json:"payloadSize" yaml:"payloadSize"`
 	PayloadEncoding string           `json:"payloadEncoding,omitempty" yaml:"payloadEncoding,omitempty"`
+	DeliveryWindow  string           `json:"deliveryWindow,omitempty" yaml:"deliveryWindow,omitempty"`
 	Topic           string           `json:"topic" yaml:"topic"`
 	Interval        Distribution     `json:"interval" yaml:"interval"`
 	Lifetime        Distribution     `json:"lifetime" yaml:"lifetime"`
@@ -145,6 +146,9 @@ func (s *Scenario) Validate() error {
 		if p.Action != "publish" && p.PayloadEncoding != "" {
 			return fmt.Errorf("phase %q: payloadEncoding is only supported for publish", p.Name)
 		}
+		if p.Action != "publish" && p.DeliveryWindow != "" {
+			return fmt.Errorf("phase %q: deliveryWindow is only supported for publish", p.Name)
+		}
 		switch p.Action {
 		case "join":
 			if p.Placement == "" {
@@ -242,6 +246,13 @@ func (s *Scenario) Validate() error {
 				removeBackgroundJoinJobs(backgroundJoins, p.Jobs)
 			}
 		case "publish":
+			if p.DeliveryWindow == "" {
+				p.DeliveryWindow = "10s"
+			}
+			window, err := time.ParseDuration(p.DeliveryWindow)
+			if err != nil || window <= 0 || window > time.Hour {
+				return fmt.Errorf("phase %q: deliveryWindow must be a positive duration no longer than 1h", p.Name)
+			}
 			if p.PayloadEncoding == "" {
 				p.PayloadEncoding = "envelope"
 			}

@@ -33,6 +33,7 @@ type runMetricAccumulator struct {
 	seen                             map[string]struct{}
 	messages                         map[messageMetricKey]*messageMetric
 	published, delivered, duplicates int
+	window                           sessionWindowAccumulator
 }
 
 func newRunMetricAccumulator() *runMetricAccumulator {
@@ -40,6 +41,9 @@ func newRunMetricAccumulator() *runMetricAccumulator {
 }
 
 func eventIdentity(event model.TraceEvent) string {
+	if event.SessionID != "" && event.Sequence > 0 {
+		return fmt.Sprintf("%s\x00session:%s:%d", event.NodeID, event.SessionID, event.Sequence)
+	}
 	if event.EventID == "" {
 		return ""
 	}
@@ -61,6 +65,7 @@ func (a *runMetricAccumulator) observe(event model.TraceEvent) bool {
 	if id := eventIdentity(event); id != "" {
 		a.seen[id] = struct{}{}
 	}
+	a.window.observe(event)
 	if event.Type != "publish" && event.Type != "deliver" && event.Type != "duplicate" {
 		return true
 	}
@@ -148,7 +153,18 @@ type propagationSample struct {
 	seconds float64
 }
 
-func (a *runMetricAccumulator) summarize(runID string) (model.Metrics, []propagationSample) {
+func (a *runMetricAccumulator) summarize(runID string, asOf ...time.Time) (model.Metrics, []propagationSample) {
+	if a.window.enabled {
+		boundary := time.Now().UTC()
+		if len(asOf) > 0 {
+			boundary = asOf[0]
+		}
+		return a.window.summarize(runID, boundary, a.published, a.delivered, a.duplicates)
+	}
+	return a.summarizeLegacy(runID)
+}
+
+func (a *runMetricAccumulator) summarizeLegacy(runID string) (model.Metrics, []propagationSample) {
 	result := model.Metrics{Definition: "dispatch-cohort-v1", RunID: runID, Published: a.published, Delivered: a.delivered, Duplicates: a.duplicates}
 	latencies := make([]float64, 0)
 	samples := make([]propagationSample, 0)
@@ -201,7 +217,7 @@ func (a *runMetricAccumulator) summarize(runID string) (model.Metrics, []propaga
 // Rebuild the identical metrics from a pinned events.jsonl prefix in a result
 // archive. No current topology, Controller uptime, or event arrival order is
 // required. Legacy events without a cohort retain counts but have no ratio.
-func summarizeRunEvents(runID string, reader io.Reader) (model.Metrics, error) {
+func summarizeRunEvents(runID string, reader io.Reader, asOf ...time.Time) (model.Metrics, error) {
 	a := newRunMetricAccumulator()
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
@@ -219,7 +235,7 @@ func summarizeRunEvents(runID string, reader io.Reader) (model.Metrics, error) {
 	if err := scanner.Err(); err != nil {
 		return model.Metrics{}, fmt.Errorf("read event log: %w", err)
 	}
-	metrics, _ := a.summarize(runID)
+	metrics, _ := a.summarize(runID, asOf...)
 	return metrics, nil
 }
 

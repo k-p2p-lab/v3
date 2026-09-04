@@ -41,7 +41,7 @@ Each ZIP contains:
 | `scenario.yaml` | Exact scenario submitted for the run |
 | `experiment.json` | Original saved experiment metadata, state, seed, and job counters |
 | `events.jsonl` | All event records saved at the export boundary; one JSON object per line, or an empty file when no events have been recorded |
-| `metrics.json` | Whole-run cohort delivery ratio, first remote latency, and average duplicates rebuilt from the same event-log prefix |
+| `metrics.json` | Session-window delivery bounds, starting-cohort results, coverage, pending/unknown counts, first remote latency, and observed duplicates rebuilt from the same event-log prefix; historical definitions stay legacy |
 | `export.json` | Export time, run state, active/partial flags, and the captured source file sizes |
 
 The export captures file sizes under the Controller's persistence lock and streams the ZIP after releasing that lock. Events appended later are excluded, so a slow download does not hold up telemetry writes. A completed run can still receive delayed telemetry: download again after collection has settled if you need those later records. `partial: false` indicates a terminal recorded run state, not a guarantee that no telemetry was lost. The archive does not contain message payloads, PCAP files, or the Prometheus/Grafana databases.
@@ -60,7 +60,7 @@ curl --fail --output run-results.zip \
 
 Replace `RUN_ID` with an ID from the saved list. In Swarm, use the control node's address. With `KPL_STACK_NAME=kpl`, original files reside in the `kpl_controller-data` volume on that node. It is mounted at `/var/lib/kpl/data` in the Controller, with run files under `runs/<run-id>`. The manager's `swarm.sh remove` command preserves this volume. There is no automatic raw-event retention limit or cross-node replication; manage disk space and backups separately.
 
-Exports contain collected telemetry. Peer transmission failures, full in-memory queues, and unflushed shutdown data can leave gaps; a download cannot recover missing events. `/api/v1/events` still returns only the latest 300 events, and the web event view displays the newest 40 from that buffer, while the ZIP reads the full saved log.
+Exports contain collected telemetry, including subscription-session start/checkpoint/stop evidence and recorded Agent termination confirmations. Peer retries, Agent queue backpressure, and graceful drains reduce loss but have finite bounds; forced termination does not drain the Peer. Source sequence gaps make missing receipts unknown. A download cannot recover missing events or reveal completely invisible sessions. `/api/v1/events` still returns only the latest 300 events, and the web event view displays the newest 40 from that buffer, while the ZIP reads the full saved log.
 
 ## Metric definitions
 
@@ -68,11 +68,18 @@ Exports contain collected telemetry. Peer transmission failures, full in-memory 
 |---|---|
 | `kpl_events_total` | Cumulative events received by the Controller, labeled by `run_id`, `agent_id`, `event_type`, and `topic` |
 | `kpl_message_bytes_total` | Published/delivered PubSub data bytes, excluding libp2p framing and TCP/IP headers |
-| `kpl_propagation_latency_seconds` | Whole-run first remote cohort delivery histogram; excludes local/late-join/raw/unknown-cohort/negative/unmeasured samples |
-| `kpl_delivery_expected_pairs`, `kpl_delivery_reached_pairs`, `kpl_delivery_ratio` | Frozen dispatch-time remote target pairs, successful pairs, and their ratio, grouped by run |
-| `kpl_delivery_duplicate_copies`, `kpl_delivery_duplicates_per_reached_pair` | Extra PubSub copies at successful remote cohort pairs, and copies per successful pair |
+| `kpl_window_stable_pairs`, `kpl_window_reached_pairs` | Mature message/receiver-session pairs proven subscribed for the whole delivery window, and their on-time successes; labeled by `run_id` |
+| `kpl_window_unknown_pairs`, `kpl_window_missed_pairs`, `kpl_window_late_pairs` | Unknown receipt, confirmed miss, and late-receipt counts among stable pairs |
+| `kpl_window_delivery_ratio` (`bound`: `lower` / `upper`) | Logical bounds on stable conditional delivery, absent with no stable pairs; not confidence intervals |
+| `kpl_window_initial_pairs`, `kpl_window_initial_reached_pairs`, `kpl_window_initial_unknown_pairs` | Observed starting-cohort pairs, on-time successes including departed sessions, and unknown receipts |
+| `kpl_window_initial_delivery_ratio` (`bound`: `lower` / `upper`), `kpl_window_stable_coverage` | Starting-cohort bounds and stable/starting-cohort coverage; absent when availability is unknown or measurement is incomplete |
+| `kpl_window_departed_pairs`, `kpl_window_availability_unknown_pairs` | Confirmed departures and pairs whose session availability cannot be established |
+| `kpl_window_pending_publications`, `kpl_window_finalized_publications` | Messages before their deadline and messages whose window has elapsed; late telemetry can still revise finalized results |
+| `kpl_window_measurement_incomplete`, `kpl_window_legacy_publications` | Known unscoped measurement streams (0/1), and publications using historical definitions; a zero flag does not detect completely invisible telemetry |
+| `kpl_window_propagation_latency_seconds` | First on-time stable remote envelope delivery histogram, labeled by `run_id`, receiving `agent_id`, and `topic`; raw/local/late/departed/unknown/invalid samples excluded |
+| `kpl_window_duplicate_copies`, `kpl_window_duplicates_per_reached_pair` | Observed extra PubSub copies within the window at successful stable remote pairs, and copies per successful pair |
 | `kpl_operation_failures_total` | Publish/leave failures recorded under `onError: continue` |
-| `kpl_telemetry_dropped_events_total` | Events that Peers report dropping because their telemetry queues were full |
+| `kpl_telemetry_dropped_events_total` | Reported telemetry loss; neither P2P packet loss nor proof that unreported loss is zero |
 | `kpl_nodes` | Peer counts by experiment, Agent, group, role, type, and state |
 | `kpl_agent_*` | Agent online status, capacity, and latest heartbeat observed by the Controller |
 | `kpl_experiment_*` | Experiment state, phase, and job state |
@@ -84,15 +91,19 @@ Exports contain collected telemetry. Peer transmission failures, full in-memory 
 
 For current relationships, the Control Room's [interactive topology](topology.md) uses Peer status snapshots to display transport, Kademlia routing-table, and GossipSub mesh layers independently. These live snapshots do not depend on the recent-event buffer and are not an exhaustive historical graph in Prometheus or result exports.
 
-Overall `deliver` event counts include the publisher's local delivery. The cohort delivery ratio, first-delivery latency, and duplicate average exclude it and late joiners; a cohort member leaving remains in the delivery denominator. TCP retransmissions can turn packet loss into delay rather than message loss. See the [precise definitions, equations, and sources](experiment-metrics.md). The latency histogram can be corrected by late batches: Grafana queries cumulative buckets directly for whole-run quantiles, rather than applying `rate`/`increase` to it.
+`session-window-v1` uses actual publication time and `publish.deliveryWindow` (default 10s, positive and at most 1h). Session evidence must prove subscription throughout that window for the primary conditional ratio. Departures before the deadline are excluded even after early success; they remain in the starting-cohort ratio. Later joins and publisher-local receipts are excluded from both. Disconnection or mesh changes do not remove a subscriber. Show stable bounds, starting-cohort bounds, coverage, pending messages, and uncertainty together. A missing sequence means unknown, not a confirmed miss; an absent availability proof is not a confirmed departure.
+
+Grafana session panels use only the Run filter and aggregate receiver-pair counts, not averages of percentages. Bounds describe known stable sessions; they do not establish an unseen population. Starting-cohort bounds and coverage are N/A if any selected new run has availability uncertainty or incomplete measurement. The legacy-publications panel identifies historical data excluded from these results. New panels use `kpl_window_*` only; historical `kpl_delivery_*` and `kpl_propagation_latency_seconds` keep their old meanings and must not be combined.
+
+Overall `deliver` counts include local delivery and cannot be divided by publication counts to obtain reachability. TCP retransmissions can turn packet loss into delay rather than message loss. See the [precise definitions, equations, and sources](experiment-metrics.md). Late batches can correct window gauges and histogram buckets; query them directly, not with `rate`/`increase`. Grafana latency shows cumulative whole-run quantiles, not quantiles restricted to the selected time range.
 
 Cumulative counters are independent of the web interface's 300-event recent buffer. They reset when the Controller process restarts, and historical `events.jsonl` files are not replayed automatically. Time series already stored in Prometheus remain available, and `rate`/`increase` handle observed counter resets. They cannot recover events that disappeared before a scrape or telemetry that failed to arrive. Because `increase` estimates interval growth from scrape samples, it does not always exactly match integer cumulative event counts.
 
-Raw deliveries contribute to delivery counts and bytes but not to the latency histogram. Do not interpret intervals without latency samples as 0 ms. Clock synchronization affects propagation latency measurements when Peers run on different hosts.
+Raw deliveries contribute to delivery counts and bytes but not to the latency histogram. Do not interpret intervals without latency samples as 0 ms. Synchronize host clocks for publication, session lifetime, deadline, and latency comparisons. A positive clock offset may remain undetected. Checkpoint evidence describes instrumented application sessions rather than physical uptime.
 
 ## Execution validation
 
-The historical runs below predate frozen recipient cohorts and included local latency samples. They validate the previous event-count implementation, not the new cohort latency distribution. The updated Controller and Peer tests cover churn departures/late joins, first delivery, retry deduplication, raw IDs, and archive reconstruction.
+The historical runs below predate session-window measurement and included local latency samples. They validate the previous event-count implementation, not the new conditional delivery ratio or latency distribution. Compare new runs using the same `session-window-v1` definition and delivery window.
 
 On 2026-09-04, `examples/monitoring.yaml` was executed and the following results were compared with the original `events.jsonl`. The run ID was `run-20260904T024349Z-345a`. All test Peer containers were removed after the experiment finished.
 
@@ -112,7 +123,7 @@ Heartbeat processing also initializes zero baselines for `add_peer` and `remove_
 
 Prometheus time series are stored in the `prometheus-data` named volume, and Grafana settings in `grafana-data`. Both survive ordinary container recreation. Prometheus retention is set to 15 days or 5 GB, whichever limit is reached first. The 5 GB setting is not a hard ceiling on disk usage: WAL, head data, and compaction require additional space. See the [Prometheus storage documentation](https://prometheus.io/docs/prometheus/latest/storage/).
 
-Edits to dashboard JSON files in `monitoring/grafana/dashboards` are applied at 30-second intervals. The provisioned originals are managed as files. To save a separate dashboard, sign in as an administrator and work with a copy. See the [Grafana provisioning documentation](https://grafana.com/docs/grafana/latest/administration/provisioning/).
+With Compose bind mounts, edits to dashboard JSON files in `monitoring/grafana/dashboards` are applied at 30-second intervals. Swarm configs are immutable: redeploy the stack with the versioned dashboard config reference to apply this update. The provisioned originals are managed as files. To save a separate dashboard, sign in as an administrator and work with a copy. See the [Grafana provisioning documentation](https://grafana.com/docs/grafana/latest/administration/provisioning/).
 
 ```bash
 # Check scrape target status.

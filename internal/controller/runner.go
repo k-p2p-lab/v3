@@ -412,7 +412,7 @@ func (s *Server) runPublish(ctx context.Context, runID string, phase scenario.Ph
 		if topic == "" {
 			topic = nodeDefaultTopic(node)
 		}
-		request := model.PublishRequest{RunID: runID, Topic: topic, PayloadSize: phase.PayloadSize, PayloadEncoding: phase.PayloadEncoding}
+		request := model.PublishRequest{RunID: runID, Topic: topic, PayloadSize: phase.PayloadSize, PayloadEncoding: phase.PayloadEncoding, DeliveryWindow: phase.DeliveryWindow}
 		if !s.capturePublishCohort(&request, node, nodePublishTopics(node, topic)) {
 			return s.phaseOperationError(operationCtx, runID, phase, node, topic, fmt.Errorf("publisher %q is no longer ready", node.ID))
 		}
@@ -920,7 +920,6 @@ func nodePublishTopics(node model.Node, requested string) []string {
 	}
 	unique := make(map[string]struct{}, len(configured))
 	for _, topic := range configured {
-		topic = strings.TrimSpace(topic)
 		if topic != "" && nodeCanPublishTopic(node, topic) {
 			unique[topic] = struct{}{}
 		}
@@ -962,7 +961,7 @@ func nodeFeatureEnabled(node model.Node, key string, fallback bool) bool {
 
 func nodeDefaultTopic(node model.Node) string {
 	for _, topic := range nodeTopics(node) {
-		if topic = strings.TrimSpace(topic); topic != "" {
+		if topic != "" {
 			return topic
 		}
 	}
@@ -978,7 +977,7 @@ func nodeHasTopic(node model.Node, topic string) bool {
 		return topic == "kpl/default"
 	}
 	for _, candidate := range topics {
-		if strings.TrimSpace(candidate) == topic {
+		if candidate == topic {
 			return true
 		}
 	}

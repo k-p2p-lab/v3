@@ -47,7 +47,7 @@ docker compose down
 # make가 설치되어 있으면 make stop도 같은 순서로 실행합니다.
 ```
 
-Controller는 SIGTERM 시 신규 실험 접수를 중단하고 HTTP 연결·실험 작업·Peer 정리·최종 실행 상태 저장을 기다립니다. 기본 `jobShutdownTimeout: 3m`이 job 종료와 Peer 정리에 각각 적용되므로 Compose의 Controller 종료 유예를 `7m`, Agent를 `3m`로 설정했습니다. 더 긴 `jobShutdownTimeout`을 사용하는 시나리오는 Controller 종료 유예도 함께 늘리십시오. 외부 systemd 단위로 Compose를 관리한다면 해당 단위의 종료 제한이 이 유예를 먼저 끊지 않아야 합니다.
+Controller는 SIGTERM 시 신규 실험 접수를 중단하고 HTTP 연결·실험 작업·Peer 정리·최종 실행 상태 저장을 기다립니다. 기본 `jobShutdownTimeout: 3m`이 job 종료와 Peer 정리에 각각 적용되므로 Compose의 Controller 종료 유예를 `7m`로 설정했습니다. Compose와 Swarm의 Agent 종료 유예는 최대 175초의 Peer 정리 이후 HTTP 처리 완료와 제한 시간 내 telemetry 전송까지 허용하도록 `4m`입니다. 더 긴 `jobShutdownTimeout`을 사용하는 시나리오는 Controller 종료 유예도 함께 늘리십시오. 외부 systemd 단위로 Compose를 관리한다면 해당 단위의 종료 제한이 이 유예를 먼저 끊지 않아야 합니다.
 
 `docker compose down`만 실행하면 의존성 역순으로 Agent가 먼저 정지할 수 있습니다. Agent도 자체적으로 Peer를 정리하지만 Controller의 최종 상태 기록까지 확보하려면 위 순서를 사용하십시오. 강제 종료·전원 손실 후에는 Agent 시작 시 같은 Agent ID/네트워크의 잔존 관리 컨테이너를 회수합니다. 이전 실험을 자동 재개하지는 않습니다.
 

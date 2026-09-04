@@ -50,7 +50,7 @@ func TestAgentRunReportsShutdownCleanupFailure(t *testing.T) {
 			select {
 			case err := <-done:
 				if failCleanup {
-					if err == nil || !strings.Contains(err.Error(), "shutdown did not finish peer cleanup") || !strings.Contains(err.Error(), "daemon unavailable during rm") {
+					if err == nil || !strings.Contains(err.Error(), "Agent shutdown incomplete") || !strings.Contains(err.Error(), "daemon unavailable during rm") {
 						t.Fatalf("shutdown returned success or lost the cleanup failure: %v", err)
 					}
 				} else if err != nil {

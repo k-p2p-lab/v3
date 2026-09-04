@@ -382,3 +382,41 @@ func TestPublishTopicsAndEncodingValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestPublishMeasurementWindowValidationAndFields(t *testing.T) {
+	server, _ := publicationTestServer(t)
+	for _, window := range []string{"bad", "0s", "-1s", "1h1ns", "999999999999999999999h"} {
+		body, _ := json.Marshal(model.PublishRequest{Topic: "*", DeliveryWindow: window})
+		before := server.publishSeq.Load()
+		response := httptest.NewRecorder()
+		server.handler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/publish", bytes.NewReader(body)))
+		if response.Code != http.StatusBadRequest || server.publishSeq.Load() != before {
+			t.Fatalf("invalid window %q published: status=%d", window, response.Code)
+		}
+	}
+	for _, test := range []struct{ window, encoding, want string }{{"", "envelope", "10s"}, {"1500ms", "raw", "1.5s"}, {"1h", "envelope", "1h0m0s"}} {
+		for len(server.telemetry.events) > 0 {
+			<-server.telemetry.events
+		}
+		body, _ := json.Marshal(model.PublishRequest{Topic: "topic-a", PayloadSize: 32, PayloadEncoding: test.encoding, DeliveryWindow: test.window})
+		response := httptest.NewRecorder()
+		server.handler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/publish", bytes.NewReader(body)))
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("window %q rejected: %d %s", test.window, response.Code, response.Body.String())
+		}
+		found := false
+		for len(server.telemetry.events) > 0 {
+			event := <-server.telemetry.events
+			if event.Type != "publish" {
+				continue
+			}
+			found = true
+			if event.Fields["measurementDefinition"] != "session-window-v1" || event.Fields["deliveryWindow"] != test.want || event.Fields["payloadEncoding"] != test.encoding || event.SessionID == "" || event.Sequence == 0 {
+				t.Fatalf("measurement metadata missing: %+v", event)
+			}
+		}
+		if !found {
+			t.Fatal("missing successful publication event")
+		}
+	}
+}

@@ -26,7 +26,7 @@ Controller ─── scenario state machine / registry / event store / dashboard
 - **Agent** runs once per physical or virtual host. It starts and stops one Docker container per Peer by default, forwards publish requests, and batches telemetry for the Controller. A process runtime is also available for local development.
 - **Peer** derives its identity from a deterministic `(run ID, seed)` namespace and runs a selected Kademlia and PubSub configuration. Each Docker Peer has its own network namespace for optional traffic conditions.
 - **Dashboard** uses SSE to update Agent capacity, Peer readiness, peer-score summaries, experiment phases, propagation latency, and recent events. The full-width [interactive topology](docs/topology.md) places numbered Peers inside equal Agent sectors and separates Kademlia routing tables, GRAFT-based GossipSub meshes, and transport connections. Peers settle within their sectors using the visible links; layer/topic filters, motion pause/resume, zoom, and neighbor highlighting help inspect the graph.
-- **Experiment analysis** freezes remote recipients at publish dispatch for churn delivery ratio, first-delivery latency, and average duplicate copies. Agent numbers link topology to the status table; stopped Peers disappear from topology. The web form supports 1–100 sequential runs, and Saved results supports ZIP download and deletion. See [definitions and usage](docs/experiment-metrics.md).
+- **Experiment analysis** measures on-time delivery to sessions continuously subscribed throughout a configured window, alongside starting-session delivery, coverage, and observation uncertainty. First-delivery latency and average duplicate copies use the same eligible pairs. Agent numbers link topology to the status table; stopped Peers disappear from topology. The web form supports 1–100 sequential runs, and Saved results supports ZIP download and deletion. See [definitions and usage](docs/experiment-metrics.md).
 
 ## Quick start
 
@@ -259,7 +259,7 @@ The recommended scenario format is version 2 YAML. It preserves the important v2
 |---|---|
 | `join` | Creates nodes using available Agent capacity. |
 | `wait-ready` | Waits until a target percentage of a group/type is ready, optionally after named jobs or a `minCount` floor. |
-| `publish` | Selects ready nodes from a group to publish messages. |
+| `publish` | Selects ready nodes from a group to publish messages. `deliveryWindow` sets the per-message receipt deadline (default `10s`, positive, at most `1h`). |
 | `leave` | Selects and stops nodes from a group. |
 | `wait` / `sleep` | Waits for a fixed duration. `sleep` is a v2-compatible alias. |
 | `wait-jobs` | Waits for selected background job IDs, or all jobs when `jobs` is empty. |

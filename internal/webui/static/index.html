@@ -36,24 +36,44 @@
         <strong id="peerMetric">0</strong>
         <small id="connectionMetric">Transport links: 0</small>
       </article>
-      <article class="metric-card accent-amber" title="First eligible remote delivery latency. Raw messages, sender-local deliveries, and late joiners are excluded.">
+      <article class="metric-card accent-amber" title="First on-time application delivery at a continuously subscribed remote session. Raw messages have no latency sample. Legacy runs use their original definition.">
         <span>Propagation latency P95</span>
         <strong id="latencyMetric">N/A</strong>
         <small id="averageLatencyMetric">No eligible latency samples</small>
       </article>
-      <article class="metric-card accent-violet" title="Delivered / expected remote subscriber pairs known at dispatch: online and ready then. Late joins are excluded; departed cohort members remain expected.">
-        <span>Delivery ratio</span>
+      <article class="metric-card accent-violet" title="On-time deliveries / receiver sessions subscribed throughout the configured window. Departures are excluded from both counts, even after an early receipt. Legacy runs are explicitly labeled.">
+        <span id="reachLabel">Continuous-session delivery</span>
         <strong id="reachMetric">N/A</strong>
         <small id="deliveryMetric">Eligible deliveries: 0 / 0</small>
+        <small id="measurementProgress">Mature publications: 0 · Pending: 0</small>
         <small id="eventTotalsMetric">Published: 0 · Delivered: 0</small>
       </article>
-      <article class="metric-card accent-cyan" title="Eligible duplicate arrivals divided by eligible subscriber/message pairs with a first delivery. Sender-local deliveries and late joiners are excluded.">
+      <article class="metric-card accent-cyan" title="Observed additional PubSub copies within the delivery window, divided by on-time deliveries at continuously subscribed remote sessions. This is an observed count; missing telemetry may undercount duplicates.">
         <span>Avg duplicates / delivery</span>
         <strong id="duplicateMetric">N/A</strong>
         <small id="duplicateSamplesMetric">Eligible duplicates: 0 · Delivered pairs: 0</small>
         <small id="duplicateTotalMetric">All duplicate events: 0</small>
       </article>
     </section>
+
+    <section class="measurement-summary" id="measurementSummary" aria-label="Churn measurement context" hidden>
+      <article>
+        <span>Starting-session delivery</span>
+        <strong id="initialReachMetric">N/A</strong>
+        <small id="initialDeliveryMetric">On time: 0 / 0 known starting pairs</small>
+      </article>
+      <article>
+        <span>Continuous-session coverage</span>
+        <strong id="coverageMetric">N/A</strong>
+        <small id="coverageDetail">Stable: 0 · Departed before deadline: 0</small>
+      </article>
+      <article>
+        <span>Observation quality</span>
+        <strong class="observation-counts" id="observationMetric">0 receipt unknown · 0 availability unknown</strong>
+        <small id="outcomesMetric">Known missed: 0 · Observed late: 0</small>
+      </article>
+    </section>
+    <p class="measurement-note" id="measurementNote">Each publication uses a fixed delivery window; waiting publications do not lower the completed delivery ratio.</p>
 
     <section class="workspace-grid">
       <article class="panel topology-panel">
@@ -142,6 +162,8 @@
         </ol>
       </article>
     </section>
+
+
 
     <section class="panel results-panel" aria-labelledby="savedResultsHeading">
       <header class="panel-header">

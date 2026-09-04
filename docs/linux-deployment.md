@@ -47,7 +47,7 @@ docker compose down
 # If make is installed, make stop uses the same order.
 ```
 
-On SIGTERM, the Controller stops accepting new experiments and waits for HTTP connections, experiment jobs, Peer cleanup, and the final run-state save. The default `jobShutdownTimeout: 3m` applies separately to job shutdown and Peer cleanup, so Compose gives the Controller a `7m` stop grace period and the Agent `3m`. Increase the Controller's grace period as well when a scenario uses a longer `jobShutdownTimeout`. If an external systemd unit manages Compose, its stop timeout must not cut these grace periods short.
+On SIGTERM, the Controller stops accepting new experiments and waits for HTTP connections, experiment jobs, Peer cleanup, and the final run-state save. The default `jobShutdownTimeout: 3m` applies separately to job shutdown and Peer cleanup, so Compose gives the Controller a `7m` stop grace period. Compose and Swarm give Agents `4m` to cover up to 175 seconds of Peer cleanup followed by HTTP-handler completion and the bounded telemetry drain. Increase the Controller's grace period as well when a scenario uses a longer `jobShutdownTimeout`. If an external systemd unit manages Compose, its stop timeout must not cut these grace periods short.
 
 Running only `docker compose down` can stop the Agent first because services stop in reverse dependency order. Agents also clean up their own Peers, but use the sequence above to preserve the Controller's final state record as well. After forced termination or power loss, Agent startup reclaims leftover managed containers with the same Agent ID and network. It does not automatically resume the previous experiment.
 

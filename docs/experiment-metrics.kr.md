@@ -18,56 +18,101 @@ API는 `/api/v1/experiments`에 `application/json`으로 다음 본문을 POST�
 
 응답은 첫 번째 실험이며 `/api/v1/snapshot`과 SSE에는 모든 회차가 나타납니다. 기존 YAML 원문 요청은 1회 실행을 유지합니다. 변경 요청에는 설정된 bearer token을 사용합니다.
 
-## Churn 중 도달률
+## Churn 도달률: session-window-v1
 
-관측 단위는 패킷이나 현재 화면의 Peer 수가 아니라 **(run, topic, message, receiver) 쌍**입니다. 성공적으로 발행되고 `publish` 이벤트가 수집된 메시지만 수신 대상 집합을 갖습니다. 실패한 발행 요청은 작업 실패이며 자동으로 유실 메시지로 계산하지 않습니다. RPC 결과가 불명확해도 실제 발행 후 telemetry가 도착했다면 발행 메시지로 집계할 수 있습니다.
+주 지표의 질문은 **고정 수신 기간 전체에 걸쳐 계속 구독한 원격 애플리케이션 세션 중 몇 개가 마감 전에 수신했는가?**입니다. 지속 구독을 조건으로 하므로 최초 대상 모두가 churn을 견디고 수신할 확률과는 다릅니다. 발행 시점 대상 도달률, 안정 세션 coverage, 관측 품질을 함께 확인하십시오.
 
-각 발행 RPC 직전에 Controller가 `cohortCapturedAt`과 `targetNodeIds`에 준비 완료·온라인·구독 상태인 원격 Peer ID를 기록합니다. 발행자, 다른 run, 해당 topic 비구독자·relay 전용 Peer, 마지막 보고가 오래된 Agent는 제외합니다. 이는 Controller가 마지막으로 관측한 상태이며 다중 호스트 전체의 원자적 동기화 시점은 아닙니다. `topic: "*"`이면 동일 inventory snapshot에서 topic별 대상을 각각 고정합니다.
+관측 단위는 **(run, topic, message, 수신 세션) 쌍**입니다. 같은 node ID를 재사용해도 프로세스 재시작은 새 세션입니다. 성공 발행의 `publish` 이벤트가 수집된 메시지만 분석합니다. 요청 실패는 작업 실패이며, RPC 응답이 불명확해도 실제 발행 후 telemetry가 도착했다면 성공 발행을 관측할 수 있습니다.
 
-메시지 `m`의 고정 대상 집합을 `C_m`, 이 중 애플리케이션 수신이 수집된 집합을 `D_m`이라 하면 다음과 같습니다.
+### 고정 기간과 구독 증거
+
+`publish` phase의 `deliveryWindow`는 0보다 크고 1시간 이하인 Go duration이며 기본값은 `10s`입니다. 실험 전에 지정하고 비교하는 실험에는 같은 값을 사용하십시오.
+
+`t`는 발행자가 로컬 발행 잠금을 획득한 뒤 기록한 실제 애플리케이션 발행 시각이며, 마감은 `d = t + deliveryWindow`입니다. Controller 요청 시각이나 현재 화면의 Peer 수로 대상을 정하지 않습니다.
+
+Peer는 실제 구독 설정을 완료한 뒤 `measurement_start`에 `sessionId`와 정확한 `fields.subscribedTopics`를 기록합니다. 같은 프로세스에서 2초마다 `measurement_checkpoint`를 보내며 정상적인 세션 종료 때 `measurement_stop`을 기록합니다. 이는 계측된 애플리케이션 세션의 증거이며 물리적 uptime을 측정하는 장치가 아닙니다. checkpoint 주기는 수신 마감의 유예 시간이 아닙니다.
+
+메시지마다 동일 run·topic의 기록된 세션에서 발행자를 제외하고 다음 집합을 재구성합니다.
+
+- **발행 시점 대상 C:** `t` 이전 또는 같은 시각에 구독을 시작하고, checkpoint 또는 stop이 동일 세션의 `t`까지 지속을 증명합니다. `t` 이후 시작하거나 `t` 이전·같은 시각에 종료가 확인된 세션은 제외합니다.
+- **안정 대상 E:** C 중 `d` 이후 또는 같은 시각의 checkpoint/stop이 있으며 `d` 전에는 구독 세션이 종료되지 않은 대상입니다.
+- **이탈:** C 중 `d` 전에 stop이 기록된 세션입니다. **떠나기 전에 수신했더라도** 안정 대상의 분자와 분모에서 모두 제외합니다. 발행 시점 대상에는 남습니다.
+- **가용성 불명:** `t`의 존재 또는 `d`까지 지속 여부를 기록으로 확인할 수 없습니다. 강제 종료는 이런 꼬리 구간을 남길 수 있으며, 이를 이탈이나 수신 실패로 자동 분류하지 않습니다.
+
+Agent는 프로세스·컨테이너 종료를 확인하면 `measurement_terminated`도 기록할 수 있습니다. 이 시각은 **종료 시각의 상한**이며 정확한 사망 시각이나 수신 checkpoint가 아닙니다. 발행 전 종료가 확실한 세션을 제외하거나, 별도 Peer checkpoint로 발행 시 생존이 이미 증명된 경우 마감 전 이탈을 확정할 수 있습니다. 불명 꼬리 구간이 마감까지 살아 있었음을 증명하지는 못합니다. Docker churn은 강제 제거를 유지하며 강제 종료는 Peer의 정상 종료 telemetry drain을 실행하지 않습니다.
+
+Transport 단절, GRAFT/PRUNE, mesh 제거, 오래된 inventory, offline Agent는 구독 세션의 stop 증거가 아닙니다. 토폴로지에서 원을 지워도 지표가 좋아지지 않습니다. 이후 도착한 동일 세션의 증거는 이전의 불명 분류를 정정할 수 있습니다.
+
+구독 기간은 `[t, d)`입니다. 정확히 `d`에서 종료한 세션은 해당 기간 동안 계속 구독한 것으로 보고, 정확히 `d`에 수신한 메시지는 기한 내 성공입니다. `t`에서 이미 종료한 세션은 발행 당시 대상에서 제외합니다.
+
+### 기간 완료, 수신, 관측 불명
+
+`d`가 지나지 않은 메시지는 `pending`이며 확정 대상 쌍 집계에서 제외합니다. 기간이 지난 메시지는 해당 수신 세션에서 `d` 이전 또는 같은 시각에 처음 관측된 애플리케이션 수신을 성공으로 처리합니다. 마감 후 수신은 late이며 기한 내 성공은 아닙니다. 발행자 로컬 수신과 늦은 join은 포함하지 않습니다.
+
+Peer 이벤트에는 원본 `sessionId`, 증가하는 `sequence`, 재시도에도 유지되는 `eventId`가 있습니다. 수신 기록이 없을 때는 `measurement_start`부터 해당 기간을 덮는 세션 증거까지 원본 sequence prefix가 연속인 경우에만 확인된 미도달로 처리합니다. 중간 번호 누락이나 잘못된 시각 순서가 있으면 수신 여부는 **unknown**입니다. 재시도로 간격이 채워질 수 있습니다. 마감 경과는 telemetry 수집 완료를 뜻하지 않으므로 확정 집계도 늦은 배치로 정정될 수 있습니다.
+
+확인된 안정 쌍 수를 E, 기한 내 성공을 S, 수신 여부 불명을 U, 확인된 미도달을 F라 하면 다음과 같습니다.
 
 ```text
-expectedDeliveries = 모든 메시지의 |C_m| 합
-eligibleDeliveries = 모든 메시지의 |D_m| 합
-도달률 = eligibleDeliveries / expectedDeliveries
+E = S + U + F
+안정 대상 도달률 하한 = S / E
+안정 대상 도달률 상한 = (S + U) / E
 ```
 
-메시지별 백분율을 단순 평균하지 않고 수신 대상 쌍으로 가중합니다. 대상 1명 중 1명 도달, 다음 메시지는 3명 중 1명 도달이면 `2 / 4 = 50%`이며 66.7%가 아닙니다. 대상에 포함된 후 이탈한 Peer는 수신하지 못한 대상으로 남습니다. 토폴로지 원을 지워도 도달률이 높아지지 않습니다. 새 join은 이미 발행된 메시지의 대상에서 제외합니다. 대상이 없으면 0%나 100% 대신 **N/A**입니다.
+U가 0이면 상·하한이 같습니다. 이는 누락된 관측으로부터 계산한 논리적 범위이며 **통계적 신뢰구간이 아닙니다**. 분모가 0이면 N/A입니다. 비율을 높이려고 unknown을 분모에서 제거하지 않습니다. 가용성 불명은 별개 문제입니다. 이 범위는 확인된 안정 세션에 대한 값이며 미지의 전체 모집단까지 설명하지 않습니다.
 
-관측 구간은 실험 시작부터 현재 snapshot 또는 ZIP 경계까지 수집된 기록입니다. 메시지별 고정 수신 마감 시간이나 영구 유실 판정은 구현하지 않습니다. 실행 중 미도달 쌍에는 전파 중·단절·이탈·telemetry 누락이 섞일 수 있습니다. 실험 비교 시 warm-up, 발행, 후속 수집 시간을 동일하게 유지하십시오. churn 예제는 마지막 발행 회차 후 30초를 기다립니다. 완료 후 늦게 도착한 telemetry로 값이 갱신될 수도 있습니다. 이 도달률은 netem의 패킷 손실 확률이나 수신할 때까지 살아남은 Peer만을 조건으로 한 도달 확률과 다릅니다.
+발행 시점 대상 도달률은 확인된 이탈을 분모에 유지하며 이탈 세션의 기한 내 수신도 분자에 포함합니다. 안정 coverage는 `|E| / |C|`입니다. 가용성 불명이 있거나 `measurementIncomplete`가 참이면 발행 시점 대상 비율과 coverage는 **N/A**입니다. 관측된 sequence stream의 측정 범위를 확인할 수 없으면 이 플래그를 설정하지만, 아예 관측되지 않은 세션이나 stream은 수신 로그만으로 발견할 수 없습니다. 따라서 false도 실제 모든 Peer를 빠짐없이 측정했다는 증명은 아닙니다.
+
+Controller의 기존 `targetNodeIds` 요청 직전 스냅샷은 추가 누락 점검 자료로만 유지합니다. 목록에 있는 수신자에게 유효한 세션 시작 기록이 전혀 없으면 측정 불완전으로 표시합니다. 그 수신자를 분모에 넣거나 실제 발행 시점의 생존 여부를 결정하는 데 쓰지는 않습니다. 계측 기록과 이 스냅샷 양쪽에 없는 세션은 여전히 보이지 않을 수 있습니다.
+
+예를 들어 처음 구독자 10명의 기록을 모두 확보했습니다. 마감 전에 2명이 떠났고 그중 1명은 떠나기 전에 수신했습니다. 8명은 기간 내내 구독했고 이 중 7명이 제때 수신했습니다. telemetry가 완전하다면 다음과 같습니다.
+
+```text
+안정 대상 조건부 도달률 = 7 / 8 = 87.5%
+발행 시점 대상 도달률   = 8 / 10 = 80%
+안정 coverage          = 8 / 10 = 80%
+```
+
+일찍 수신한 이탈자도 안정 대상의 분자와 분모에서 함께 제외합니다. 그 성공만 남기고 수신하지 못한 이탈자를 제거하면 결과에 따라 대상 자격이 달라집니다.
+
+집계는 **수신 대상 쌍 가중**입니다. 기간이 지난 메시지들의 성공 수와 대상 수를 각각 합한 뒤 나누며 메시지별 백분율을 단순 평균하지 않습니다. 대상 1명 중 1명 성공, 다음 메시지는 3명 중 1명 성공이면 `2 / 4 = 50%`이며 66.7%가 아닙니다. 수신 기간을 바꾸면 기한 내 성공뿐 아니라 끝까지 남는 집단도 달라지므로 같은 기간을 비교하고 coverage를 병기하십시오.
+
+### 시계와 수집 한계
+
+발행·구독·checkpoint·stop·수신 시각은 서로 다른 호스트에서 기록됩니다. 모든 호스트를 chrony/NTP로 동기화하십시오. 음수 지연은 일부 오류를 드러내지만 양수 방향 오차나 작은 경계 오차는 확실히 검출하지 못합니다. 오차는 지연뿐 아니라 대상과 마감 판정에도 영향을 줍니다. 계측된 세션의 연속성이 물리적 연결의 연속성을 보장하지는 않습니다.
+
+Peer telemetry는 한도가 있는 재시도와 정상 종료 시 drain을 사용합니다. Agent는 큐가 가득 차면 성공 응답 후 배치를 버리는 대신 backpressure를 적용하며 정상 종료 때 Peer 정리를 허용한 뒤 제한 시간 내 최종 drain을 수행합니다. 큐 초과, 종료 유예 소진, 프로세스·Agent·Controller 실패로 관측이 누락될 수 있습니다. sequence는 일부 누락과 확인된 미도달을 구분하지만 데이터를 복구하거나 아예 보이지 않은 세션의 존재를 증명하지 않습니다. `scope: all`은 계측 경로도 훼손할 수 있습니다. 결과와 함께 유실 카운터 및 incomplete/unknown 표시를 보존하십시오.
 
 ## 첫 수신 도달시간
 
-성공한 대상 쌍마다 첫 `Subscription.Next` 성공 시각에서 발행자가 로컬 발행 잠금을 획득한 뒤 해당 메시지를 준비하며 envelope에 넣은 시각을 뺍니다. 직렬화, PubSub 처리, 네트워크, 수신 애플리케이션 큐 지연을 포함합니다. Controller→Agent 전달 시간과 발행자의 로컬 발행 잠금 대기는 제외합니다.
+기간이 지났고 안정 대상에 속하며 제때 성공한 원격 쌍만 지연 표본에 포함합니다. 첫 `Subscription.Next` 성공 시각에서 발행자가 로컬 발행 잠금 획득 후 준비한 envelope 시각을 뺍니다. 직렬화, PubSub 처리, 네트워크와 수신 애플리케이션 큐를 포함하고 Controller→Agent 전달 및 로컬 발행 잠금 대기는 제외합니다.
 
-같은 쌍은 가장 이른 애플리케이션 수신만 사용합니다. 발행자 로컬 수신, 이후 중복 전달, 늦은 join, 대상 집합을 모르는 메시지는 제외합니다. raw에는 애플리케이션 발행 시각이 없어 도달률은 계산하되 지연은 **N/A**입니다. 음수 시계 편차 표본은 제외하고 `invalidLatencySamples`에 집계합니다. 양수 방향 시계 오차는 이 방법으로 검출할 수 없으므로 chrony/NTP로 모든 호스트를 동기화하십시오.
+raw에는 애플리케이션 발행 시각이 없으므로 세션 기간 도달률에는 포함하되 지연은 **N/A**입니다. 로컬·후속 수신, 이탈·늦은 join, 지연 미측정은 분포에서 제외합니다. 음수 표본은 `invalidLatencySamples`에 기록하며 제외하고, 양수 방향 호스트 시계 오차는 이 방법으로 검출하지 못합니다.
 
-UI와 `metrics.json`은 유효한 성공 쌍의 산술평균, nearest-rank P95, `latencySamples`를 제공합니다. 미도달을 0ms로 넣거나 지연 분포에 섞지 않습니다. 빠르게 도달한 일부 Peer만으로 신뢰성을 판단하지 않도록 반드시 도달률도 함께 보고하십시오.
+UI와 `metrics.json`은 산술평균, nearest-rank P95, `latencySamples`를 제공합니다. 미수신이나 unknown은 0ms가 아닙니다. 관측된 기한 내 성공과 안정 구독을 조건으로 한 지연이므로 도달률 범위와 coverage를 반드시 함께 보십시오.
 
 ## 평균 중복 메시지
 
-추가 복사본은 수신 측 GossipSub `RawTracer.DuplicateMessage` 관측 1건입니다. PubSub 메시지 캐시에서 이미 본 메시지가 다시 도착한 경우이며 TCP 재전송, 반복 IHAVE, 중복 바이트 수, 두 번째 애플리케이션 전달을 의미하지 않습니다. 성공한 대상 수신자에서 관측된 추가 복사본을 `dup(m,r)`라 하면 다음과 같습니다.
+추가 복사본은 수신 측 GossipSub `RawTracer.DuplicateMessage`가 관측한 PubSub 메시지 캐시 hit입니다. TCP 재전송, 반복 IHAVE, 바이트 수, 두 번째 애플리케이션 수신을 의미하지 않습니다.
 
-```text
-eligibleDuplicates = 성공한 모든 대상 쌍에서 관측한 추가 복사본 합
-averageDuplicates = eligibleDuplicates / eligibleDeliveries
-```
+평균은 안정 대상의 기한 내 성공 쌍에서 같은 수신 기간 안에 관측한 추가 복사본 수를 성공 쌍 수로 나눕니다. 복사본이 없는 성공 쌍은 0으로 포함하고 성공 쌍이 없으면 N/A입니다. 로컬·이탈·늦은 join 수신자 및 기간 밖의 복사본은 전체 이벤트 수에는 남지만 평균에서 제외합니다. 성공 쌍의 추가 복사본이 0, 1, 5개이면 평균은 `6 / 3 = 2`입니다. 중복 telemetry 누락은 이 관측 평균도 낮출 수 있습니다.
 
-성공 수신 후 추가 복사본이 없는 쌍은 0으로 포함하고, 성공 쌍 자체가 없으면 **N/A**입니다. 발행자에게 돌아온 복사본과 늦게 join한 Peer의 복사본은 전체 `duplicates` 이벤트 수에 남지만 이 평균에서는 제외합니다. 성공 쌍 3개의 추가 복사본이 각각 0, 1, 5이면 `6 / 3 = 2`개/성공 수신입니다. 바이트 오버헤드 비율이나 발행당 중복 수와는 다릅니다.
-
-envelope의 publish/deliver/duplicate는 동일한 애플리케이션 메시지 ID로 연결합니다. raw는 `pubsub-<원래 메시지 ID의 hex>`를 사용하여 바이트가 동일해도 개별 발행을 구분합니다. 두 형식 모두 `fields.pubsubMessageId`에 원래 ID를 보존합니다. wire 형식과 PubSub의 발신자+sequence ID 계산은 유지합니다. 새 이벤트의 `eventId`는 한 번 생성해 재전송에서도 유지하며 Controller가 한 번만 저장·집계합니다. ID가 없는 과거 이벤트의 전송 재시도는 확실하게 구분할 수 없습니다.
+envelope 이벤트는 애플리케이션 메시지 ID로 연결합니다. raw는 `pubsub-<원래 메시지 ID의 hex>`를 사용하여 같은 바이트를 발행해도 메시지를 구분합니다. `fields.pubsubMessageId`는 원래 ID를 보존합니다. wire 형식과 PubSub의 발신자+sequence 메시지 ID 계산은 유지하며 telemetry의 원본 sequence는 별도 카운터입니다. 이벤트 ID는 재시도에도 유지하여 Controller가 한 번만 저장·집계합니다.
 
 ## 집계 범위, 내보내기, 모니터링
 
-새 지표 요약은 `definition: "dispatch-cohort-v1"`로 적용한 정의를 식별합니다.
+새 요약은 `definition: "session-window-v1"`을 사용합니다. 발행은 `fields.measurementDefinition`과 `fields.deliveryWindow`를 기록합니다. 저장된 세션 증거, 발행·수신 시각, 원본 sequence로 같은 계산을 재구성합니다.
 
-- 웹 카드는 가장 최근에 시작한 실행 중 실험을 선택하며, 실행 중 실험이 없으면 가장 최근에 시작한 종료 실험을 표시합니다. 대기 회차가 이를 덮어쓰지 않으며 카드 위에 선택한 run을 표시합니다.
-- 지표는 현재 Controller 프로세스에서 관측한 실험 전체를 집계합니다. 최근 300개 이벤트와 화면의 40개 행 제한은 이벤트 표시만 제한합니다. 집계용 인덱스는 메시지·수신 쌍·이벤트 ID에 비례해 증가하며 결과 삭제 또는 프로세스 재시작 때 해제됩니다.
-- `published`, `delivered`, `duplicates`는 전체 이벤트 집계를 유지합니다. `delivered`에는 로컬·늦은 join 수신도 포함되므로 도달률에는 `eligibleDeliveries / expectedDeliveries`를 사용하십시오. 이벤트 수는 패킷 수가 아닙니다.
-- ZIP에는 같은 경계의 `events.jsonl`에서 다시 계산한 **`metrics.json`**을 추가합니다. Controller 재시작 후에도 재계산하며 이벤트 ID로 재시도를 제거합니다. 대상 ID가 없는 과거 메시지는 `unscopedPublications`로 표시하고 도달률·지연·중복 평균에서는 제외합니다. 과거 `targetNodes` 숫자만으로 대상을 추정하지 않습니다. telemetry 누락은 복구할 수 없고 로그가 손상되면 수치를 만들어 내지 않고 ZIP 전송을 실패시킵니다.
-- Prometheus는 run별 `kpl_delivery_expected_pairs`, `kpl_delivery_reached_pairs`, `kpl_delivery_ratio`, `kpl_delivery_duplicate_copies`, `kpl_delivery_duplicates_per_reached_pair`를 제공합니다. 분모 0인 비율 시계열은 생략합니다. Grafana의 새 대상 집합 패널은 Run 필터만 적용하며 여러 run 선택 시 쌍 수로 가중합니다.
-- `kpl_propagation_latency_seconds`도 동일한 원격 성공 쌍을 run·수신 Agent·topic별로 집계합니다. Grafana는 버킷으로 실험 전체 P50/P95/P99를 근사하며 웹 P95는 정확한 nearest rank입니다. 늦은 telemetry로 히스토그램이 보완·정정될 수 있으므로 `rate`/`increase` 대신 직접 조회합니다. 트래픽 이벤트 카운터의 rate 의미는 유지합니다. 업데이트 전 지연에는 로컬 수신이 포함되었으므로 같은 정의로 생성된 run끼리 비교하십시오.
-- Peer 큐 유실, Agent/Controller 실패, 종료 전 미전송 기록은 지표에 편향을 만들 수 있습니다. telemetry 유실도 함께 기록하십시오. `scope: all`의 손실은 계측 경로에도 영향을 줄 수 있습니다.
+- 웹 카드는 가장 최근 시작한 실행 중 실험을, 없다면 가장 최근 시작한 종료 실험을 선택합니다. 대기 회차가 이를 덮어쓰지 않으며 카드 위에 run을 표시합니다.
+- 최근 이벤트 300개·표시 행 40개와 독립적으로 관측한 실험 전체를 집계합니다. 인덱스는 세션·메시지·수신 쌍·이벤트 ID에 비례해 증가하며 결과 삭제 또는 프로세스 재시작 때 해제됩니다.
+- `published`, `delivered`, `duplicates`는 전체 이벤트 수를 유지합니다. 수신에는 로컬·늦은 join도 포함되므로 수신 수를 발행 수로 나눈 값은 도달률이나 패킷 손실률이 아닙니다.
+- ZIP `metrics.json`은 정확히 같은 경계의 `events.jsonl`에서 재계산하며 Controller 재시작 후에도 가능합니다. 기한 경과 판단에는 manifest에 고정한 `exportedAt`을 사용하므로 재현 계산에도 같은 시각을 적용하십시오. `deliveryWindows`에는 관측한 유효 수신 기간 설정들이 기록됩니다. 이후 telemetry는 해당 다운로드에 포함되지 않습니다. 불완전한 관측은 unknown/incomplete로 표시하며 형식이 손상된 이벤트 로그는 수치를 만들지 않고 내보내기를 실패시킵니다.
+- Prometheus `kpl_window_*` gauge는 run별 안정·발행 시점 대상 수, 범위, coverage, pending, 이탈, 관측 불명을 제공합니다. Grafana 세션 패널에는 Run 필터만 적용하고 여러 run은 수신 쌍으로 가중합니다. 분모가 없거나 최초 모집단이 불확실하면 0이 아닌 N/A입니다.
+- `kpl_window_propagation_latency_seconds`는 같은 성공 쌍을 run·수신 Agent·topic으로 구분합니다. Grafana는 실험 전체 histogram 분위수를 근사하며 웹 P95는 정확한 nearest rank입니다. 늦은 telemetry로 gauge와 버킷이 정정될 수 있어 `rate`/`increase` 대신 직접 조회합니다. 트래픽 이벤트 카운터의 rate 의미는 유지합니다.
+
+### 과거 결과
+
+`dispatch-cohort-v1`은 Controller 요청 직전의 ready/online 구독자 ID를 고정하고 이후 이탈을 분모에 유지했으며 메시지별 마감이 없었습니다. 더 오래된 데이터에는 대상 숫자만 있고 수신자 ID가 없을 수 있습니다. 모두 **과거 정의**이며 지속 구독 세션 측정으로 재해석하지 않습니다. 이전 `kpl_delivery_*`/`kpl_propagation_latency_seconds`를 새 기간 지표와 합산하지 마십시오. 원시 이벤트는 보존하고 혼합 로그의 legacy/unscoped 발행 수는 제외된 기록을 표시합니다. 다운로드로 원래 없던 세션 증거를 만들 수 없습니다. 새 Grafana 세션 패널은 과거 결과만 선택하면 표시할 값이 없습니다.
 
 ## 토폴로지와 결과 삭제
 
@@ -81,6 +126,10 @@ API는 `DELETE /api/v1/results/{id}`이며 204는 삭제 완료, 404는 없음, 
 
 ## 참고 문헌과 설계 선택
 
-[Vyzovitis 외 GossipSub 논문 §7.3](https://research.protocol.ai/publications/gossipsub-attack-resilient-message-propagation-in-the-filecoin-and-eth2.0-networks/vyzovitis2020a.pdf)과 [GossipSub v1.1 평가 보고서](https://research.protocol.ai/publications/gossipsub-v1.1-evaluation-report/vyzovitis2020.pdf)는 전파 지연 분포·꼬리 지연, 손실, 중복 전달을 별도로 평가합니다. 이 문헌이 여기의 고정 churn 대상 집합을 규정한 것은 아닙니다. 대상 고정, 쌍 가중, 관측 경계, 성공 수신당 중복 정의는 결과를 본 뒤 분모를 바꾸지 않고 이탈 영향을 보존하기 위한 KPL의 명시적 실험 설계입니다.
+[HyParView 원문 §2.5·§5.2, 인쇄 p.5·9–10](https://www.dpss.inesc-id.pt/~ler/reports/dsn07-leitao.pdf)은 활성 노드 대비 신뢰성을 정의하고 장애 유발 후 전파를 시험합니다. 이는 생존 집단을 평가하는 질문의 예이며 실패한 이탈자만 사후에 제외하는 규칙의 근거가 아닙니다.
 
-[공식 PubSub 메시지 식별 명세](https://github.com/libp2p/specs/blob/master/pubsub/README.md#message-identification)는 발신자+sequence ID와 콘텐츠 기반 중복 제거의 차이를 설명합니다. KPL은 프로토콜 동작을 바꾸지 않고 계측 이벤트를 연결합니다.
+[Pongthawornkamol 외 ICAC 2013, §2.2·§3.2.2–3, 인쇄 p.249·251](https://www.usenix.org/system/files/conference/icac13/icac13_pongthawornkamol.pdf)은 관심 이벤트의 마감 내 전달로 신뢰성을 정의하고 이벤트 발생률로 가중합니다. 해당 broker·link 장애 모델은 수신 세션 churn과 다릅니다.
+
+지속 구독 기간, 세션 증거, 쌍 가중, unknown 범위, 성공당 중복 규칙은 위 논문이 강제하는 표준이 아닌 KPL의 명시적 설계 선택입니다. 고정 기간 전체의 지속을 조건으로 하면 오래 남는 세션을 선택하게 되므로 발행 시점 대상 결과와 coverage를 함께 제공합니다. 이 정의는 v2 재현과 독립적입니다.
+
+[공식 PubSub 메시지 식별 명세](https://github.com/libp2p/specs/blob/master/pubsub/README.md#message-identification)는 원래 메시지 ID를 설명합니다. KPL은 해당 프로토콜 동작을 바꾸지 않고 계측을 연결합니다.

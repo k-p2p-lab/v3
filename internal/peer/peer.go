@@ -155,11 +155,24 @@ func newServer(ctx context.Context, config model.PeerProcessConfig, logger *slog
 	return server, nil
 }
 
-func (s *Server) Run(ctx context.Context) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	defer s.Close()
-	go s.telemetry.run(ctx)
+func (s *Server) Run(parentCtx context.Context) (runErr error) {
+	// Record the subscription boundary before cancellation reaches PubSub.
+	ctx, cancel := context.WithCancel(context.WithoutCancel(parentCtx))
+	stopParentWatch := context.AfterFunc(parentCtx, func() {
+		s.telemetry.stopMeasurement()
+		cancel()
+	})
+	telemetryCtx, stopTelemetry := context.WithCancel(context.Background())
+	telemetryDone := make(chan error, 1)
+	go func() { telemetryDone <- s.telemetry.run(telemetryCtx) }()
+	defer func() {
+		stopParentWatch()
+		s.telemetry.stopMeasurement()
+		cancel()
+		s.Close()
+		stopTelemetry()
+		runErr = errors.Join(runErr, <-telemetryDone)
+	}()
 	if err := s.connectBootstrap(ctx); err != nil {
 		return err
 	}
@@ -172,6 +185,8 @@ func (s *Server) Run(ctx context.Context) error {
 		if err := s.startPubSub(ctx); err != nil {
 			return err
 		}
+	} else if s.telemetry.startMeasurement(nil) {
+		go s.telemetry.measurementLoop(ctx)
 	}
 	apiServer := &http.Server{
 		Handler:           s.handler(),
@@ -188,15 +203,22 @@ func (s *Server) Run(ctx context.Context) error {
 		_ = listener.Close()
 		return fmt.Errorf("report ready status: %w", err)
 	}
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		<-ctx.Done()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
-		_ = apiServer.Shutdown(shutdownCtx)
+		if err := apiServer.Shutdown(shutdownCtx); err != nil {
+			_ = apiServer.Close()
+		}
 	}()
 	go s.statusLoop(ctx)
 	s.logger.Info("peer ready", "node", s.config.Node.ID, "peer", s.host.ID(), "api", s.config.APListen)
 	err = apiServer.Serve(listener)
+	s.telemetry.stopMeasurement()
+	cancel()
+	<-shutdownDone
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
@@ -237,6 +259,7 @@ func (s *Server) startPubSub(ctx context.Context) error {
 		return fmt.Errorf("create %s: %w", config.Router, err)
 	}
 	s.pubsub = ps
+	var subscribedTopics []string
 	for _, topicName := range config.Topics {
 		topic, err := ps.Join(topicName)
 		if err != nil {
@@ -254,7 +277,7 @@ func (s *Server) startPubSub(ctx context.Context) error {
 				return fmt.Errorf("subscribe topic %s: %w", topicName, err)
 			}
 			s.subs = append(s.subs, sub)
-			go s.consume(ctx, topicName, sub)
+			subscribedTopics = append(subscribedTopics, topicName)
 		case "relay":
 			cancel, err := topic.Relay()
 			if err != nil {
@@ -263,6 +286,14 @@ func (s *Server) startPubSub(ctx context.Context) error {
 			s.relays = append(s.relays, cancel)
 		case "publish":
 		}
+	}
+	if s.telemetry.startMeasurement(subscribedTopics) {
+		go s.telemetry.measurementLoop(ctx)
+	}
+	// Start consumers only after every subscription and the source start event
+	// are established. Already buffered messages remain available to Next.
+	for i, topicName := range subscribedTopics {
+		go s.consume(ctx, topicName, s.subs[i])
 	}
 	return nil
 }
@@ -314,6 +345,15 @@ func (s *Server) handlePublish(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "payloadEncoding must be envelope or raw", http.StatusBadRequest)
 		return
 	}
+	if request.DeliveryWindow == "" {
+		request.DeliveryWindow = "10s"
+	}
+	deliveryWindow, err := time.ParseDuration(request.DeliveryWindow)
+	if err != nil || deliveryWindow <= 0 || deliveryWindow > time.Hour {
+		http.Error(w, "deliveryWindow must be a positive duration no greater than 1h", http.StatusBadRequest)
+		return
+	}
+	request.DeliveryWindow = deliveryWindow.String()
 	topicNames, err := s.publishTopics(request.Topic)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -343,6 +383,8 @@ func (s *Server) handlePublish(w http.ResponseWriter, r *http.Request) {
 			targetNodes = perTopic
 		}
 		fields := map[string]any{"publisher": s.config.Node.ID, "payloadBytes": request.PayloadSize, "wireBytes": len(message.wire), "payloadEncoding": message.encoding, "pubsubMessageId": message.pubsubID, "targetNodes": targetNodes}
+		fields["measurementDefinition"] = "session-window-v1"
+		fields["deliveryWindow"] = request.DeliveryWindow
 		cohort, known := request.TargetNodeIDs, request.TargetNodeIDs != nil
 		if perTopic, exists := request.TargetNodeIDsByTopic[topicName]; exists {
 			cohort, known = perTopic, true
@@ -370,11 +412,12 @@ func (s *Server) consume(ctx context.Context, topic string, sub *pubsub.Subscrip
 	for {
 		message, err := sub.Next(ctx)
 		if err != nil {
+			s.telemetry.stopMeasurement()
 			return
 		}
-		if event, ok := s.deliveryEvent(message, topic, time.Now().UTC()); ok {
-			s.telemetry.emit(event)
-		}
+		s.telemetry.emitObserved(func(now time.Time) (model.TraceEvent, bool) {
+			return s.deliveryEvent(message, topic, now)
+		})
 	}
 }
 
@@ -518,6 +561,9 @@ func unique(values []string) []string {
 
 func (s *Server) Close() {
 	s.closeOnce.Do(func() {
+		if s.telemetry != nil {
+			s.telemetry.stopMeasurement()
+		}
 		for _, cancel := range s.relays {
 			cancel()
 		}

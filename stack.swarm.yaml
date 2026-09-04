@@ -42,7 +42,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks: [peers, monitoring]
-    stop_grace_period: 3m
+    stop_grace_period: 4m
     deploy:
       labels:
         io.kpl.application: kp2plab-v3
@@ -92,7 +92,7 @@ services:
     configs:
       - {source: grafana-datasource, target: /etc/grafana/provisioning/datasources/prometheus.yaml}
       - {source: grafana-provider, target: /etc/grafana/provisioning/dashboards/kpl.yaml}
-      - {source: grafana-dashboard-cohort-v2, target: /var/lib/grafana/dashboards/kpl-experiments.json}
+      - {source: grafana-dashboard-session-window-v3, target: /var/lib/grafana/dashboards/kpl-experiments.json}
     volumes: [grafana-data:/var/lib/grafana]
     networks: [monitoring]
     ports:
@@ -124,5 +124,5 @@ configs:
     file: ./monitoring/grafana/provisioning/datasources/prometheus.yaml
   grafana-provider:
     file: ./monitoring/grafana/provisioning/dashboards/kpl.yaml
-  grafana-dashboard-cohort-v2:
+  grafana-dashboard-session-window-v3:
     file: ./monitoring/grafana/dashboards/kpl-experiments.json

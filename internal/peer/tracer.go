@@ -92,11 +92,9 @@ func (t *messageTracer) DuplicateMessage(message *pubsub.Message) {
 	if message == nil || message.Message == nil {
 		return
 	}
-	event, ok := t.server.duplicateEvent(message, time.Now().UTC())
-	if !ok {
-		return
-	}
-	t.server.telemetry.emit(event)
+	t.server.telemetry.emitObserved(func(now time.Time) (model.TraceEvent, bool) {
+		return t.server.duplicateEvent(message, now)
+	})
 }
 
 func (*messageTracer) AddPeer(peer.ID, protocol.ID)          {}

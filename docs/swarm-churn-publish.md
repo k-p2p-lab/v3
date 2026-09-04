@@ -49,9 +49,9 @@ At each round's start, the Controller builds a fresh set of `ready`, publish-cap
 
 A selected worker can expire before its turn. `onError: continue` records individual failures as `phase-operation-failed` and continues; no eligible workers makes that round a no-op. Cancellation, scenario deadlines, persistence errors, and other fatal failures can still end the run. The maximum is **300 selected publish operations**, not 300 guaranteed successful messages.
 
-Each publication uses `payloadSize: 32`, `payloadEncoding: envelope`, and topic `kpl/swarm-churn`. The 32 bytes describe the random payload. The envelope adds metadata, so the PubSub data and network traffic exceed 32 bytes. The envelope enables propagation latency measurement.
+Each publication uses `payloadSize: 32`, `payloadEncoding: envelope`, `deliveryWindow: 10s`, and topic `kpl/swarm-churn`. The 32 bytes describe the random payload. The envelope adds metadata, so the PubSub data and network traffic exceed 32 bytes. The envelope enables propagation latency measurement.
 
-The worker network profile applies `scope: p2p`, 25ms delay, 2ms jitter, and 0.5% configured packet loss. Boot Peers have no added network impairment. **Packet loss is not the delivery/publication ratio**: TCP can retransmit, one publication can reach many subscribers, and the publisher's own local delivery is included.
+The worker network profile applies `scope: p2p`, 25ms delay, 2ms jitter, and 0.5% configured packet loss. Boot Peers have no added network impairment. **Packet loss is not application delivery failure**: TCP can retransmit and one publication can reach many subscribers. Overall delivery event counts also include the publisher's local receipt; the session-window ratios exclude it.
 
 ## Observe and Save Results
 
@@ -61,16 +61,22 @@ In the Control Room, watch ready Peers, Agent occupancy, experiment/job state, a
 |---|---|
 | Changing population and occupied capacity | Live node inventory, `kpl_nodes`, `kpl_agent_active_nodes` |
 | Publication, delivery, and duplicate event counts | `kpl_events_total`; use `graft`/`prune` events to observe mesh changes |
-| Delivery ratio and average extra copies per successful remote delivery | `kpl_delivery_ratio`, `kpl_delivery_duplicates_per_reached_pair`; Grafana applies only the Run filter to these panels |
-| Envelope latency and PubSub data volume | `kpl_propagation_latency_seconds`, `kpl_message_bytes_total` |
+| Stable conditional delivery, starting-cohort delivery, and coverage | `kpl_window_delivery_ratio`, `kpl_window_initial_delivery_ratio`, `kpl_window_stable_coverage`; only the Run filter applies |
+| Pending and uncertain measurement | `kpl_window_pending_publications`, `kpl_window_unknown_pairs`, `kpl_window_availability_unknown_pairs`, `kpl_window_measurement_incomplete` |
+| Observed extra copies per successful stable remote pair | `kpl_window_duplicates_per_reached_pair`; only the Run filter applies |
+| Envelope latency and PubSub data volume | `kpl_window_propagation_latency_seconds`, `kpl_message_bytes_total` |
 | Configured network conditions | `kpl_network_configured_*`: settings, not observed loss or RTT |
 | Failed requests and reported telemetry drops | `kpl_operation_failures_total`, `kpl_telemetry_dropped_events_total` |
 
-PubSub `join`/`leave` events describe topic membership, **not Peer creation and departure**. Node lifecycle is observed through inventory updates and sampled gauges; `events.jsonl` does not guarantee every lifecycle transition. New publications retain dispatch-time `targetNodeIds` and `cohortCapturedAt`: subsequent departures stay in the denominator and subsequent joins are excluded. ZIP `metrics.json` reconstructs delivery ratio, first remote latency, and average duplicates from the same saved log boundary. Legacy `targetNodes` counts alone cannot reconstruct recipient cohorts. See the [definitions and collection limits](experiment-metrics.md).
+New `session-window-v1` publications use actual publication time and a fixed 10-second deadline. `measurement_start` records a subscribed application session, and same-session checkpoints every two seconds or a stop prove its observed continuity. The primary ratio uses only sessions proven subscribed throughout the window. A session stopping before the deadline is excluded from both primary counts even if it already received; later joiners are excluded. Network disconnection or mesh removal does not remove a subscriber.
+
+Keep the starting-cohort ratio and stable coverage beside the primary ratio: ten initial subscribers, two departures (one after receiving), and seven successes among eight stable subscribers give stable delivery **7/8**, starting-cohort delivery **8/10**, and coverage **80%**. The starting-cohort ratio includes the departure's early success. Missing receipts with source sequence gaps are unknown and widen delivery bounds; these bounds are not confidence intervals. Messages younger than ten seconds are pending. Availability uncertainty or incomplete measurement makes starting-cohort ratios and coverage N/A.
+
+PubSub `join`/`leave` events are **not Peer creation/departure records**. The measurement events record instrumented subscription sessions, not a complete Docker lifecycle or physical uptime history. Forced stops can leave unknown tails, and wholly invisible telemetry cannot be detected from the received log. Clock synchronization affects deadline and membership decisions as well as latency. ZIP `metrics.json` reconstructs these definitions from the same saved event boundary. Old dispatch cohorts remain legacy and cannot supply continuous-session evidence. See the [definitions and collection limits](experiment-metrics.md).
 
 After the run ends, confirm Peer cleanup and, when no other runs are active, zero Agent occupancy. A `completed` run can have `canceledJobs: 1`: `stop-all` intentionally cancels the unfinished join job. That counter alone is not a failure.
 
-Use **Download results** on the run or in **Saved results**. The ZIP includes the submitted scenario, run metadata, and full saved event log at the export boundary, independently of the 300-event recent buffer. It includes no per-node lifecycle/timestamp snapshot, message payload dump, PCAP, or Prometheus/Grafana database. Running downloads are snapshots, and missing telemetry cannot be recovered by downloading. [Archive contents and retention](monitoring.md#download-experiment-results)
+Use **Download results** on the run or in **Saved results**. The ZIP includes the submitted scenario, run metadata, and full saved event log at the export boundary, independently of the 300-event recent buffer. It includes `metrics.json` and collected subscription-session events, but no separate complete Docker lifecycle snapshot, message payload dump, PCAP, or Prometheus/Grafana database. Running downloads are snapshots, and missing telemetry cannot be recovered by downloading. [Archive contents and retention](monitoring.md#download-experiment-results)
 
 Download before `sudo sh scripts/swarm.sh remove` takes the web services offline. The data volumes and external Peer network remain. A retained `interrupted` result after restart is not resumed and does not prove Peer cleanup.
 
@@ -84,6 +90,7 @@ Download before `sudo sh scripts/swarm.sh remove` takes the web services offline
 | Agent capacity | Changes admission limits, not reserved CPU/RAM. Measure host load before raising it. |
 | Warm-up `duration` | Changes how long churn runs before the first publication. It is a timed wait, not a convergence test. |
 | Publish `count` / interval | Changes the maximum publishers per round and spacing between their requests. |
+| Publish `deliveryWindow` | Fixed on-time receipt window, default 10s and maximum 1h. Changing it also changes which sessions remain eligible; compare the same value and keep the final collection wait longer than it. |
 | Round pairs / 10-second waits | Changes observation duration. Keep explicit waits so empty rounds still advance time. |
 | Worker network profile | Changes P2P delay/jitter/loss. Keep the two bootstrap Peers stable for this experiment design. |
 | `payloadEncoding` | `envelope` provides latency metadata. `raw` gives exactly 32 bytes of PubSub data here, but no propagation latency samples. |
@@ -96,4 +103,4 @@ A fixed seed makes random sampling reproducible when the eligible populations an
 
 The v2 churn scripts kept 10 boot nodes stable, scheduled up to 10,000 worker joins, waited, published one batch from up to 10 randomly selected workers using 32-byte raw data on all their topics, then collected for 30 seconds while churn continued.
 
-This example deliberately uses two boot nodes, a smaller expected worker population, **30 newly selected publication rounds**, one explicit topic, added P2P network conditions, and **envelopes for latency measurement**. Its balanced Agent placement also differs from v2's per-join random worker-server selection. It preserves the churn-and-observe idea while making repeated observations practical on a small Swarm. It does not establish equivalent results or reconstruct missing v2 configuration files. See the [v2 reproduction notes](v2-reproduction.md) for the compatibility boundaries.
+This example deliberately uses two boot nodes, a smaller expected worker population, **30 newly selected publication rounds**, one explicit topic, added P2P network conditions, and **envelopes for latency measurement**. Its balanced Agent placement also differs from v2's per-join random worker-server selection. It preserves the churn-and-observe idea while making repeated observations practical on a small Swarm. The session-window metric definition is an independent v3 experimental choice, not a v2 reproduction contract. It does not establish equivalent results or reconstruct missing v2 configuration files. See the [v2 reproduction notes](v2-reproduction.md) for the compatibility boundaries.

@@ -210,7 +210,11 @@ func (s *Server) handleTelemetry(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, "event batch cannot exceed 5000 events")
 		return
 	}
-	s.enqueueEvents(batch)
+	if !s.enqueueEvents(batch) {
+		w.Header().Set("Retry-After", "1")
+		writeError(w, http.StatusServiceUnavailable, "telemetry admission is unavailable; retry this batch")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

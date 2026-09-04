@@ -52,6 +52,8 @@ type Node struct {
 }
 
 type TraceEvent struct {
+	SessionID    string         `json:"sessionId,omitempty"`
+	Sequence     uint64         `json:"sequence,omitempty"`
 	EventID      string         `json:"eventId,omitempty"`
 	RunID        string         `json:"runId"`
 	AgentID      string         `json:"agentId,omitempty"`
@@ -96,6 +98,7 @@ type PublishRequest struct {
 	// PayloadEncoding defaults to envelope. Raw publishes exactly PayloadSize
 	// bytes as PubSub data and carries no run, sender, or timestamp metadata.
 	PayloadEncoding    string         `json:"payloadEncoding,omitempty"`
+	DeliveryWindow     string         `json:"deliveryWindow,omitempty"`
 	TargetNodes        int            `json:"targetNodes,omitempty"`
 	TargetNodesByTopic map[string]int `json:"targetNodesByTopic,omitempty"`
 	// The Controller freezes remote subscribers immediately before dispatch.
@@ -136,23 +139,42 @@ type Edge struct {
 }
 
 type Metrics struct {
-	Definition             string  `json:"definition"`
-	RunID                  string  `json:"runId,omitempty"`
-	Published              int     `json:"published"`
-	Delivered              int     `json:"delivered"`
-	Duplicates             int     `json:"duplicates"`
-	AverageLatencyMS       float64 `json:"averageLatencyMs"`
-	P95LatencyMS           float64 `json:"p95LatencyMs"`
-	Reachability           float64 `json:"reachability"`
-	EligibleDeliveries     int     `json:"eligibleDeliveries"`
-	ExpectedDeliveries     int     `json:"expectedDeliveries"`
-	DeliveryRatioAvailable bool    `json:"deliveryRatioAvailable"`
-	LatencySamples         int     `json:"latencySamples"`
-	InvalidLatencySamples  int     `json:"invalidLatencySamples"`
-	AverageDuplicates      float64 `json:"averageDuplicates"`
-	EligibleDuplicates     int     `json:"eligibleDuplicates"`
-	DuplicateSamples       int     `json:"duplicateSamples"`
-	UnscopedPublications   int     `json:"unscopedPublications"`
+	DeliveryWindows                []string `json:"deliveryWindows,omitempty"`
+	Definition                     string   `json:"definition"`
+	RunID                          string   `json:"runId,omitempty"`
+	Published                      int      `json:"published"`
+	Delivered                      int      `json:"delivered"`
+	Duplicates                     int      `json:"duplicates"`
+	AverageLatencyMS               float64  `json:"averageLatencyMs"`
+	P95LatencyMS                   float64  `json:"p95LatencyMs"`
+	Reachability                   float64  `json:"reachability"`
+	EligibleDeliveries             int      `json:"eligibleDeliveries"`
+	ExpectedDeliveries             int      `json:"expectedDeliveries"`
+	DeliveryRatioAvailable         bool     `json:"deliveryRatioAvailable"`
+	LatencySamples                 int      `json:"latencySamples"`
+	InvalidLatencySamples          int      `json:"invalidLatencySamples"`
+	AverageDuplicates              float64  `json:"averageDuplicates"`
+	EligibleDuplicates             int      `json:"eligibleDuplicates"`
+	DuplicateSamples               int      `json:"duplicateSamples"`
+	UnscopedPublications           int      `json:"unscopedPublications"`
+	DeliveryRatioUpperBound        float64  `json:"deliveryRatioUpperBound"`
+	UnknownDeliveries              int      `json:"unknownDeliveries"`
+	MissedDeliveries               int      `json:"missedDeliveries"`
+	LateDeliveries                 int      `json:"lateDeliveries"`
+	PendingPublications            int      `json:"pendingPublications"`
+	FinalizedPublications          int      `json:"finalizedPublications"`
+	InitialExpectedDeliveries      int      `json:"initialExpectedDeliveries"`
+	InitialEligibleDeliveries      int      `json:"initialEligibleDeliveries"`
+	InitialUnknownDeliveries       int      `json:"initialUnknownDeliveries"`
+	InitialDeliveryRatio           float64  `json:"initialDeliveryRatio"`
+	InitialDeliveryRatioUpperBound float64  `json:"initialDeliveryRatioUpperBound"`
+	InitialDeliveryRatioAvailable  bool     `json:"initialDeliveryRatioAvailable"`
+	DepartedPairs                  int      `json:"departedPairs"`
+	AvailabilityUnknownPairs       int      `json:"availabilityUnknownPairs"`
+	StableCoverage                 float64  `json:"stableCoverage"`
+	StableCoverageAvailable        bool     `json:"stableCoverageAvailable"`
+	LegacyPublications             int      `json:"legacyPublications"`
+	MeasurementIncomplete          bool     `json:"measurementIncomplete"`
 }
 
 type Snapshot struct {

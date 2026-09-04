@@ -71,6 +71,7 @@ phases:
     topic: kpl/swarm-churn
     payloadSize: 32
     payloadEncoding: envelope
+    deliveryWindow: 10s
     parallel: false
     await: true
     onError: continue
@@ -152,4 +153,3 @@ phases:
   # Cancel any remaining joins, then fence and remove this run's Peer containers.
   - name: stop churn and clean up all peers
     action: stop-all
-

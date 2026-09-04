@@ -2,7 +2,7 @@
   "id": null,
   "uid": "kpl-experiments",
   "title": "KP2PLab Experiment Analysis",
-  "description": "Analyze frozen-cohort delivery ratio, first remote application latency, duplicate copies per successful delivery, Peer churn, network conditions, and Agent status.",
+  "description": "Analyze session-window conditional delivery bounds, starting-cohort delivery and coverage, measurement uncertainty, first on-time stable remote latency, observed duplicates, churn, and network conditions.",
   "tags": [
     "KP2PLab",
     "P2P",
@@ -40,7 +40,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**Select Run, Agent, and Topic, then adjust the time range.** Traffic rates use `rate` and selected-range traffic uses `increase`. **Delivery ratio and average duplicates use the whole observed run and only the Run filter.** A publication freezes online, ready remote subscribers at dispatch; departures remain expected and late joins are excluded. Latency uses first successful remote envelope deliveries, excluding local deliveries, raw data and negative clock-skew samples. Missing denominators remain N/A. Late telemetry can update these estimates. Legacy runs without recipient IDs cannot supply cohort metrics."
+        "content": "**Choose Run, Agent and Topic, then a time range.** Traffic uses rate/increase. **Session-window cards use the whole observed run and only Run.** Stable delivery requires subscription throughout each fixed window (default 10s); departures are excluded even after early success. Starting-cohort delivery retains departures. Read both bounds with coverage, unknown and pending counts. Bounds are not confidence intervals. Missing or uncertain population denominators remain N/A. Late telemetry can revise results; clocks must be synchronized. Completely invisible telemetry cannot be detected. Legacy publications are reported separately and excluded from new metrics."
       }
     },
     {
@@ -460,8 +460,8 @@
     {
       "id": 28,
       "type": "stat",
-      "title": "Delivery ratio · Whole observed run",
-      "description": "Reached subscriber/message pairs divided by expected pairs. Online ready remote subscribers are frozen at dispatch. Departures remain in the denominator; late joins and sender-local delivery are excluded. Only the Run filter applies. This is application delivery, not packet-loss rate.",
+      "title": "Stable delivery · Bounds",
+      "description": "session-window-v1: on-time successful pairs among instrumented receiver sessions proven subscribed throughout the fixed window. A pre-deadline departure is excluded even after early receipt. Lower=S/E; upper=(S+unknown)/E. These are missing-observation bounds, not confidence intervals or a claim about invisible sessions. Availability uncertainty is reported separately. Only the Run filter applies. Counts cover mature messages in the whole observed run unless stated otherwise; legacy publications are excluded.",
       "datasource": {
         "type": "prometheus",
         "uid": "kpl-prometheus"
@@ -475,8 +475,170 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "(sum(kpl_delivery_reached_pairs{run_id=~\"${run_id:regex}\"}) / sum(kpl_delivery_expected_pairs{run_id=~\"${run_id:regex}\"})) and on() (sum(kpl_delivery_expected_pairs{run_id=~\"${run_id:regex}\"}) > 0)",
-          "legendFormat": "",
+          "expr": "(sum(kpl_window_reached_pairs{run_id=~\"${run_id:regex}\"}) / sum(kpl_window_stable_pairs{run_id=~\"${run_id:regex}\"})) and on() (sum(kpl_window_stable_pairs{run_id=~\"${run_id:regex}\"}) > 0)",
+          "legendFormat": "Lower bound",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        },
+        {
+          "refId": "B",
+          "expr": "((sum(kpl_window_reached_pairs{run_id=~\"${run_id:regex}\"}) + sum(kpl_window_unknown_pairs{run_id=~\"${run_id:regex}\"})) / sum(kpl_window_stable_pairs{run_id=~\"${run_id:regex}\"})) and on() (sum(kpl_window_stable_pairs{run_id=~\"${run_id:regex}\"}) > 0)",
+          "legendFormat": "Upper bound",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percentunit",
+          "noValue": "N/A",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 31,
+      "type": "stat",
+      "title": "Starting cohort · Bounds",
+      "description": "On-time success among sessions proven present at actual publication time, including confirmed later departures and their early receipts. Pair-weighted across selected new runs. N/A if any selected new run has availability uncertainty or incomplete measurement, or no targets. Bounds reflect unknown receipts. Only the Run filter applies. Counts cover mature messages in the whole observed run unless stated otherwise; legacy publications are excluded.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(kpl_window_initial_reached_pairs{run_id=~\"${run_id:regex}\"}) / sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"})) and on() (sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"}) > 0) and on() (sum(kpl_window_availability_unknown_pairs{run_id=~\"${run_id:regex}\"}) == 0) and on() (max(kpl_window_measurement_incomplete{run_id=~\"${run_id:regex}\"}) == 0)",
+          "legendFormat": "Lower bound",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        },
+        {
+          "refId": "B",
+          "expr": "((sum(kpl_window_initial_reached_pairs{run_id=~\"${run_id:regex}\"}) + sum(kpl_window_initial_unknown_pairs{run_id=~\"${run_id:regex}\"})) / sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"})) and on() (sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"}) > 0) and on() (sum(kpl_window_availability_unknown_pairs{run_id=~\"${run_id:regex}\"}) == 0) and on() (max(kpl_window_measurement_incomplete{run_id=~\"${run_id:regex}\"}) == 0)",
+          "legendFormat": "Upper bound",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percentunit",
+          "noValue": "N/A",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 32,
+      "type": "stat",
+      "title": "Stable coverage",
+      "description": "Proven stable receiver-session pairs divided by starting-cohort pairs. Shows how much of the initial audience remains in the conditional result. N/A if any selected new run has availability uncertainty or incomplete measurement, or no initial targets. Network disconnection and mesh removal do not exclude subscribers. Only the Run filter applies. Counts cover mature messages in the whole observed run unless stated otherwise; legacy publications are excluded.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(kpl_window_stable_pairs{run_id=~\"${run_id:regex}\"}) / sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"})) and on() (sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"}) > 0) and on() (sum(kpl_window_availability_unknown_pairs{run_id=~\"${run_id:regex}\"}) == 0) and on() (max(kpl_window_measurement_incomplete{run_id=~\"${run_id:regex}\"}) == 0)",
+          "legendFormat": "Coverage",
           "instant": true,
           "range": false,
           "format": "time_series",
@@ -526,10 +688,10 @@
       }
     },
     {
-      "id": 29,
+      "id": 30,
       "type": "stat",
-      "title": "Avg duplicates / delivery · Whole run",
-      "description": "Extra PubSub duplicate copies at successful remote cohort pairs divided by reached pairs. Weighted across selected runs. Only the Run filter applies. Not TCP retransmissions or duplicate bytes.",
+      "title": "Stable receiver pairs",
+      "description": "Receiver-session pairs proven subscribed from publication through its deadline. Zero pairs means the delivery ratio is N/A, not 0% or 100%. This is a sum across messages, not a distinct Peer count. Only the Run filter applies. Counts cover mature messages in the whole observed run unless stated otherwise; legacy publications are excluded.",
       "datasource": {
         "type": "prometheus",
         "uid": "kpl-prometheus"
@@ -537,14 +699,14 @@
       "gridPos": {
         "h": 4,
         "w": 8,
-        "x": 8,
-        "y": 14
+        "x": 0,
+        "y": 18
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "(sum(kpl_delivery_duplicate_copies{run_id=~\"${run_id:regex}\"}) / sum(kpl_delivery_reached_pairs{run_id=~\"${run_id:regex}\"})) and on() (sum(kpl_delivery_reached_pairs{run_id=~\"${run_id:regex}\"}) > 0)",
-          "legendFormat": "",
+          "expr": "sum(kpl_window_stable_pairs{run_id=~\"${run_id:regex}\"})",
+          "legendFormat": "Stable pairs",
           "instant": true,
           "range": false,
           "format": "time_series",
@@ -573,7 +735,7 @@
           },
           "unit": "short",
           "noValue": "N/A",
-          "decimals": 3
+          "decimals": 0
         },
         "overrides": []
       },
@@ -594,10 +756,78 @@
       }
     },
     {
-      "id": 30,
+      "id": 33,
       "type": "stat",
-      "title": "Expected remote deliveries · Whole run",
-      "description": "Sum of frozen remote subscriber/message pairs. Only the Run filter applies. Each publication has its own recipient cohort. Zero targets cannot define a delivery ratio.",
+      "title": "Starting-cohort pairs",
+      "description": "Recorded receiver-session pairs proven present at actual publication time. Confirmed departures stay in this count. Availability-unknown candidates are reported separately: this observed count is not a claim that the entire population was seen. Only the Run filter applies. Counts cover mature messages in the whole observed run unless stated otherwise; legacy publications are excluded.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 18
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"})",
+          "legendFormat": "Initial pairs",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "N/A",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 29,
+      "type": "stat",
+      "title": "Avg duplicates / reached pair",
+      "description": "Observed extra PubSub copies within the delivery window at stable on-time successful remote pairs, divided by those successful pairs. Missing copy telemetry can lower the average. Not TCP retransmissions, duplicate bytes, or copies per publication. Only the Run filter applies. Counts cover mature messages in the whole observed run unless stated otherwise; legacy publications are excluded.",
       "datasource": {
         "type": "prometheus",
         "uid": "kpl-prometheus"
@@ -606,13 +836,460 @@
         "h": 4,
         "w": 8,
         "x": 16,
-        "y": 14
+        "y": 18
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(kpl_delivery_expected_pairs{run_id=~\"${run_id:regex}\"})",
-          "legendFormat": "",
+          "expr": "(sum(kpl_window_duplicate_copies{run_id=~\"${run_id:regex}\"}) / sum(kpl_window_reached_pairs{run_id=~\"${run_id:regex}\"})) and on() (sum(kpl_window_reached_pairs{run_id=~\"${run_id:regex}\"}) > 0)",
+          "legendFormat": "Extra copies per reached pair",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "N/A",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 34,
+      "type": "stat",
+      "title": "Stable receipt outcomes",
+      "description": "Unknown: no on-time receipt and an incomplete source sequence prefix or invalid timestamp ordering. Missed: no on-time receipt with complete relevant source evidence. Late: first receipt after the deadline; a late pair can also be a miss. These categories must not be added as disjoint totals. Only the Run filter applies. Counts cover mature messages in the whole observed run unless stated otherwise; legacy publications are excluded.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 22
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(kpl_window_unknown_pairs{run_id=~\"${run_id:regex}\"})",
+          "legendFormat": "Unknown",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(kpl_window_missed_pairs{run_id=~\"${run_id:regex}\"})",
+          "legendFormat": "Missed",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(kpl_window_late_pairs{run_id=~\"${run_id:regex}\"})",
+          "legendFormat": "Late",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "N/A",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 35,
+      "type": "stat",
+      "title": "Availability unknown pairs",
+      "description": "Recorded candidate sessions whose presence at publication or continuity through the deadline cannot be established. Forced termination may leave an unknown tail. These are not confirmed departures or packet loss. Any such pair makes starting-cohort ratios and coverage N/A. Only the Run filter applies. Counts cover mature messages in the whole observed run unless stated otherwise; legacy publications are excluded.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 22
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(kpl_window_availability_unknown_pairs{run_id=~\"${run_id:regex}\"})",
+          "legendFormat": "Availability unknown",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "N/A",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 36,
+      "type": "stat",
+      "title": "Message windows",
+      "description": "Pending publications have not reached their deadline and do not enter finalized pair totals. Finalized means the window has elapsed; later telemetry can still correct its result. A 2-second checkpoint period does not extend the deadline. Only the Run filter applies. Counts cover mature messages in the whole observed run unless stated otherwise; legacy publications are excluded.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 22
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(kpl_window_pending_publications{run_id=~\"${run_id:regex}\"})",
+          "legendFormat": "Pending",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(kpl_window_finalized_publications{run_id=~\"${run_id:regex}\"})",
+          "legendFormat": "Finalized",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "N/A",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 37,
+      "type": "stat",
+      "title": "Departed receiver pairs",
+      "description": "Sessions proven present at publication and confirmed stopped before its deadline. Both early successful and unsuccessful departures are excluded from the stable cohort, but retained in starting-cohort counts. Agent termination is an end-time upper bound, not a receipt checkpoint. Only the Run filter applies. Counts cover mature messages in the whole observed run unless stated otherwise; legacy publications are excluded.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 26
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(kpl_window_departed_pairs{run_id=~\"${run_id:regex}\"})",
+          "legendFormat": "Departed",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "N/A",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 38,
+      "type": "stat",
+      "title": "Incomplete new runs",
+      "description": "Number of selected new runs with known unscoped measurement streams. A positive value makes aggregate starting-cohort ratios and coverage N/A. Zero cannot detect completely invisible telemetry or prove observation of every physical Peer. Only the Run filter applies. Counts cover mature messages in the whole observed run unless stated otherwise; legacy publications are excluded.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 26
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(kpl_window_measurement_incomplete{run_id=~\"${run_id:regex}\"})",
+          "legendFormat": "Incomplete runs",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "N/A",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 39,
+      "type": "stat",
+      "title": "Legacy publications excluded",
+      "description": "Publications from historical definitions, including dispatch-cohort-v1 without a fixed deadline. Raw logs remain available; no session evidence is invented. This panel also reports legacy-only runs, which provide no new window ratios. Only the Run filter applies. Counts include all observed historical publications, with no inferred delivery deadline.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 26
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(kpl_window_legacy_publications{run_id=~\"${run_id:regex}\"})",
+          "legendFormat": "Legacy publications",
           "instant": true,
           "range": false,
           "format": "time_series",
@@ -674,7 +1351,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 18
+        "y": 30
       },
       "targets": [
         {
@@ -824,7 +1501,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 18
+        "y": 30
       },
       "targets": [
         {
@@ -944,7 +1621,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 26
+        "y": 38
       },
       "panels": []
     },
@@ -961,7 +1638,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 27
+        "y": 39
       },
       "targets": [
         {
@@ -1062,8 +1739,8 @@
     {
       "id": 13,
       "type": "timeseries",
-      "title": "First remote latency · Whole observed run P50 / P95 / P99",
-      "description": "Cumulative first application delivery latency among dispatch-time remote subscriber pairs at each scrape. Raw, self-delivery, late join, unknown cohorts, and negative clock-skew samples are excluded. Whole-run histogram quantiles are bucket estimates, not selected-range quantiles. Late batches can backfill or correct samples; query this histogram directly rather than with rate/increase. Synchronize clocks across hosts.",
+      "title": "Stable on-time latency · Whole-run P50 / P95 / P99",
+      "description": "session-window-v1 first application delivery latency for mature, stable, on-time remote envelope pairs. Local/raw/late/departed/unknown/negative samples are excluded. Conditional on observed success, so read delivery bounds and coverage alongside it. Run, Agent and Topic filters apply. These cumulative bucket estimates describe the whole observed run, not the selected interval. Late batches can revise buckets: query directly, not with rate/increase. Synchronize clocks; positive offsets can remain undetected. Legacy histogram series are not included.",
       "datasource": {
         "type": "prometheus",
         "uid": "kpl-prometheus"
@@ -1072,12 +1749,12 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 27
+        "y": 39
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.5, sum by (le) (kpl_propagation_latency_seconds_bucket{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"})) and on() (sum(kpl_propagation_latency_seconds_count{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}) > 0)",
+          "expr": "histogram_quantile(0.5, sum by (le) (kpl_window_propagation_latency_seconds_bucket{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"})) and on() (sum(kpl_window_propagation_latency_seconds_count{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}) > 0)",
           "legendFormat": "P50",
           "instant": false,
           "range": true,
@@ -1090,7 +1767,7 @@
         },
         {
           "refId": "B",
-          "expr": "histogram_quantile(0.95, sum by (le) (kpl_propagation_latency_seconds_bucket{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"})) and on() (sum(kpl_propagation_latency_seconds_count{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}) > 0)",
+          "expr": "histogram_quantile(0.95, sum by (le) (kpl_window_propagation_latency_seconds_bucket{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"})) and on() (sum(kpl_window_propagation_latency_seconds_count{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}) > 0)",
           "legendFormat": "P95",
           "instant": false,
           "range": true,
@@ -1103,7 +1780,7 @@
         },
         {
           "refId": "C",
-          "expr": "histogram_quantile(0.99, sum by (le) (kpl_propagation_latency_seconds_bucket{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"})) and on() (sum(kpl_propagation_latency_seconds_count{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}) > 0)",
+          "expr": "histogram_quantile(0.99, sum by (le) (kpl_window_propagation_latency_seconds_bucket{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"})) and on() (sum(kpl_window_propagation_latency_seconds_count{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}) > 0)",
           "legendFormat": "P99",
           "instant": false,
           "range": true,
@@ -1196,7 +1873,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 35
+        "y": 47
       },
       "targets": [
         {
@@ -1320,7 +1997,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 35
+        "y": 47
       },
       "targets": [
         {
@@ -1418,7 +2095,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 43
+        "y": 55
       },
       "targets": [
         {
@@ -1516,7 +2193,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 43
+        "y": 55
       },
       "targets": [
         {
@@ -1579,7 +2256,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 51
+        "y": 63
       },
       "panels": []
     },
@@ -1596,7 +2273,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 52
+        "y": 64
       },
       "targets": [
         {
@@ -1694,7 +2371,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 52
+        "y": 64
       },
       "targets": [
         {
@@ -1793,7 +2470,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 60
+        "y": 72
       },
       "targets": [
         {
@@ -1891,7 +2568,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 60
+        "y": 72
       },
       "targets": [
         {
@@ -1985,7 +2662,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 68
+        "y": 80
       },
       "panels": []
     },
@@ -2002,7 +2679,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 69
+        "y": 81
       },
       "targets": [
         {
@@ -2100,7 +2777,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 69
+        "y": 81
       },
       "targets": [
         {
@@ -2198,7 +2875,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 77
+        "y": 89
       },
       "targets": [
         {
@@ -2289,7 +2966,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 77
+        "y": 89
       },
       "targets": [
         {
@@ -2438,7 +3115,7 @@
       {
         "name": "topic",
         "label": "Topic",
-        "description": "Applies to messages, propagation latency, and GRAFT/PRUNE. Peer removal events have no topic.",
+        "description": "Applies to traffic, window latency, and GRAFT/PRUNE. Session delivery cards use only Run. Peer removal events have no topic.",
         "type": "query",
         "datasource": {
           "type": "prometheus",
@@ -2486,7 +3163,7 @@
       "24h"
     ]
   },
-  "version": 2,
+  "version": 3,
   "weekStart": "monday",
   "annotations": {
     "list": [

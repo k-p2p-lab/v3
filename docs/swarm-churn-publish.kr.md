@@ -47,9 +47,9 @@ readiness barrier는 안정적인 boot 그룹에만 적용합니다. 계속 커�
 
 선택한 worker가 자기 차례 전에 수명을 다할 수 있습니다. `onError: continue`는 개별 실패를 `phase-operation-failed`로 기록한 뒤 계속 진행합니다. 후보가 없으면 그 round는 no-op입니다. 취소·시나리오 deadline·저장 오류 등 치명적인 실패는 여전히 실행을 끝낼 수 있습니다. 최대치는 **선택된 발행 작업 300개**이며 성공 메시지 300개를 보장하지 않습니다.
 
-각 발행은 `payloadSize: 32`, `payloadEncoding: envelope`, topic `kpl/swarm-churn`을 사용합니다. 32바이트는 무작위 payload의 길이입니다. envelope가 메타데이터를 추가하므로 PubSub 데이터와 네트워크 트래픽은 32바이트보다 큽니다. envelope 덕분에 전파 지연을 측정할 수 있습니다.
+각 발행은 `payloadSize: 32`, `payloadEncoding: envelope`, `deliveryWindow: 10s`, topic `kpl/swarm-churn`을 사용합니다. 32바이트는 무작위 payload의 길이입니다. envelope가 메타데이터를 추가하므로 PubSub 데이터와 네트워크 트래픽은 32바이트보다 큽니다. envelope 덕분에 전파 지연을 측정할 수 있습니다.
 
-worker network는 `scope: p2p`, 지연 25ms, jitter 2ms, 설정 packet loss 0.5%입니다. boot에는 추가 네트워크 제약이 없습니다. **packet loss는 수신 수 / 발행 수가 아닙니다.** TCP가 재전송할 수 있고 메시지 하나가 여러 subscriber에게 도달하며 발행 노드 자신의 로컬 수신도 포함됩니다.
+worker network는 `scope: p2p`, 지연 25ms, jitter 2ms, 설정 packet loss 0.5%입니다. boot에는 추가 네트워크 제약이 없습니다. **packet loss는 애플리케이션 미도달과 다릅니다.** TCP가 재전송할 수 있고 메시지 하나가 여러 subscriber에게 도달합니다. 전체 수신 이벤트에는 발행자 로컬 수신도 포함되지만 세션 기간 도달률에서는 제외합니다.
 
 ## 관측과 결과 저장
 
@@ -61,16 +61,22 @@ Control Room에서는 ready Peer 수, Agent 점유량, 실험·job 상태와 이
 |---|---|
 | 변화하는 노드 수와 점유 용량 | 실시간 node inventory, `kpl_nodes`, `kpl_agent_active_nodes` |
 | 발행·수신·중복 이벤트 수 | `kpl_events_total`. mesh 변화는 `graft`/`prune` 이벤트로 관측 |
-| 도달률과 원격 성공 수신당 평균 추가 복사본 | `kpl_delivery_ratio`, `kpl_delivery_duplicates_per_reached_pair`. Grafana의 이 패널에는 Run 필터만 적용 |
-| Envelope 지연과 PubSub 데이터 양 | `kpl_propagation_latency_seconds`, `kpl_message_bytes_total` |
+| 안정 대상 조건부 도달률·발행 시점 대상 도달률·coverage | `kpl_window_delivery_ratio`, `kpl_window_initial_delivery_ratio`, `kpl_window_stable_coverage`. Run 필터만 적용 |
+| Pending과 관측 불명 | `kpl_window_pending_publications`, `kpl_window_unknown_pairs`, `kpl_window_availability_unknown_pairs`, `kpl_window_measurement_incomplete` |
+| 안정 대상의 원격 성공 수신당 관측 추가 복사본 | `kpl_window_duplicates_per_reached_pair`. Run 필터만 적용 |
+| Envelope 지연과 PubSub 데이터 양 | `kpl_window_propagation_latency_seconds`, `kpl_message_bytes_total` |
 | 설정한 네트워크 조건 | `kpl_network_configured_*`. 실제 손실률이나 RTT가 아닌 설정값 |
 | 실패 요청과 보고된 telemetry drop | `kpl_operation_failures_total`, `kpl_telemetry_dropped_events_total` |
 
-PubSub `join`/`leave`는 topic 참여·탈퇴이며 **Peer 생성·종료가 아닙니다**. 노드 lifecycle은 inventory와 주기적 gauge로 관측하며 `events.jsonl`이 모든 전이를 보장하지 않습니다. 새 발행은 요청 직전 `targetNodeIds`와 `cohortCapturedAt`을 보존해 이후 이탈은 분모에 유지하고 새 join은 제외합니다. ZIP `metrics.json`은 같은 로그 경계에서 도달률·첫 원격 수신 지연·평균 중복 수를 재계산합니다. 과거의 `targetNodes` 숫자만으로는 대상을 복원할 수 없습니다. [지표 정의와 수집 한계](experiment-metrics.kr.md)를 참고하십시오.
+새 `session-window-v1` 발행은 실제 발행 시각과 고정된 10초 마감을 사용합니다. `measurement_start`는 구독 애플리케이션 세션을 기록하고 동일 세션의 2초 주기 checkpoint 또는 stop으로 관측된 지속을 확인합니다. 주 도달률은 기간 전체에 걸쳐 구독을 증명한 세션만 사용합니다. 마감 전 stop 세션은 이미 수신했어도 주 지표의 분자·분모에서 모두 제외하고, 늦은 join도 제외합니다. 네트워크 단절이나 mesh 제거로 구독자를 제외하지 않습니다.
+
+발행 시점 대상 도달률과 안정 coverage를 함께 보십시오. 최초 10명 중 2명이 이탈하고 그중 1명은 미리 수신했으며 안정 구독자 8명 중 7명이 성공하면 안정 도달률은 **7/8**, 발행 시점 대상 도달률은 **8/10**, coverage는 **80%**입니다. 발행 시점 대상 도달률에는 이탈자의 조기 성공도 포함합니다. 원본 sequence가 누락된 미수신은 unknown이며 도달률 상·하한을 넓힙니다. 이 범위는 신뢰구간이 아닙니다. 10초가 지나지 않은 메시지는 pending입니다. 가용성이 불명확하거나 측정이 불완전하면 발행 시점 대상 비율과 coverage는 N/A입니다.
+
+PubSub `join`/`leave`는 **Peer 생성·종료 기록이 아닙니다**. 측정 이벤트는 계측된 구독 세션이며 전체 Docker lifecycle이나 물리적 uptime 이력이 아닙니다. 강제 종료는 불명 꼬리 구간을 남길 수 있고 아예 보이지 않은 telemetry는 수신 로그만으로 검출하지 못합니다. 시계 동기화는 지연뿐 아니라 마감·대상 판정에도 영향을 줍니다. ZIP `metrics.json`은 같은 이벤트 경계에서 재계산합니다. 과거 dispatch 대상은 legacy로 남기며 지속 구독 증거를 대신하지 못합니다. [지표 정의와 수집 한계](experiment-metrics.kr.md)를 참고하십시오.
 
 실험 종료 후 Peer 정리와, 다른 실행이 없다면 Agent 점유량 0을 확인합니다. `stop-all`이 끝나지 않은 join job을 의도적으로 취소하므로 `completed` 실행에도 `canceledJobs: 1`이 있을 수 있습니다. 이 값만으로 실패를 뜻하지는 않습니다.
 
-실험 항목 또는 **Saved results**의 **Download results**를 사용하십시오. ZIP에는 최근 300개 버퍼와 별개로 제출한 시나리오·실험 메타데이터·내보내기 경계까지 저장된 전체 이벤트 로그가 들어갑니다. 노드별 lifecycle·timestamp snapshot, 메시지 payload dump, PCAP, Prometheus/Grafana 데이터베이스는 포함하지 않습니다. 실행 중 다운로드는 snapshot이며 다운로드로 누락된 telemetry를 복구할 수는 없습니다. [파일 구성과 보존 정책](monitoring.kr.md#실험-결과-다운로드)
+실험 항목 또는 **Saved results**의 **Download results**를 사용하십시오. ZIP에는 최근 300개 버퍼와 별개로 제출한 시나리오·실험 메타데이터·내보내기 경계까지 저장된 전체 이벤트 로그가 들어갑니다. `metrics.json`과 수집된 구독 세션 이벤트도 포함하지만 별도의 완전한 Docker lifecycle snapshot, 메시지 payload dump, PCAP, Prometheus/Grafana 데이터베이스는 포함하지 않습니다. 실행 중 다운로드는 snapshot이며 다운로드로 누락된 telemetry를 복구할 수는 없습니다. [파일 구성과 보존 정책](monitoring.kr.md#실험-결과-다운로드)
 
 `sudo sh scripts/swarm.sh remove`로 웹 서비스를 내리기 전에 다운로드하십시오. 데이터 volume과 외부 Peer network는 남습니다. 재시작 후 보이는 `interrupted` 결과는 자동 재개하지 않으며 Peer 정리 완료를 증명하지 않습니다.
 
@@ -84,6 +90,7 @@ PubSub `join`/`leave`는 topic 참여·탈퇴이며 **Peer 생성·종료가 아
 | Agent capacity | 접수 한도이며 예약 CPU/RAM이 아닙니다. 높이기 전에 호스트 부하를 측정합니다. |
 | Warm-up `duration` | 첫 발행 전 churn 시간을 바꿉니다. 수렴 검사가 아닌 시간 대기입니다. |
 | Publish `count` / interval | round당 최대 발행 노드 수와 요청 사이 간격을 바꿉니다. |
+| Publish `deliveryWindow` | 기본 10초·최대 1시간인 고정 수신 기간입니다. 끝까지 남는 대상도 바뀌므로 같은 값으로 비교하고 마지막 수집 대기는 이보다 길게 유지합니다. |
 | Round 쌍 / 10초 대기 | 관측 기간을 바꿉니다. 후보가 없어도 시간이 지나도록 명시적 대기를 유지합니다. |
 | Worker network profile | P2P 지연·jitter·loss를 바꿉니다. 이 실험에서는 bootstrap 두 개를 안정적으로 유지합니다. |
 | `payloadEncoding` | `envelope`는 지연 메타데이터를 제공합니다. `raw`는 여기서 PubSub 데이터를 정확히 32바이트로 만들지만 전파 지연 표본이 없습니다. |
@@ -96,4 +103,4 @@ YAML은 anchor로 발행 phase와 대기 phase를 재사용합니다. 이는 파
 
 v2 churn 스크립트는 boot 10개를 유지하고 worker join을 최대 10,000회 예약한 뒤 대기했으며, 무작위 worker 최대 10개에서 전체 topic으로 32바이트 raw 데이터를 **한 batch** 발행했습니다. 이후 churn을 유지하며 30초 수집했습니다.
 
-이 예제는 의도적으로 boot 두 개, 더 작은 기대 worker 수, **매번 다시 선택하는 발행 30 round**, 명시적 topic 하나, 추가 P2P 네트워크 조건, **지연 측정용 envelope**를 사용합니다. balanced Agent 배치도 v2의 join마다 worker 서버를 무작위 선택하는 방식과 다릅니다. churn 중 관측이라는 목적을 유지하면서 작은 Swarm에서 반복 관측할 수 있도록 한 것이며, 결과의 동등성을 보장하거나 누락된 v2 설정 파일을 복원하지 않습니다. [v2 재현 참고](v2-reproduction.kr.md)에서 호환 범위를 확인하십시오.
+이 예제는 의도적으로 boot 두 개, 더 작은 기대 worker 수, **매번 다시 선택하는 발행 30 round**, 명시적 topic 하나, 추가 P2P 네트워크 조건, **지연 측정용 envelope**를 사용합니다. balanced Agent 배치도 v2의 join마다 worker 서버를 무작위 선택하는 방식과 다릅니다. 세션 기간 지표는 v2 재현 계약과 독립적인 v3 실험 설계입니다. churn 중 관측이라는 목적을 유지하면서 작은 Swarm에서 반복 관측할 수 있도록 한 것이며, 결과의 동등성을 보장하거나 누락된 v2 설정 파일을 복원하지 않습니다. [v2 재현 참고](v2-reproduction.kr.md)에서 호환 범위를 확인하십시오.

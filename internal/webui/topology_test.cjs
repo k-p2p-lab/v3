@@ -18,6 +18,24 @@ function context(extra = {}) {
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const peer = (id, agentId = 'a', state = 'ready') => ({ id, agentId, state });
 
+test('delivery display distinguishes conditional reach, missing observations, pending and legacy', () => {
+  const api = context();
+  const metrics = {definition:'session-window-v1',deliveryRatioAvailable:true,reachability:0.7,deliveryRatioUpperBound:0.9,unknownDeliveries:2,expectedDeliveries:10,eligibleDeliveries:7,pendingPublications:3,finalizedPublications:8,initialDeliveryRatioAvailable:false,stableCoverageAvailable:false,availabilityUnknownPairs:1};
+  let view = api.deliveryMetricView(metrics);
+  assert.equal(view.primary, '70%–90%');
+  assert.equal(view.initial, 'N/A');
+  assert.equal(view.coverage, 'N/A');
+  assert.match(view.progress, /Pending: 3/);
+  assert.match(view.note, /proven continuous sessions only/);
+  assert.match(view.observation, /2 receipt unknown · 1 availability unknown/);
+  view = api.deliveryMetricView({...metrics, deliveryRatioAvailable:false});
+  assert.equal(view.primary, 'N/A');
+  view = api.deliveryMetricView({definition:'dispatch-cohort-v1',deliveryRatioAvailable:true,reachability:0.6});
+  assert.equal(view.primary,'60%');
+  assert.equal(view.windowed,false);
+  assert.match(view.label,/Legacy/);
+});
+
 test('relationship layers do not misclassify legacy transport and preserve the input history', () => {
   const api = context();
   const nodes = [peer('one'), peer('two'), peer('stopped', 'a', 'stopped'), peer('stopping', 'a', 'stopping'), peer('failed', 'a', 'failed')];

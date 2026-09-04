@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,20 +66,23 @@ type process struct {
 }
 
 type Server struct {
-	config         Config
-	logger         *slog.Logger
-	client         *http.Client
-	commandContext func(context.Context, string, ...string) *exec.Cmd
-	docker         *dockerRuntime
-	startedAt      time.Time
-	mu             sync.RWMutex
-	processes      map[string]*process
-	ports          portPool
-	runFences      map[string]uint64
-	shuttingDown   bool
-	eventsMu       sync.Mutex
-	events         []model.TraceEvent
-	flushNow       chan struct{}
+	config          Config
+	logger          *slog.Logger
+	client          *http.Client
+	commandContext  func(context.Context, string, ...string) *exec.Cmd
+	docker          *dockerRuntime
+	startedAt       time.Time
+	mu              sync.RWMutex
+	processes       map[string]*process
+	ports           portPool
+	runFences       map[string]uint64
+	shuttingDown    bool
+	eventsMu        sync.Mutex
+	events          []model.TraceEvent
+	eventsInFlight  int
+	terminations    map[string]model.TraceEvent
+	telemetryClosed bool
+	flushNow        chan struct{}
 }
 
 func New(config Config, logger *slog.Logger) (*Server, error) {
@@ -195,19 +199,42 @@ func (s *Server) Run(ctx context.Context) (resultErr error) {
 		WriteTimeout:      3 * time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
+	// Continue forwarding Peer telemetry while shutdown waits for the Peers.
+	controlCtx, controlCancel := context.WithCancel(context.WithoutCancel(ctx))
+	controlDone := make(chan struct{})
+	shutdownRequested, requestShutdown := context.WithCancel(ctx)
+	shutdownDone := make(chan error, 1)
 	defer func() {
-		s.beginShutdown()
-		if err := s.waitStopped(containerStopTimeout); err != nil {
-			resultErr = errors.Join(resultErr, fmt.Errorf("Agent shutdown did not finish peer cleanup: %w", err))
+		requestShutdown()
+		if err := <-shutdownDone; err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("Agent shutdown incomplete: %w", err))
 		}
+		controlCancel()
+		<-controlDone
+		drainCtx, drainCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer drainCancel()
+		resultErr = errors.Join(resultErr, s.drainEvents(drainCtx))
 	}()
-	go s.controlLoop(ctx)
 	go func() {
-		<-ctx.Done()
+		defer close(controlDone)
+		s.controlLoop(controlCtx)
+	}()
+	go func() {
+		<-shutdownRequested.Done()
 		s.beginShutdown()
+		// Keep the telemetry endpoint open while Peers send their final session
+		// markers. Shutting down HTTP first would turn graceful exits into gaps.
+		cleanupErr := s.waitStopped(containerStopTimeout)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			_ = server.Close()
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("finish HTTP handlers: %w", err))
+		}
+		// Serve returns before Shutdown finishes its handlers. Fence admission
+		// before the final drain so a slow request cannot be acknowledged later.
+		s.closeTelemetry()
+		shutdownDone <- cleanupErr
 	}()
 	s.logger.Info("agent listening", "id", s.config.ID, "address", listener.Addr(), "advertise", s.config.AdvertiseURL)
 	err = server.Serve(listener)
@@ -233,7 +260,6 @@ func (s *Server) controlLoop(ctx context.Context) {
 		}
 		select {
 		case <-ctx.Done():
-			s.flushEvents(context.Background())
 			return
 		case <-heartbeat.C:
 			if registered {
@@ -536,6 +562,11 @@ func (s *Server) finishProcess(nodeID string, proc *process, runErr, cleanupErr 
 	current, ok := s.processes[nodeID]
 	if ok && current == proc {
 		current.node.LastSeen = time.Now().UTC()
+		if cleanupErr == nil {
+			// This is an upper bound on the exit time, never evidence that the
+			// process stayed subscribed until the Agent observed its exit.
+			s.queueTermination(model.TraceEvent{EventID: cryptorand.Text(), RunID: current.node.RunID, NodeID: nodeID, AgentID: s.config.ID, Type: "measurement_terminated", Timestamp: current.node.LastSeen})
+		}
 		setProcessMetadata(current, "stoppedAt", current.node.LastSeen.Format(time.RFC3339Nano))
 		if cleanupErr == nil && (current.node.State == model.NodeStopping || runErr == nil) {
 			current.node.State = model.NodeStopped
@@ -754,16 +785,19 @@ func (s *Server) capacityUsedLocked() int {
 	return count
 }
 
-func (s *Server) enqueueEvents(batch model.EventBatch) {
+func (s *Server) enqueueEvents(batch model.EventBatch) bool {
 	s.eventsMu.Lock()
+	// Reserve space for batches already being sent. A failed Controller request
+	// must be requeued without discarding events the Agent has acknowledged.
+	if s.telemetryClosed || len(s.events)+s.eventsInFlight+len(batch.Events) > 50000 {
+		s.eventsMu.Unlock()
+		return false
+	}
 	for i := range batch.Events {
 		batch.Events[i].AgentID = s.config.ID
 	}
 	s.events = append(s.events, batch.Events...)
 	length := len(s.events)
-	if length > 50000 {
-		s.events = append([]model.TraceEvent(nil), s.events[length-50000:]...)
-	}
 	s.eventsMu.Unlock()
 	if length >= 250 {
 		select {
@@ -771,10 +805,18 @@ func (s *Server) enqueueEvents(batch model.EventBatch) {
 		default:
 		}
 	}
+	return true
+}
+
+func (s *Server) closeTelemetry() {
+	s.eventsMu.Lock()
+	s.telemetryClosed = true
+	s.eventsMu.Unlock()
 }
 
 func (s *Server) flushEvents(ctx context.Context) {
 	s.eventsMu.Lock()
+	s.admitTerminationsLocked()
 	if len(s.events) == 0 {
 		s.eventsMu.Unlock()
 		return
@@ -784,19 +826,66 @@ func (s *Server) flushEvents(ctx context.Context) {
 		count = 5000
 	}
 	batchEvents := append([]model.TraceEvent(nil), s.events[:count]...)
+	s.eventsInFlight += count
 	s.events = append([]model.TraceEvent(nil), s.events[count:]...)
 	s.eventsMu.Unlock()
 	batch := model.EventBatch{AgentID: s.config.ID, Events: batchEvents}
 	flushCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if err := s.postJSON(flushCtx, "/api/v1/events/batch", batch, nil); err != nil {
-		s.eventsMu.Lock()
+	err := s.postJSON(flushCtx, "/api/v1/events/batch", batch, nil)
+	s.eventsMu.Lock()
+	s.eventsInFlight -= count
+	if err != nil {
 		s.events = append(batchEvents, s.events...)
-		if len(s.events) > 50000 {
-			s.events = s.events[len(s.events)-50000:]
-		}
-		s.eventsMu.Unlock()
 		s.logger.Warn("telemetry flush failed", "events", len(batchEvents), "error", err)
+	}
+	s.eventsMu.Unlock()
+}
+
+func (s *Server) drainEvents(ctx context.Context) error {
+	for ctx.Err() == nil {
+		s.eventsMu.Lock()
+		remaining := len(s.events) + len(s.terminations)
+		s.eventsMu.Unlock()
+		if remaining == 0 {
+			return nil
+		}
+		s.flushEvents(ctx)
+		select {
+		case <-ctx.Done():
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	s.eventsMu.Lock()
+	remaining := len(s.events) + len(s.terminations)
+	s.eventsMu.Unlock()
+	if remaining > 0 {
+		s.logger.Warn("telemetry drain incomplete", "events", remaining, "error", ctx.Err())
+		return fmt.Errorf("drain Agent telemetry (%d events remaining): %w", remaining, ctx.Err())
+	}
+	return nil
+}
+
+// Retain one pending exit marker per process instead of silently losing it
+// when the trace queue is full. The process inventory already bounds this map.
+func (s *Server) queueTermination(event model.TraceEvent) {
+	s.eventsMu.Lock()
+	defer s.eventsMu.Unlock()
+	if s.terminations == nil {
+		s.terminations = make(map[string]model.TraceEvent)
+	}
+	if existing, ok := s.terminations[event.NodeID]; !ok || event.Timestamp.Before(existing.Timestamp) {
+		s.terminations[event.NodeID] = event
+	}
+}
+
+func (s *Server) admitTerminationsLocked() {
+	for id, event := range s.terminations {
+		if len(s.events)+s.eventsInFlight >= 50000 {
+			return
+		}
+		s.events = append(s.events, event)
+		delete(s.terminations, id)
 	}
 }
 

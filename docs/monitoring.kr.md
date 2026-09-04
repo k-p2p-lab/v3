@@ -40,7 +40,7 @@ ZIP에는 다음 파일이 들어 있습니다.
 | `scenario.yaml` | 실험 실행 시 제출한 시나리오 원문 |
 | `experiment.json` | 저장된 실험 메타데이터·상태·seed·job 카운터 원문 |
 | `events.jsonl` | 내보내기 기준 시점까지 저장된 전체 이벤트. 한 줄에 JSON 하나이며, 기록된 이벤트가 없으면 빈 파일 |
-| `metrics.json` | 동일 이벤트 로그 경계에서 재계산한 실험 전체 대상 집합 도달률, 첫 원격 수신 지연, 평균 중복 수 |
+| `metrics.json` | 동일 이벤트 로그 경계에서 재계산한 세션 기간 도달률 범위, 발행 시점 대상 결과, coverage, pending/unknown, 첫 원격 지연, 관측 중복 수. 과거 정의는 legacy 유지 |
 | `export.json` | 내보내기 시각, 실험 상태, active/partial 여부와 원본 파일의 캡처된 크기 |
 
 Controller의 저장 잠금 안에서 파일 크기를 확보한 뒤 잠금을 해제하고 ZIP을 전송합니다. 이후 추가된 이벤트는 제외되며 느린 다운로드가 telemetry 파일 쓰기를 붙잡지 않습니다. 완료된 실험에도 지연된 telemetry가 도착할 수 있으므로 나중에 추가된 기록까지 필요하면 수집이 안정된 뒤 다시 다운로드하십시오. `partial: false`는 기록된 실험 상태가 종료 상태라는 의미이며 telemetry 무손실을 보장하지 않습니다. 메시지 본문, PCAP, Prometheus/Grafana 데이터베이스는 ZIP에 포함하지 않습니다.
@@ -61,7 +61,7 @@ curl --fail --output run-results.zip \
 
 `RUN_ID`를 저장 목록의 실험 ID로 바꾸십시오. Swarm에서는 control 노드 주소를 사용합니다. `KPL_STACK_NAME=kpl`이면 원본은 해당 노드의 `kpl_controller-data` 볼륨에 있습니다. 이 볼륨을 Controller 내부 `/var/lib/kpl/data`에 마운트하며, 실험별 파일은 그 아래 `runs/<run-id>`에 저장됩니다. 매니저의 `swarm.sh remove`는 이 볼륨을 보존합니다. 원시 이벤트의 자동 보존 기한이나 노드 간 복제는 없으므로 디스크 공간과 백업을 별도로 관리하십시오.
 
-내보내는 내용은 수집된 telemetry입니다. Peer 전송 실패, 메모리 큐 초과, 종료 시 미전송 데이터로 누락이 생길 수 있으며 다운로드로 복구할 수는 없습니다. `/api/v1/events`는 여전히 최근 300개만 반환하고 웹 이벤트 화면은 그중 최신 40개를 표시하지만 ZIP은 저장된 전체 로그를 읽습니다.
+내보내는 내용은 구독 세션 start/checkpoint/stop과 기록된 Agent 종료 확인을 포함한 수집 telemetry입니다. Peer 재시도, Agent 큐 backpressure, 정상 종료 drain은 유실을 줄이지만 한도가 있으며 강제 종료는 Peer를 drain하지 않습니다. 원본 sequence 간격이 있으면 미수신은 unknown입니다. 다운로드로 누락을 복구하거나 아예 보이지 않은 세션을 발견할 수는 없습니다. `/api/v1/events`는 여전히 최근 300개만 반환하고 웹 이벤트 화면은 그중 최신 40개를 표시하지만 ZIP은 저장된 전체 로그를 읽습니다.
 
 ## 지표의 의미
 
@@ -69,11 +69,18 @@ curl --fail --output run-results.zip \
 |---|---|
 | `kpl_events_total` | Controller가 수신한 이벤트 누적 수. `run_id`, `agent_id`, `event_type`, `topic`으로 구분 |
 | `kpl_message_bytes_total` | 발행/수신 PubSub data 바이트. libp2p framing 및 TCP/IP 헤더 제외 |
-| `kpl_propagation_latency_seconds` | 실험 전체 첫 원격 대상 수신 지연. 로컬·늦은 join·raw·대상 미상·음수·미측정 제외 |
-| `kpl_delivery_expected_pairs`, `kpl_delivery_reached_pairs`, `kpl_delivery_ratio` | run별 발행 직전 고정 원격 대상 쌍, 성공 쌍, 그 비율 |
-| `kpl_delivery_duplicate_copies`, `kpl_delivery_duplicates_per_reached_pair` | 성공한 원격 대상 쌍의 추가 PubSub 복사본 및 성공 수신당 평균 |
+| `kpl_window_stable_pairs`, `kpl_window_reached_pairs` | 기간이 지난 메시지 중 수신 기간 전체의 구독이 증명된 수신 세션 쌍 및 기한 내 성공. `run_id`로 구분 |
+| `kpl_window_unknown_pairs`, `kpl_window_missed_pairs`, `kpl_window_late_pairs` | 안정 쌍의 수신 불명·확인된 미도달·마감 후 수신 수 |
+| `kpl_window_delivery_ratio` (`bound`: `lower` / `upper`) | 안정 대상 조건부 도달률의 논리적 상·하한. 안정 쌍이 없으면 생략하며 신뢰구간이 아님 |
+| `kpl_window_initial_pairs`, `kpl_window_initial_reached_pairs`, `kpl_window_initial_unknown_pairs` | 관측된 발행 시점 대상, 이탈자를 포함한 기한 내 성공, 수신 불명 수 |
+| `kpl_window_initial_delivery_ratio` (`bound`: `lower` / `upper`), `kpl_window_stable_coverage` | 발행 시점 대상 도달률 범위와 안정/발행 시점 대상 coverage. 가용성 불명·측정 불완전이면 생략 |
+| `kpl_window_departed_pairs`, `kpl_window_availability_unknown_pairs` | 확인된 이탈 및 세션 가용성을 확인하지 못한 쌍 수 |
+| `kpl_window_pending_publications`, `kpl_window_finalized_publications` | 마감 전 메시지와 기간이 지난 메시지. 확정 결과도 늦은 telemetry로 정정 가능 |
+| `kpl_window_measurement_incomplete`, `kpl_window_legacy_publications` | 관측된 측정 범위 불명 stream 여부(0/1)와 과거 정의 발행 수. 0도 아예 보이지 않은 telemetry는 검출하지 못함 |
+| `kpl_window_propagation_latency_seconds` | 안정 대상의 기한 내 첫 원격 envelope 수신 지연. `run_id`, 수신 `agent_id`, `topic`으로 구분. raw·로컬·마감 후·이탈·불명·무효 표본 제외 |
+| `kpl_window_duplicate_copies`, `kpl_window_duplicates_per_reached_pair` | 안정 대상의 원격 성공 쌍에서 기간 안에 관측한 추가 PubSub 복사본 및 성공당 평균 |
 | `kpl_operation_failures_total` | `onError: continue` 정책에서 기록한 publish/leave 실패 |
-| `kpl_telemetry_dropped_events_total` | Peer가 보고한 telemetry 큐 포화로 인한 유실 수 |
+| `kpl_telemetry_dropped_events_total` | 보고된 telemetry 유실. P2P 패킷 손실이나 미보고 유실이 0이라는 증거가 아님 |
 | `kpl_nodes` | 실험·Agent·그룹·역할·타입·상태별 피어 수 |
 | `kpl_agent_*` | Controller에서 관측한 Agent 온라인 상태, 용량, 마지막 heartbeat |
 | `kpl_experiment_*` | 실험 상태, 단계, job 상태 |
@@ -85,15 +92,19 @@ curl --fail --output run-results.zip \
 
 현재 관계는 Control Room의 [대화형 토폴로지](topology.kr.md)에서 Peer 상태 snapshot을 통해 transport, Kademlia 라우팅 테이블, GossipSub mesh를 독립적으로 확인하십시오. 이 live snapshot은 최근 이벤트 버퍼와 독립적이며 Prometheus나 결과 ZIP에 전체 그래프 이력을 저장하는 것은 아닙니다.
 
-전체 `deliver` 이벤트에는 로컬 수신이 포함됩니다. 대상 집합 기반 도달률·첫 수신 지연·중복 평균은 로컬과 늦은 join을 제외하며, 대상 Peer가 떠나도 도달률 분모에 유지합니다. TCP 재전송은 패킷 손실을 지연으로 바꿀 수 있습니다. [정의·수식·참고 문헌](experiment-metrics.kr.md)을 확인하십시오. 지연 히스토그램은 늦은 배치로 정정될 수 있어 Grafana는 `rate`/`increase` 대신 누적 버킷을 직접 조회하여 실험 전체 분위수를 계산합니다.
+`session-window-v1`은 실제 발행 시각과 `publish.deliveryWindow`(기본 10초, 양수·최대 1시간)를 사용합니다. 주 조건부 도달률은 기간 전체의 구독을 세션 증거로 확인해야 합니다. 마감 전 이탈은 조기 성공했어도 제외하며 발행 시점 대상 도달률에는 유지합니다. 늦은 join과 발행자 로컬 수신은 양쪽 모두 제외합니다. 단절이나 mesh 변화로 구독자를 제거하지 않습니다. 안정 도달률 범위, 발행 시점 대상 범위, coverage, pending, 불명을 함께 보십시오. sequence 누락은 확인된 미도달이 아닌 unknown이며 가용성 증거 부재도 확정 이탈은 아닙니다.
+
+Grafana 세션 패널에는 Run 필터만 적용하고 백분율 평균이 아닌 수신 쌍 합계로 집계합니다. 범위는 확인된 안정 세션에 대한 값이며 보이지 않는 모집단을 증명하지 않습니다. 선택한 새 run 중 하나라도 가용성 불명이나 측정 불완전이 있으면 발행 시점 대상 비율과 coverage는 N/A입니다. 과거 발행 패널은 새 결과에서 제외한 과거 데이터를 표시합니다. 새 패널은 `kpl_window_*`만 사용하고 이전 `kpl_delivery_*`·`kpl_propagation_latency_seconds`는 과거 의미를 유지하므로 섞지 마십시오.
+
+전체 `deliver`에는 로컬 수신도 포함되므로 발행 수로 나누어 도달률을 구하지 않습니다. TCP 재전송은 패킷 손실을 지연으로 바꿀 수 있습니다. [정의·수식·참고 문헌](experiment-metrics.kr.md)을 확인하십시오. 늦은 배치가 기간 gauge와 histogram 버킷을 정정할 수 있어 `rate`/`increase` 대신 직접 조회합니다. Grafana 지연은 실험 전체 누적 분위수이며 선택 시간 범위만의 분위수가 아닙니다.
 
 누적 카운터는 최근 300개 웹 이벤트 버퍼와 독립적입니다. Controller 프로세스가 재시작되면 카운터가 초기화되며 과거 `events.jsonl`을 자동 재생하지 않습니다. Prometheus에 이미 저장된 시계열은 유지되고 `rate`/`increase`는 관측된 카운터 재설정을 처리합니다. 단, scrape 전에 사라진 이벤트나 telemetry 전송 실패를 복구하는 기능은 아닙니다. `increase`는 scrape 표본으로 추정한 구간 증가량이므로 누적 정수 이벤트 수와 항상 정확히 일치하지는 않습니다.
 
-raw 수신도 수신 수·바이트에는 포함되지만 지연 히스토그램에는 포함되지 않습니다. 지연 표본이 없는 구간은 0ms로 해석하지 마십시오. Peer 시계가 다른 호스트에 걸쳐 있으면 시계 동기화가 전파 지연 측정에 영향을 줍니다.
+raw 수신도 수신 수·바이트에는 포함되지만 지연 히스토그램에는 포함되지 않습니다. 지연 표본이 없는 구간은 0ms로 해석하지 마십시오. 발행·세션 수명·마감·지연 비교를 위해 호스트 시계를 동기화하십시오. 양수 방향 시계 오차는 검출되지 않을 수 있습니다. checkpoint는 계측 애플리케이션 세션의 증거이며 물리적 uptime을 뜻하지 않습니다.
 
 ## 실제 실행 검증
 
-아래 과거 실행은 고정 수신 대상 구현 이전이며 로컬 지연을 포함합니다. 이전 이벤트 집계를 검증한 기록으로, 새 대상 집합 기반 지연 분포의 검증 수치는 아닙니다. 갱신한 Controller·Peer 테스트는 churn 이탈·늦은 join, 첫 수신, 재시도 중복 제거, raw ID, ZIP 재계산을 검사합니다.
+아래 과거 실행은 세션 기간 측정 이전이며 로컬 지연을 포함합니다. 이전 이벤트 집계 검증이며 새 조건부 도달률이나 지연 분포의 검증은 아닙니다. 새 실행은 같은 `session-window-v1` 정의와 수신 기간으로 비교하십시오.
 
 2026-09-04에 `examples/monitoring.yaml`을 실행하여 아래 결과를 원본 `events.jsonl`과 대조했습니다. 실행 ID는 `run-20260904T024349Z-345a`이며 실험 종료 후 테스트 Peer 컨테이너는 모두 정리되었습니다.
 
@@ -113,7 +124,7 @@ Peer 이탈이 처음 보고될 때 시계열이 생성되어 초기 증가량�
 
 Prometheus 시계열은 `prometheus-data`, Grafana 설정은 `grafana-data` named volume에 저장됩니다. 일반적인 컨테이너 재생성 후에도 유지됩니다. Prometheus 보존 설정은 15일/5GB이며 먼저 도달한 정책이 적용됩니다. 5GB는 디스크 사용량의 엄격한 상한이 아니며 WAL·head·압축 작업에는 추가 공간이 필요합니다. [Prometheus 저장소 문서](https://prometheus.io/docs/prometheus/latest/storage/)
 
-Grafana 대시보드는 `monitoring/grafana/dashboards`의 JSON을 수정하면 30초 간격으로 반영됩니다. 배포된 원본은 파일로 관리하며 별도 대시보드를 저장하려면 관리자 로그인 후 복사본을 사용하십시오. [Grafana provisioning 문서](https://grafana.com/docs/grafana/latest/administration/provisioning/)
+Compose bind mount는 `monitoring/grafana/dashboards`의 JSON 수정 사항을 30초 간격으로 반영합니다. Swarm config는 불변이므로 이번 변경은 버전이 바뀐 dashboard config 참조를 사용하여 stack을 재배포해야 적용됩니다. 배포된 원본은 파일로 관리하며 별도 대시보드를 저장하려면 관리자 로그인 후 복사본을 사용하십시오. [Grafana provisioning 문서](https://grafana.com/docs/grafana/latest/administration/provisioning/)
 
 ```bash
 # 수집 대상 상태 확인
