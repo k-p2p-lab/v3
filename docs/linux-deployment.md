@@ -1,16 +1,18 @@
-# Linux 운영 가이드
+# Linux Deployment Guide
 
-최종 실행 환경은 Linux Docker Engine입니다. Windows는 개발 호스트로 사용할 수 있지만 Peer 실행·네트워크 제어·종료 검증은 Linux 컨테이너에서 수행합니다. 제공하는 Compose 구성은 **한 대의 Linux 서버, rootful Docker, userns-remap 미사용, IPv4 user-defined bridge**를 기준으로 합니다.
+English | [Korean](linux-deployment.kr.md)
 
-## 서버 준비와 실행
+The deployment target is Linux Docker Engine. Windows can serve as a development host, but Peer execution, network control, and shutdown verification run in Linux containers. The supplied Compose configuration targets **one Linux server with rootful Docker, no userns-remap, and an IPv4 user-defined bridge**.
 
-Docker Engine과 Compose 플러그인을 설치하고, 같은 사용자와 같은 Docker context로 아래 명령을 실행하십시오. Docker 28 이상을 권장합니다. 이전 버전에는 localhost에 게시한 포트가 같은 L2 네트워크에서 접근될 수 있는 제한이 있습니다. [Docker 포트 게시 문서](https://docs.docker.com/engine/network/port-publishing/)
+## Prepare and Start the Server
+
+Install Docker Engine and the Compose plugin, then run the following commands with the same user and Docker context. Docker 28 or later is recommended. Earlier versions have a limitation that can make ports published to localhost accessible from the same L2 network. [Docker port publishing](https://docs.docker.com/engine/network/port-publishing/)
 
 ```sh
-# 저장소 디렉터리에서 실행합니다. 기존 .env가 있으면 보존합니다.
+# Run from the repository directory. Preserve an existing .env file.
 test -f .env || cp .env.example .env
 chmod 600 .env
-# .env에서 KPL_API_TOKEN과 GRAFANA_ADMIN_PASSWORD를 설정합니다.
+# Set KPL_API_TOKEN and GRAFANA_ADMIN_PASSWORD in .env.
 
 docker compose build controller
 sh scripts/check-linux.sh
@@ -19,78 +21,78 @@ docker compose up -d --no-build
 docker compose ps
 ```
 
-사전 점검은 실행 이미지·Docker 접근·Compose 및 실제 커널의 prio/netem/u32/TBF 설치를 확인합니다. `timeout`과 `setsid` 유틸리티가 필요합니다. 별도 컨테이너를 생성하고 종료 시 제거하며, 호스트 인터페이스나 진행 중인 실험에는 tc 규칙을 적용하지 않습니다. 생성 중 취소 요청은 생성 결과를 확인한 뒤 처리합니다. Docker 응답 지연 등으로 제한 시간 내 정리를 확인하지 못하면 수동 확인할 정확한 컨테이너 이름을 출력합니다. 이미지 이름을 바꾼 구성은 `KPL_DOCKER_IMAGE`로 검사 대상을 지정할 수 있습니다.
+The preflight check verifies the runtime image, Docker access, Compose, and installation of prio/netem/u32/TBF rules on the actual kernel. It requires `timeout` and `setsid`. It creates a separate container and removes it on exit; it does not apply tc rules to host interfaces or ongoing experiments. If cancellation arrives during container creation, the check first collects the creation result. If Docker delays or another issue prevent cleanup from being confirmed within the time limit, it prints the exact container name to inspect manually. Set `KPL_DOCKER_IMAGE` to check a different image name.
 
-`NET_ADMIN`과 커널의 `sch_prio`, `sch_netem`, `cls_u32`, TBF 사용 시 `sch_tbf` 지원이 필요합니다. 모듈은 커널에 내장되어 있을 수도 있으므로 `lsmod` 출력만으로 지원 여부를 판단하지 않습니다. 설치 실패 시 대상 서버의 커널 설정과 모듈 제공 상태를 확인하십시오. Peer가 호스트에서 모듈을 로드하도록 권한을 부여하지 않습니다.
+Network shaping requires `NET_ADMIN` and kernel support for `sch_prio`, `sch_netem`, and `cls_u32`, plus `sch_tbf` when using TBF. These modules may be built into the kernel, so `lsmod` output alone does not establish support. If installation fails, check the target server's kernel configuration and available modules. Peers are not granted permission to load modules into the host kernel.
 
-## 원격 화면 접속
+## Access the UI Remotely
 
-Controller 8080, Grafana 3000, Prometheus 9090은 기본적으로 서버의 `127.0.0.1`에 게시됩니다. 개발 PC에서 SSH 터널을 연결하면 기존 localhost 주소를 그대로 사용할 수 있습니다.
+Controller port 8080, Grafana port 3000, and Prometheus port 9090 are published on the server's `127.0.0.1` by default. An SSH tunnel from your development machine lets you use the same localhost URLs.
 
 ```sh
 ssh -N -L 8080:127.0.0.1:8080 -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 user@linux-server
 ```
 
-Controller를 관리망 주소에 직접 게시해야 한다면 `.env`의 `KPL_BIND_ADDRESS`와 `KPL_HTTP_PORT`를 지정하십시오. `KPL_API_TOKEN`은 변경 API를 보호하며 GET 조회를 인증하는 설정은 아닙니다. Grafana 관리자 비밀번호와 읽기 전용 익명 접속 설정은 [모니터링 가이드](monitoring.md)를 참고하십시오.
+To publish the Controller directly on a management-network address, set `KPL_BIND_ADDRESS` and `KPL_HTTP_PORT` in `.env`. `KPL_API_TOKEN` protects mutation APIs; it does not authenticate GET requests. See the [monitoring guide](monitoring.md) for the Grafana administrator password and anonymous read-only access settings.
 
-## 종료와 서버 재시작
+## Shutdown and Server Restart
 
-Controller가 실행 중인 실험을 취소하고 Agent에 Peer 정리를 요청할 수 있도록 **Controller를 먼저 정지한 뒤** 나머지 서비스를 내립니다.
+**Stop the Controller first**, then bring down the remaining services, so the Controller can cancel active experiments and request Peer cleanup from Agents.
 
 ```sh
 docker compose stop controller
 docker compose down
-# make가 설치되어 있으면 make stop도 같은 순서로 실행합니다.
+# If make is installed, make stop uses the same order.
 ```
 
-Controller는 SIGTERM 시 신규 실험 접수를 중단하고 HTTP 연결·실험 작업·Peer 정리·최종 실행 상태 저장을 기다립니다. 기본 `jobShutdownTimeout: 3m`이 job 종료와 Peer 정리에 각각 적용되므로 Compose의 Controller 종료 유예를 `7m`, Agent를 `3m`로 설정했습니다. 더 긴 `jobShutdownTimeout`을 사용하는 시나리오는 Controller 종료 유예도 함께 늘리십시오. 외부 systemd 단위로 Compose를 관리한다면 해당 단위의 종료 제한이 이 유예를 먼저 끊지 않아야 합니다.
+On SIGTERM, the Controller stops accepting new experiments and waits for HTTP connections, experiment jobs, Peer cleanup, and the final run-state save. The default `jobShutdownTimeout: 3m` applies separately to job shutdown and Peer cleanup, so Compose gives the Controller a `7m` stop grace period and the Agent `3m`. Increase the Controller's grace period as well when a scenario uses a longer `jobShutdownTimeout`. If an external systemd unit manages Compose, its stop timeout must not cut these grace periods short.
 
-`docker compose down`만 실행하면 의존성 역순으로 Agent가 먼저 정지할 수 있습니다. Agent도 자체적으로 Peer를 정리하지만 Controller의 최종 상태 기록까지 확보하려면 위 순서를 사용하십시오. 강제 종료·전원 손실 후에는 Agent 시작 시 같은 Agent ID/네트워크의 잔존 관리 컨테이너를 회수합니다. 이전 실험을 자동 재개하지는 않습니다.
+Running only `docker compose down` can stop the Agent first because services stop in reverse dependency order. Agents also clean up their own Peers, but use the sequence above to preserve the Controller's final state record as well. After forced termination or power loss, Agent startup reclaims leftover managed containers with the same Agent ID and network. It does not automatically resume the previous experiment.
 
-Controller는 데이터 디렉터리에 쓸 수 없는 경우 시작 단계에서 오류를 반환합니다. 실행 메타데이터는 임시 파일에 기록하고 닫은 뒤 같은 파일시스템에서 rename으로 교체하므로 Linux에서 읽는 도중 일부 JSON만 보이지 않도록 합니다. 매 phase의 fsync가 실험 간격과 telemetry 처리를 지연시키지 않도록 강제 동기화는 하지 않습니다. 이벤트 로그는 append 형식이며, 두 파일 모두 전원 손실 시 모든 기록의 디스크 보존을 보장하지 않습니다.
+The Controller fails at startup if its data directory is not writable. Run metadata is written to a temporary file, closed, and then replaced by a rename on the same filesystem, preventing Linux readers from seeing partially written JSON. Writes are not forcibly synchronized: an fsync at every phase would delay experiment timing and telemetry processing. The event log uses append writes. Neither file guarantees that every record survives a power loss on disk.
 
-## Docker 권한과 저장소
+## Docker Permissions and Storage
 
-Agent만 Docker socket을 사용하며 컨테이너 내부에서 `0:0`으로 실행됩니다. Peer에는 socket·호스트 디렉터리·호스트 포트를 전달하지 않습니다. Peer도 설정 파일 접근을 위해 `0:0`으로 실행하지만 기본 capability를 모두 제거하고 `no-new-privileges`를 적용하며, 네트워크 조건이 있을 때만 `NET_ADMIN`을 추가합니다. Docker socket을 사용할 수 있는 Agent는 서버의 Docker 컨테이너를 관리할 수 있는 구성 요소입니다.
+Only the Agent uses the Docker socket, and it runs as `0:0` inside its container. Peers receive no Docker socket, host-directory mounts, or published host ports. Peers also run as `0:0` to access their configuration file, but all default capabilities are dropped and `no-new-privileges` is enabled. `NET_ADMIN` is added only when network conditions are configured. An Agent with Docker socket access can manage Docker containers on that server.
 
-기본 경로는 `/var/run/docker.sock`입니다. Rootless Docker는 socket 위치와 네트워크 namespace가 다르며 overlay도 지원하지 않으므로 제공된 Compose의 지원 기준에 포함하지 않습니다. userns-remap 역시 Agent의 socket 접근 권한을 별도 구성해야 합니다. 이를 해결하려고 socket을 전체 사용자에게 쓰기 허용하거나 Peer를 privileged로 실행하지 마십시오. [Docker Rootless 제한](https://docs.docker.com/engine/security/rootless/troubleshoot/)
+The default socket path is `/var/run/docker.sock`. Rootless Docker uses a different socket location and network namespace and does not support overlay networks, so it is outside the supported baseline for the supplied Compose configuration. userns-remap also requires separate configuration for Agent socket access. Do not work around this by making the socket writable by everyone or running Peers as privileged containers. [Docker Rootless limitations](https://docs.docker.com/engine/security/rootless/troubleshoot/)
 
-실험 기록·Prometheus·Grafana 데이터는 named volume에 저장합니다. `docker compose down`은 보존하지만 `down -v`는 삭제하므로 일반 종료 명령에 사용하지 않습니다. bind mount로 데이터 저장소를 바꾸는 경우 컨테이너 실행 UID/GID의 쓰기 권한을 확인하십시오. Docker daemon이 원격이면 bind mount의 소스 경로도 daemon 호스트 기준이므로 이 저장소와 명령은 실제 배포 서버에 두는 것을 권장합니다. [Docker bind mount 문서](https://docs.docker.com/engine/storage/bind-mounts/)
+Experiment records, Prometheus data, and Grafana data are stored in named volumes. `docker compose down` preserves them, but `down -v` deletes them and should not be used for routine shutdown. If you replace data volumes with bind mounts, check write access for the container's UID/GID. With a remote Docker daemon, bind-mount source paths are resolved on the daemon host, so keeping this repository and running these commands on the deployment server is recommended. [Docker bind mounts](https://docs.docker.com/engine/storage/bind-mounts/)
 
-SELinux enforcing 서버에서는 `monitoring/`의 읽기 권한과 컨테이너용 파일 label을 확인해야 합니다. 필요한 경우 해당 프로젝트의 모니터링 bind mount에만 `:ro,z`를 적용하십시오. `/var/run/docker.sock`이나 시스템 디렉터리를 재라벨링하지 말고, Agent의 socket 접근은 서버의 컨테이너 정책에 맞게 허용해야 합니다. 현재 검증 환경에는 SELinux가 없으므로 이 정책은 대상 서버에서 확인해야 합니다. AppArmor/SELinux를 전체 비활성화하는 설정은 포함하지 않습니다.
+On servers with SELinux enforcing, check read access and container file labels for `monitoring/`. If needed, apply `:ro,z` only to this project's monitoring bind mounts. Do not relabel `/var/run/docker.sock` or system directories; permit the Agent's socket access according to the server's container policy. The current validation environment does not use SELinux, so this policy must be checked on the target server. No configuration to disable AppArmor or SELinux globally is provided.
 
-## 네트워크 실험의 범위
+## Scope of Network Experiments
 
-Peer는 IPv4 컨테이너 주소와 TCP 20000으로 통신하며, 제어 API는 TCP 18000입니다. `scope: p2p`는 TCP 20000 송신만, `scope: all`은 제어·telemetry를 포함한 송신을 제한합니다. IPv6 전용 실험, host network, 컨테이너 IP에 직접 접근할 수 없는 원격 Agent 구성은 지원 기준 밖입니다.
+Peers communicate over IPv4 container addresses on TCP 20000; the control API uses TCP 18000. `scope: p2p` shapes only outbound TCP 20000 traffic, while `scope: all` shapes outbound traffic including control and telemetry. IPv6-only experiments, host networking, and remote Agent setups without direct access to container IPs are outside the supported baseline.
 
-커널이 큰 jitter를 조용히 줄여 적용하는 문제를 피하도록 `jitter`의 최대값을 `2.147483647s`로 검증합니다. Linux 5.15/6.8의 netem 지연 속성 호환 경로를 검토했으며, 최신 커널에서 추가된 netem seed 옵션은 전송하지 않습니다. 실제 지원 여부는 서버에서 사전 점검으로 확인하십시오. [Linux 6.8 netem 구현](https://github.com/torvalds/linux/blob/v6.8/net/sched/sch_netem.c)
+The maximum accepted `jitter` is `2.147483647s`, preventing the kernel from silently reducing larger values. The compatibility path for netem delay attributes was reviewed for Linux 5.15 and 6.8; the netem seed option added in newer kernels is not sent. Use the preflight check on your server to verify actual support. [Linux 6.8 netem implementation](https://github.com/torvalds/linux/blob/v6.8/net/sched/sch_netem.c)
 
-다중 물리 호스트에서는 attachable overlay 등 실제 호스트 간 연결을 별도로 준비하고 모든 Agent·Peer가 같은 네트워크에서 서로 접근하도록 해야 합니다. 기본 Compose bridge는 한 Docker 호스트에만 적용됩니다. 모든 호스트에 같은 실행 이미지를 준비하고 Agent ID를 중복하지 마십시오. 지연 측정을 비교하려면 chrony/NTP 등으로 호스트 시계를 동기화하십시오. [Docker overlay 요건](https://docs.docker.com/engine/network/drivers/overlay/)
+For multiple physical hosts, separately prepare cross-host connectivity, such as an attachable overlay, and ensure all Agents and Peers can reach one another on the same network. The default Compose bridge applies to only one Docker host. Make the same runtime image available on every host and use unique Agent IDs. Synchronize host clocks with chrony/NTP or an equivalent service when comparing latency measurements. [Docker overlay requirements](https://docs.docker.com/engine/network/drivers/overlay/)
 
-## Linux 검증 경로
+## Linux Validation
 
-Swarm 다중 서버에서는 [전용 배포 구성과 노드 분배 가이드](swarm.md)를 먼저 확인하십시오. 단일 호스트 Compose를 replica만 늘려 배포하는 방식은 지원하지 않습니다.
+For a Swarm deployment across multiple servers, start with the [dedicated deployment and node distribution guide](swarm.md). Scaling up the replicas of the single-host Compose configuration is not supported.
 
 ```sh
-# 호스트의 Go 설치 없이 Linux에서 전체 Go 테스트를 실행합니다.
+# Run the full Go test suite on Linux without installing Go on the host.
 docker build --target test -t kpl-v3:test .
-# 또는 make test-linux
+# Alternatively, run make test-linux.
 ```
 
-실행 이미지는 `CGO_ENABLED=0`으로 빌드하며 최종 Alpine 이미지에 Go 빌드 도구를 포함하지 않습니다. `.gitattributes`는 shell 스크립트·Dockerfile·Makefile의 LF 줄바꿈을 유지합니다. 스크립트는 `sh scripts/check-linux.sh`로 실행하므로 Windows checkout의 실행 비트에 의존하지 않습니다.
+The runtime image is built with `CGO_ENABLED=0`; the final Alpine image does not include Go build tools. `.gitattributes` preserves LF line endings for shell scripts, Dockerfiles, and Makefiles. Scripts are invoked as `sh scripts/check-linux.sh`, so they do not depend on executable bits in a Windows checkout.
 
-현재 검증에 사용한 커널은 Docker Desktop의 Linux `6.18.33.2-microsoft-standard-WSL2`, 아키텍처는 amd64입니다. 이는 실제 Linux syscall·namespace·tc 검증이지만 대상 서버의 배포판·커널·SELinux·다중 호스트 overlay·대규모 성능 검증을 대체하지 않습니다. 배포할 서버에서 사전 점검과 `examples/monitoring.yaml`을 다시 실행하여 설정과 수집 결과를 확인하십시오.
+The current validation used Docker Desktop's Linux kernel `6.18.33.2-microsoft-standard-WSL2` on amd64. This exercises real Linux syscalls, namespaces, and tc, but does not replace testing the target server's distribution, kernel, SELinux policy, cross-host overlay, or performance at scale. Run the preflight check and `examples/monitoring.yaml` again on the deployment server to verify configuration and collected results.
 
-### 2026-09-04 검증 결과
+### Validation Results: 2026-09-04
 
-| 항목 | 결과 |
+| Item | Result |
 |---|---|
-| Linux 전체 Go 테스트 | 모든 패키지 통과. 동시 JSON 읽기와 Controller 종료 대기 테스트 포함 |
-| ARM64 | `GOOS=linux GOARCH=arm64 CGO_ENABLED=0` 교차 빌드 통과, ELF AArch64 확인. ARM64 기기 실행은 미검증 |
-| 커널 사전 점검 | 공식 Linux Docker CLI/Compose 컨테이너에서 실행, prio/netem/u32/TBF 설치·정리 통과 |
-| 실제 TCP 조건 | 별도 컨테이너 두 개에서 P2P 100% 손실·제어 포트 보존, 100ms 지연, TBF 1Mbit 효과, `scope: all` 제어 손실 확인 |
-| 권한 | NET_ADMIN이 없으면 tc 실패. Controller 데이터 디렉터리가 읽기 전용이면 시작 시 오류·exit 1 확인 |
-| SIGTERM | 실행 중인 `run-20260904T031927Z-0b3e`의 준비된 Peer 3개를 정리하고 약 16.72초 뒤 exit 0, 잔존 컨테이너 0개 |
-| 최종 상태 | 정지한 Controller의 `experiment.json`에서 `canceled` 및 `finishedAt` 확인 후 서비스 재시작 |
+| Full Linux Go test suite | All packages passed, including concurrent JSON reads and Controller shutdown waiting tests |
+| ARM64 | Cross-build passed with `GOOS=linux GOARCH=arm64 CGO_ENABLED=0`; ELF AArch64 verified. Execution on ARM64 hardware was not tested |
+| Kernel preflight | Ran in an official Linux Docker CLI/Compose container; prio/netem/u32/TBF installation and cleanup passed |
+| Actual TCP conditions | Verified P2P 100% loss with control-port traffic preserved, 100ms delay, TBF 1Mbit shaping, and control-traffic loss under `scope: all` using two separate containers |
+| Permissions | tc failed without NET_ADMIN. A read-only Controller data directory caused a startup error and exit 1 |
+| SIGTERM | Cleaned up the three ready Peers in active run `run-20260904T031927Z-0b3e`, then exited 0 after about 16.72 seconds; no Peer containers remained |
+| Final state | Confirmed `canceled` and `finishedAt` in the stopped Controller's `experiment.json`, then restarted the services |
 
-단위 테스트의 600개 컨테이너 ID 목록은 대량 조회/정리 로직을 검증하기 위한 모의 응답이며 실제 600개 Peer 부하 측정 결과는 아닙니다.
+The list of 600 container IDs in unit tests is a simulated response for testing large inventory queries and cleanup logic. It is not a load-test result from 600 real Peers.

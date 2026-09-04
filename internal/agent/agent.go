@@ -161,7 +161,7 @@ func New(config Config, logger *slog.Logger) (*Server, error) {
 	return s, nil
 }
 
-func (s *Server) Run(ctx context.Context) error {
+func (s *Server) Run(ctx context.Context) (resultErr error) {
 	// Bind before reconciling: a duplicate local Agent must not remove the
 	// running Agent's peers and only then discover that its port is occupied.
 	listener, err := net.Listen("tcp", s.config.Listen)
@@ -190,7 +190,12 @@ func (s *Server) Run(ctx context.Context) error {
 		WriteTimeout:      3 * time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
-	defer func() { s.beginShutdown(); s.waitStopped(containerStopTimeout) }()
+	defer func() {
+		s.beginShutdown()
+		if err := s.waitStopped(containerStopTimeout); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("Agent shutdown did not finish peer cleanup: %w", err))
+		}
+	}()
 	go s.controlLoop(ctx)
 	go func() {
 		<-ctx.Done()

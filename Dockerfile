@@ -7,7 +7,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/kpl ./cmd/kpl
 
 FROM builder AS test
-RUN sh scripts/test-swarm-agent.sh && sh scripts/test-check-swarm.sh
+RUN sh scripts/test-swarm-agent.sh && sh scripts/test-check-swarm.sh && sh scripts/test-swarm.sh
 RUN CGO_ENABLED=0 go test -buildvcs=false ./... -timeout 120s
 
 FROM alpine:3.22 AS runtime

@@ -14,16 +14,34 @@ case "$1 $2" in
     'info --format') printf '%s\n' "${KPL_TEST_MANAGER:-active true}" ;;
     'network inspect') printf '%s\n' "${KPL_TEST_NETWORK:-kpl-swarm-peers overlay true}" ;;
     'node ls')
-        [ "$3 $4 $5" = '--quiet --filter node.label=kpl.agent=true' ]
-        printf 'worker1\nworker2\nworker3\n' ;;
+        [ "$3 $4" = '--quiet --filter' ]
+        case "$5" in
+            node.label=kpl.kpl.agent=true) printf 'worker1\nworker2\nworker3\n' ;;
+            node.label=kpl.other-stack_2.agent=true) printf 'other1\nother2\n' ;;
+            node.label=kpl.legacy-only.agent=true) : ;;
+            # These legacy nodes are eligible but must never be adopted by a
+            # stack that has no explicit stack-scoped placement labels.
+            node.label=kpl.agent=true) printf 'legacy1\nlegacy2\n' ;;
+            *) printf 'Unexpected node label: %s\n' "$5" >&2; exit 2 ;;
+        esac ;;
     'node inspect')
         if [ "$5" = control1 ]; then
             printf '%s\n' "${KPL_TEST_CONTROL:-control1 linux ready active}"
         else
-            [ "$5 $6 $7" = 'worker1 worker2 worker3' ]
-            printf '%s\n' "${KPL_TEST_AGENTS:-linux ready active
+            case "$5" in
+                worker1)
+                    [ "$5 $6 $7" = 'worker1 worker2 worker3' ]
+                    printf '%s\n' "${KPL_TEST_AGENTS:-linux ready active
 linux ready active
-linux down drain}"
+linux down drain}" ;;
+                other1)
+                    [ "$5 $6" = 'other1 other2' ]
+                    printf 'linux ready active\nlinux ready active\n' ;;
+                legacy1)
+                    [ "$5 $6" = 'legacy1 legacy2' ]
+                    printf 'linux ready active\nlinux ready active\n' ;;
+                *) printf 'Unexpected node inventory: %s\n' "$*" >&2; exit 2 ;;
+            esac
         fi ;;
     *) printf 'Unexpected Docker mutation/query: %s\n' "$*" >&2; exit 2 ;;
 esac
@@ -33,13 +51,15 @@ export PATH="$scratch/bin:$PATH"
 export KPL_CONTROL_NODE_ID=control1
 export KPL_IMAGE=registry.example/kpl:v3@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 export KPL_API_TOKEN=must-not-appear-in-output
-unset KPL_PEER_NETWORK KPL_AGENT_CAPACITY
+unset KPL_PEER_NETWORK KPL_AGENT_CAPACITY KPL_STACK_NAME KPL_MIN_AGENTS
 
 sh "$root/scripts/check-swarm.sh" > "$scratch/output"
 grep -q '2 eligible Agents' "$scratch/output"
 grep -q 'capacity 20' "$scratch/output"
+grep -q 'for stack kpl' "$scratch/output"
 grep -q 'does not validate' "$scratch/output"
 [ "$(wc -l < "$KPL_TEST_CALLS")" -eq 5 ]
+grep -q 'node.label=kpl.kpl.agent=true' "$KPL_TEST_CALLS"
 if grep -q "$KPL_API_TOKEN" "$scratch/output" "$KPL_TEST_CALLS"; then exit 1; fi
 
 reject() {
@@ -48,6 +68,34 @@ reject() {
         exit 1
     fi
 }
+env KPL_STACK_NAME=other-stack_2 sh "$root/scripts/check-swarm.sh" > "$scratch/output"
+grep -q '2 eligible Agents for stack other-stack_2' "$scratch/output"
+grep -q 'node.label=kpl.other-stack_2.agent=true' "$KPL_TEST_CALLS"
+grep -q 'other1 other2' "$KPL_TEST_CALLS"
+reject KPL_STACK_NAME=legacy-only
+grep -q 'kpl.legacy-only.agent=true' "$scratch/output"
+if grep -q 'node.label=kpl.agent=true' "$KPL_TEST_CALLS"; then
+    printf '%s\n' 'Preflight queried legacy global Agent labels.' >&2
+    exit 1
+fi
+for invalid_stack in Kpl -kpl _kpl .kpl kpl.name '../kpl' 'two stacks' 'kpl:one'; do
+    calls_before=$(wc -l < "$KPL_TEST_CALLS")
+    reject "KPL_STACK_NAME=$invalid_stack"
+    grep -q 'KPL_STACK_NAME must start' "$scratch/output"
+    [ "$(wc -l < "$KPL_TEST_CALLS")" -eq "$calls_before" ]
+done
+env KPL_MIN_AGENTS=1 KPL_TEST_AGENTS='linux ready active
+linux down active
+windows ready active' sh "$root/scripts/check-swarm.sh" > "$scratch/output"
+grep -q '1 eligible Agents for stack kpl' "$scratch/output"
+reject KPL_MIN_AGENTS=3
+grep -q 'At least 3 kpl.kpl.agent=true' "$scratch/output"
+for invalid_minimum in 0 -1 1.5 08 999999999999999999999999999; do
+    calls_before=$(wc -l < "$KPL_TEST_CALLS")
+    reject "KPL_MIN_AGENTS=$invalid_minimum"
+    grep -q 'KPL_MIN_AGENTS' "$scratch/output"
+    [ "$(wc -l < "$KPL_TEST_CALLS")" -eq "$calls_before" ]
+done
 reject KPL_CONTROL_NODE_ID=
 reject KPL_TEST_CONTROL='different1 linux ready active'
 reject KPL_TEST_CONTROL='control1 linux ready drain'
@@ -65,4 +113,4 @@ reject KPL_AGENT_CAPACITY=08
 reject KPL_AGENT_CAPACITY=999999999999999999999999999
 reject KPL_IMAGE=registry.example/kpl:latest
 reject KPL_IMAGE=registry.example/kpl@sha256:abcd
-printf '%s\n' 'PASS: read-only Swarm preflight accepts eligible nodes and rejects invalid manager, control, network, capacity and digest settings.'
+printf '%s\n' 'PASS: read-only Swarm preflight isolates stack labels, supports an explicit minimum Agent count, and rejects legacy global labels and invalid settings.'

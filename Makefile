@@ -1,4 +1,4 @@
-.PHONY: build test test-linux check-linux check-swarm validate run stop
+.PHONY: build test test-linux check-linux check-swarm swarm-init swarm-deploy swarm-status swarm-add-node swarm-remove-node swarm-remove validate run stop
 
 build:
 	go build -o bin/kpl ./cmd/kpl
@@ -14,6 +14,24 @@ check-linux:
 
 check-swarm:
 	sh scripts/check-swarm.sh
+
+swarm-init:
+	sh scripts/swarm.sh init
+
+swarm-deploy:
+	sh scripts/swarm.sh deploy $(NODES)
+
+swarm-status:
+	sh scripts/swarm.sh status
+
+swarm-add-node:
+	sh scripts/swarm.sh add-node $(NODES)
+
+swarm-remove-node:
+	sh scripts/swarm.sh remove-node $(NODES)
+
+swarm-remove:
+	sh scripts/swarm.sh remove
 
 validate:
 	go run ./cmd/kpl validate --scenario examples/smoke.yaml

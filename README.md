@@ -1,8 +1,10 @@
 # K-P2PLab v3
 
-English | [한국어](README.kr.md)
+English | [Korean](README.kr.md)
 
 K-P2PLab v3 is an experimentation platform for building standard libp2p Kademlia and PubSub networks across multiple hosts, running reproducible churn and publish scenarios, and observing state and propagation events in real time from the web. HopWave is intentionally outside the scope of this version.
+
+English is the default language for code, the web UI, Grafana dashboards, and documentation. Korean documentation is maintained alongside each English `.md` file as `.kr.md`. Keep both versions in sync when updating documentation.
 
 ## Architecture
 
@@ -27,7 +29,7 @@ Controller ─── scenario state machine / registry / event store / dashboard
 
 ## Quick start
 
-Linux is the deployment target. See the [Linux deployment guide (Korean)](docs/linux-deployment.md) for kernel checks, remote access, permissions, and graceful shutdown. Run `sh scripts/check-linux.sh` on the Linux host after building the image; `make test-linux` runs the test suite inside Linux.
+Linux is the deployment target. See the [Linux deployment guide](docs/linux-deployment.md) for kernel checks, remote access, permissions, and graceful shutdown. Run `sh scripts/check-linux.sh` on the Linux host after building the image; `make test-linux` runs the test suite inside Linux.
 
 Docker Engine with Linux containers and Docker Compose is the recommended setup. Compose builds the shared `kpl-v3:local` image and starts the Controller and two Agents on the `kpl-v3-peers` network. Agents create Peer containers on that same network when an experiment runs.
 
@@ -35,12 +37,12 @@ Docker Engine with Linux containers and Docker Compose is the recommended setup.
 docker compose up --build
 ```
 
-Open `http://localhost:8080` and select **실험 실행** (Run experiment) to run the default smoke scenario. To protect mutating API operations, set `KPL_API_TOKEN` before starting the stack and enter the same value in the dashboard's run dialog.
+Open `http://localhost:8080` and select **Run experiment** to run the default smoke scenario. To protect mutating API operations, set `KPL_API_TOKEN` before starting the stack and enter the same value in the dashboard's run dialog.
 
 All UI ports bind to localhost by default. Use SSH forwarding for a remote Linux server, or explicitly set `KPL_BIND_ADDRESS`/`KPL_HTTP_PORT` for the Controller. For shutdown, `make stop` keeps Agents available while the Controller cancels experiments and removes Peers.
 
 ```bash
-export KPL_API_TOKEN='replace-me'
+export KPL_API_TOKEN="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
 docker compose up --build
 ```
 
@@ -68,15 +70,25 @@ The Agent defaults are `--runtime docker`, `--docker-image kpl-v3:local`, `--doc
 
 On restart, an Agent removes previously managed Peer containers with its Agent ID on the same Docker daemon and network. It does not restore or resume previous experiments. Agent IDs must be unique within that daemon/network. Container removal failures are reported; a later stop request retries cleanup after a temporary daemon outage.
 
-The supplied Compose bridge connects containers on a single Docker host. For multiple hosts, join the Docker hosts to a Swarm and use a shared attachable overlay network, for example `docker network create --driver overlay --attachable kpl-v3-peers` on a Swarm manager. Configure each Agent's `--docker-network` to use that network, attach the Controller and Agents to it, and provide unique Agent IDs and reachable `--advertise-url`, `--self-url`, and `--controller-url` values. If reusing Compose with a pre-created overlay, replace its `networks.peers` definition with `name: kpl-v3-peers` and `external: true`; a host-local bridge cannot provide cross-host Peer connectivity. See the [Docker overlay network requirements](https://docs.docker.com/engine/network/drivers/overlay/).
-For a multi-server Swarm deployment, use [stack.swarm.yaml](stack.swarm.yaml) and the [Swarm deployment and scaling guide (Korean)](docs/swarm.md). It provides one Agent per selected server, task-specific addresses, capacity-aware placement, and discovery of every Agent in Prometheus.
+The supplied Compose bridge connects containers on one Docker host. For an existing Linux Swarm, run the manager helper from this repository. It deploys [stack.swarm.yaml](stack.swarm.yaml) with one Agent per selected server, task-specific addresses, a shared attachable Peer overlay, and Prometheus discovery of every Agent.
 
+```sh
+sh scripts/swarm.sh init
+# Edit .env.swarm: set a registry image digest and verify the control Node ID.
+sh scripts/swarm.sh deploy worker-a worker-b
+sh scripts/swarm.sh status
+# Later: add-node worker-c, remove-node worker-b, or remove for the whole stack.
+```
+
+`init` creates a private `.env.swarm` and generates separate API and Grafana credentials. The helper reads literal `KEY=VALUE` entries; exported environment variables take precedence. It does not evaluate shell expressions or load Compose's `.env`. `deploy` returns after submission; wait for Agent registration in the Controller before running an experiment. `add-node` and `remove-node` change the stack-specific `kpl.<stack>.agent` label, not Swarm membership. Removing a node stops its Peers and affects any experiment using them.
+
+`sh scripts/swarm.sh remove` waits for Controller shutdown and Agent cleanup before removing stack services. Unavailable nodes, unverified task exits, or retained historical failed tasks stop automatic removal and require inspection; data volumes and the external Peer network remain. See the [Swarm guide](docs/swarm.md) for prerequisites, commands, and migration of older stacks without the helper's service labels. The documented two-daemon experiment predates this helper and is not an end-to-end validation of its lifecycle commands.
 
 ### Prometheus and Grafana
 
 Compose also starts Prometheus and Grafana, provisions the data source and experiment dashboard, and scrapes the Controller and Agents every 5 seconds. Open [Grafana experiment analysis](http://localhost:3000/d/kpl-experiments) or [Prometheus](http://localhost:9090). Both store data in named volumes and publish their UI ports on localhost.
 
-The dashboard covers peer states, publish/delivery/duplicate traffic, propagation latency, churn failures, and configured network conditions. Grafana allows local read-only viewing by default; administrator settings belong in `.env`. See the [monitoring guide (Korean)](docs/monitoring.md) and [example experiment](examples/monitoring.yaml).
+The dashboard covers peer states, publish/delivery/duplicate traffic, propagation latency, churn failures, and configured network conditions. Grafana allows local read-only viewing by default; administrator settings belong in `.env`. See the [monitoring guide](docs/monitoring.md) and [example experiment](examples/monitoring.yaml).
 
 ## Module path
 
@@ -203,7 +215,7 @@ node:
 | `reorderCorrelationPercent` | Reordering correlation, corresponding to v2's `reorder.chance`. |
 | `tbf` | Token bucket with `rateMbps`, `burstKbit`, and `latency`; mutually exclusive with positive netem `rateMbps`. |
 
-See the [v2 reproduction audit and mapping (Korean)](docs/v2-reproduction.md) and [churn example](examples/v2-churn.yaml). They cover placement (`balanced`, per-node `random`, batch `single-agent`, or explicit `agentId`), `onError: continue` for churn, `payloadEncoding: raw` for exact PubSub data length, and `topic: '*'` for all topics. Network scope and payload encoding retain their existing defaults. Worker bootstrap now uses seeded first-success selection, and the transport stack is explicitly TCP/Noise/Yamux.
+See the [v2 reproduction audit and mapping](docs/v2-reproduction.md) and [churn example](examples/v2-churn.yaml). They cover placement (`balanced`, per-node `random`, batch `single-agent`, or explicit `agentId`), `onError: continue` for churn, `payloadEncoding: raw` for exact PubSub data length, and `topic: '*'` for all topics. Network scope and payload encoding retain their existing defaults. Worker bootstrap now uses seeded first-success selection, and the transport stack is explicitly TCP/Noise/Yamux.
 
 Peers with network conditions require Linux `NET_ADMIN` and host-kernel `sch_netem` support. The Docker runtime adds `NET_ADMIN` only to those Peers. Missing kernel support or a failed `tc` command fails node startup explicitly. A process-runtime Agent rejects network conditions rather than applying rules to its shared host interface.
 
@@ -311,6 +323,7 @@ Example:
 ```bash
 curl -X POST http://localhost:8080/api/v1/experiments \
   -H 'Content-Type: application/yaml' \
+  -H "Authorization: Bearer ${KPL_API_TOKEN:-}" \
   --data-binary @examples/smoke.yaml
 ```
 
@@ -322,7 +335,11 @@ The Agent exposes this internal operational endpoint for Controller-driven clean
 |---|---|---|
 | `DELETE` | `/api/v1/runs/{runId}/nodes?generation=N` | Requires an unsigned `generation`; atomically raises the run fence through N, rejects later creates at generation N or below, stops existing nodes in those generations, and returns `202 Accepted` |
 
-This endpoint and the other Controller-to-Agent registration, heartbeat, node lifecycle, publish, and batched-telemetry endpoints use REST/JSON. They are internal cluster and operations APIs, not client-facing Controller APIs, and may change independently. When `KPL_API_TOKEN` is set, mutating API calls require `Authorization: Bearer <token>`; GET and HEAD remain read-only.
+This endpoint and the other Controller-to-Agent registration, heartbeat, node lifecycle, publish, and batched-telemetry endpoints use REST/JSON. They are internal cluster and operations APIs, not client-facing Controller APIs, and may change independently.
+
+`KPL_API_TOKEN` is one shared Bearer credential for mutating KPL APIs, not a Swarm join token, Docker permission, or Grafana password. Use the same value for the Controller and every Agent; Agents pass it to their Peers automatically. It is required by the Swarm stack and optional in Compose/the CLI. An empty value disables the token check. There are no per-user roles or scoped tokens.
+
+Enter the value in the dashboard's **Run experiment → API token** field. Clicking Run saves it in that origin's browser `localStorage` for later run/stop requests; it does not expire automatically. REST clients send `Authorization: Bearer <token>`. GET reads, including state, events, SSE, and metrics, stay public. The Controller also exempts HEAD; Agents and Peers only exempt GET. The token does not encrypt HTTP traffic.
 
 The same four job counters are present in `/api/v1/snapshot` and SSE snapshots. The dashboard displays them on each run, so active, successful, failed, and canceled background work is visible without inspecting Controller logs.
 

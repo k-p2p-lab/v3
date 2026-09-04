@@ -16,6 +16,8 @@ services:
         mode: host
     stop_grace_period: 7m
     deploy:
+      labels:
+        io.kpl.application: kp2plab-v3
       replicas: 1
       placement:
         constraints: ['node.platform.os == linux', 'node.id == ${KPL_CONTROL_NODE_ID:?Set the persistent control node ID}']
@@ -41,10 +43,12 @@ services:
     networks: [peers, monitoring]
     stop_grace_period: 3m
     deploy:
+      labels:
+        io.kpl.application: kp2plab-v3
       mode: global
       endpoint_mode: dnsrr
       placement:
-        constraints: [node.platform.os == linux, node.labels.kpl.agent == true]
+        constraints: ['node.platform.os == linux', 'node.labels.kpl.${KPL_STACK_NAME:-kpl}.agent == true']
       update_config: {parallelism: 1, order: stop-first}
       rollback_config: {parallelism: 1, order: stop-first}
       restart_policy: {condition: any, delay: 5s}
@@ -64,6 +68,8 @@ services:
     ports:
       - {target: 9090, published: '${PROMETHEUS_PORT:-9090}', protocol: tcp, mode: host}
     deploy:
+      labels:
+        io.kpl.application: kp2plab-v3
       replicas: 1
       placement:
         constraints: ['node.platform.os == linux', 'node.id == ${KPL_CONTROL_NODE_ID:?Set the persistent control node ID}']
@@ -76,6 +82,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD}"
       GF_AUTH_ANONYMOUS_ENABLED: 'false'
       GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_USERS_DEFAULT_LANGUAGE: en-US
       GF_ANALYTICS_REPORTING_ENABLED: 'false'
       GF_ANALYTICS_CHECK_FOR_UPDATES: 'false'
       GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: 'false'
@@ -84,12 +91,14 @@ services:
     configs:
       - {source: grafana-datasource, target: /etc/grafana/provisioning/datasources/prometheus.yaml}
       - {source: grafana-provider, target: /etc/grafana/provisioning/dashboards/kpl.yaml}
-      - {source: grafana-dashboard, target: /var/lib/grafana/dashboards/kpl-experiments.json}
+      - {source: grafana-dashboard-en-v1, target: /var/lib/grafana/dashboards/kpl-experiments.json}
     volumes: [grafana-data:/var/lib/grafana]
     networks: [monitoring]
     ports:
       - {target: 3000, published: '${GRAFANA_PORT:-3000}', protocol: tcp, mode: host}
     deploy:
+      labels:
+        io.kpl.application: kp2plab-v3
       replicas: 1
       placement:
         constraints: ['node.platform.os == linux', 'node.id == ${KPL_CONTROL_NODE_ID:?Set the persistent control node ID}']
@@ -114,5 +123,5 @@ configs:
     file: ./monitoring/grafana/provisioning/datasources/prometheus.yaml
   grafana-provider:
     file: ./monitoring/grafana/provisioning/dashboards/kpl.yaml
-  grafana-dashboard:
+  grafana-dashboard-en-v1:
     file: ./monitoring/grafana/dashboards/kpl-experiments.json

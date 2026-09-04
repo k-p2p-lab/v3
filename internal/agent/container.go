@@ -131,23 +131,39 @@ func (s *Server) waitRunContainers(ctx context.Context, runID string, generation
 	return errors.Join(failures...)
 }
 
-func (s *Server) waitStopped(timeout time.Duration) {
+func (s *Server) waitStopped(timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	s.mu.RLock()
-	done := make([]<-chan struct{}, 0, len(s.processes))
+	pending := make([]*process, 0, len(s.processes))
 	for _, proc := range s.processes {
-		if proc.done != nil {
-			done = append(done, proc.done)
-		}
+		pending = append(pending, proc)
 	}
 	s.mu.RUnlock()
-	for _, ch := range done {
-		select {
-		case <-ch:
-		case <-ctx.Done():
-			s.logger.Warn("timed out waiting for peer cleanup")
-			return
+	var failures []error
+	for _, proc := range pending {
+		for {
+			s.mu.RLock()
+			done, exited, cleanupErr, nodeID := proc.done, proc.exited, proc.cleanupErr, proc.node.ID
+			s.mu.RUnlock()
+			if exited {
+				if cleanupErr != nil {
+					failures = append(failures, fmt.Errorf("peer %q cleanup failed: %w", nodeID, cleanupErr))
+				}
+				break
+			}
+			if done == nil {
+				failures = append(failures, fmt.Errorf("peer %q has no cleanup completion signal", nodeID))
+				break
+			}
+			select {
+			case <-done:
+				// A retry can replace the completion channel. Re-read the
+				// process rather than treating an earlier failed attempt as done.
+			case <-ctx.Done():
+				return errors.Join(append(failures, fmt.Errorf("wait for peer %q cleanup: %w", nodeID, ctx.Err()))...)
+			}
 		}
 	}
+	return errors.Join(failures...)
 }

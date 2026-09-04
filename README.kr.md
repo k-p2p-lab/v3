@@ -1,8 +1,10 @@
 # K-P2PLab v3
 
-한국어 | [English](README.md)
+[English](README.md) | 한국어
 
 K-P2PLab v3는 여러 호스트에서 표준 libp2p Kademlia와 PubSub 네트워크를 구성하고, 재현 가능한 churn/publish 시나리오를 실행하며, 상태와 전파 이벤트를 웹에서 실시간 관측하는 실험 플랫폼입니다. HopWave는 이 버전의 범위에서 제외했습니다.
+
+코드, 웹 UI, Grafana 대시보드와 문서의 기본 언어는 영어입니다. 한국어 문서는 각 영어 `.md` 파일 옆에 `.kr.md`로 유지합니다. 문서를 수정할 때는 두 언어의 내용을 함께 갱신하십시오.
 
 ## 구조
 
@@ -27,7 +29,7 @@ Controller ─── scenario state machine / registry / event store / dashboard
 
 ## 빠른 실행
 
-최종 배포 대상은 Linux입니다. 커널 사전 점검, 원격 접속, 권한 및 정상 종료 순서는 [Linux 운영 가이드](docs/linux-deployment.md)를 참고하십시오. 이미지를 빌드한 후 대상 서버에서 `sh scripts/check-linux.sh`를 실행하며, `make test-linux`로 Linux 컨테이너 안에서 전체 테스트를 실행할 수 있습니다.
+최종 배포 대상은 Linux입니다. 커널 사전 점검, 원격 접속, 권한 및 정상 종료 순서는 [Linux 운영 가이드](docs/linux-deployment.kr.md)를 참고하십시오. 이미지를 빌드한 후 대상 서버에서 `sh scripts/check-linux.sh`를 실행하며, `make test-linux`로 Linux 컨테이너 안에서 전체 테스트를 실행할 수 있습니다.
 
 Linux 컨테이너를 실행하는 Docker Engine과 Docker Compose 사용을 권장합니다. Compose는 공통 이미지 `kpl-v3:local`을 빌드하고 `kpl-v3-peers` 네트워크에 Controller와 Agent 두 개를 실행합니다. 실험을 시작하면 Agent가 같은 네트워크에 Peer 컨테이너를 생성합니다.
 
@@ -35,12 +37,12 @@ Linux 컨테이너를 실행하는 Docker Engine과 Docker Compose 사용을 권
 docker compose up --build
 ```
 
-브라우저에서 `http://localhost:8080`을 열고 **실험 실행**을 누르면 기본 smoke 시나리오를 실행할 수 있습니다. API 보호가 필요하면 실행 전에 환경 변수 `KPL_API_TOKEN`을 설정하고 대시보드 실행 창에도 같은 값을 입력합니다.
+브라우저에서 `http://localhost:8080`을 열고 **Run experiment**을 누르면 기본 smoke 시나리오를 실행할 수 있습니다. 변경 API를 보호하려면 실행 전에 환경 변수 `KPL_API_TOKEN`을 설정하고 대시보드 실행 창에도 같은 값을 입력합니다.
 
 화면 포트는 기본적으로 localhost에만 게시합니다. 원격 Linux 서버는 SSH 터널로 접속하거나 Controller의 `KPL_BIND_ADDRESS`/`KPL_HTTP_PORT`를 명시하십시오. 종료할 때 `make stop`을 사용하면 Agent가 살아 있는 동안 Controller가 실험 취소와 Peer 정리를 마칩니다.
 
 ```bash
-export KPL_API_TOKEN='replace-me'
+export KPL_API_TOKEN="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
 docker compose up --build
 ```
 
@@ -68,15 +70,25 @@ Agent의 기본값은 `--runtime docker`, `--docker-image kpl-v3:local`, `--dock
 
 Agent를 재시작하면 동일 Docker daemon·network에서 같은 Agent ID의 관리 label이 붙은 이전 Peer 컨테이너를 제거합니다. 기존 실험을 복구하거나 재개하지는 않습니다. Agent ID는 같은 daemon·network 내에서 고유해야 합니다. 컨테이너 제거가 일시적으로 실패하면 오류를 보고하며 후속 종료 요청으로 다시 정리할 수 있습니다.
 
-기본 Compose bridge는 같은 Docker 호스트의 컨테이너만 연결합니다. 여러 호스트에서는 Docker 호스트를 같은 Swarm에 참여시키고 공통 attachable overlay 네트워크를 사용하십시오. 예를 들어 Swarm manager에서 `docker network create --driver overlay --attachable kpl-v3-peers`를 실행합니다. 각 Agent의 `--docker-network`를 해당 네트워크로 지정하고 Controller와 Agent도 여기에 연결하며, 고유한 Agent ID와 접근 가능한 `--advertise-url`, `--self-url`, `--controller-url`을 설정해야 합니다. 미리 생성한 overlay에 Compose를 연결할 경우 `networks.peers` 정의를 `name: kpl-v3-peers`, `external: true`로 바꾸십시오. 호스트별 bridge만으로는 호스트 간 Peer 연결이 되지 않습니다. 세부 조건은 [Docker overlay 네트워크 문서](https://docs.docker.com/engine/network/drivers/overlay/)를 참고하십시오.
-다중 서버 Swarm 배포에는 [stack.swarm.yaml](stack.swarm.yaml)과 [Swarm 배포·분배·확장성 가이드](docs/swarm.md)를 사용하십시오. 서버별 Agent 하나, 개별 task 주소, 용량 기반 분배 및 Prometheus의 전체 Agent 탐색을 구성합니다.
+기본 Compose bridge는 같은 Docker 호스트의 컨테이너만 연결합니다. 기존 Linux Swarm에서는 manager에 이 저장소를 준비하고 관리 helper를 실행하십시오. [stack.swarm.yaml](stack.swarm.yaml)을 사용해 선택한 서버마다 Agent 하나, 개별 task 주소, 공통 attachable Peer overlay 및 Prometheus의 전체 Agent 탐색을 구성합니다.
 
+```sh
+sh scripts/swarm.sh init
+# .env.swarm에서 registry 이미지 digest와 control Node ID를 설정·확인합니다.
+sh scripts/swarm.sh deploy worker-a worker-b
+sh scripts/swarm.sh status
+# 이후: add-node worker-c, remove-node worker-b, 전체 철거는 remove
+```
+
+`init`은 권한 `0600`의 `.env.swarm`과 서로 다른 API 토큰·Grafana 비밀번호를 생성합니다. helper는 `KEY=VALUE`를 문자 그대로 읽으며 이미 export된 환경변수가 우선합니다. 셸 표현식을 실행하거나 Compose의 `.env`를 읽지 않습니다. `deploy`는 배포 접수 후 반환하므로 Controller에서 Agent 등록을 확인한 뒤 실험을 시작하십시오. `add-node`와 `remove-node`는 Swarm 가입 상태가 아닌 stack별 `kpl.<stack>.agent` label을 변경합니다. 노드 철거 시 해당 Peer가 종료되어 진행 중 실험에 영향을 줍니다.
+
+`sh scripts/swarm.sh remove`는 Controller 종료와 Agent의 Peer 정리를 확인한 뒤 stack 서비스를 제거합니다. 노드 접근이나 정상 task 종료를 확인할 수 없거나 과거 실패 task 이력이 남아 있으면 자동 철거를 중단하여 점검이 필요합니다. 데이터 volume과 외부 Peer network는 보존합니다. 준비 조건과 전체 명령, 이전 stack의 서비스 label 전환은 [Swarm 운영 가이드](docs/swarm.kr.md)를 참고하십시오. 문서의 기존 두 데몬 실험은 이 helper 추가 전 검증이며 새 관리 명령의 전체 경로 검증은 아닙니다.
 
 ### Prometheus와 Grafana
 
 Compose는 Prometheus와 Grafana도 함께 실행하고 데이터 소스와 실험 대시보드를 자동 등록합니다. [Grafana 실험 분석](http://localhost:3000/d/kpl-experiments)에서 실험·Agent·토픽을 선택하고, [Prometheus](http://localhost:9090)에서 직접 쿼리할 수 있습니다. 지표는 5초마다 수집되며 시계열은 named volume에 저장됩니다.
 
-피어 상태, 발행·수신·중복, 전파 지연, churn 실패, 네트워크 설정을 제공합니다. Grafana는 기본적으로 로컬 읽기 전용 열람을 허용하고 관리자 설정은 `.env`에서 지정합니다. [사용법과 지표 해석](docs/monitoring.md), [검증용 실험](examples/monitoring.yaml)을 참고하십시오.
+피어 상태, 발행·수신·중복, 전파 지연, churn 실패, 네트워크 설정을 제공합니다. Grafana는 기본적으로 로컬 읽기 전용 열람을 허용하고 관리자 설정은 `.env`에서 지정합니다. [사용법과 지표 해석](docs/monitoring.kr.md), [검증용 실험](examples/monitoring.yaml)을 참고하십시오.
 
 ## 모듈 경로
 
@@ -203,7 +215,7 @@ node:
 | `reorderCorrelationPercent` | 재정렬 상관계수이며 v2의 `reorder.chance`에 대응합니다. |
 | `tbf` | `rateMbps`, `burstKbit`, `latency`로 token bucket을 설정합니다. 양수 netem `rateMbps`와 배타적입니다. |
 
-v2 실험을 옮기실 때는 [재현 검토와 설정 대응표](docs/v2-reproduction.md), [churn 예제](examples/v2-churn.yaml)를 참고하십시오. 여기에는 `placement`, `agentId`, `onError: continue`, 정확한 PubSub 데이터 크기를 위한 `payloadEncoding: raw`, 전체 topic 발행을 위한 `topic: '*'`의 사용법과 남은 차이가 정리되어 있습니다.
+v2 실험을 옮기실 때는 [재현 검토와 설정 대응표](docs/v2-reproduction.kr.md), [churn 예제](examples/v2-churn.yaml)를 참고하십시오. 여기에는 `placement`, `agentId`, `onError: continue`, 정확한 PubSub 데이터 크기를 위한 `payloadEncoding: raw`, 전체 topic 발행을 위한 `topic: '*'`의 사용법과 남은 차이가 정리되어 있습니다.
 
 네트워크 조건을 적용하는 Peer에는 Linux `NET_ADMIN`과 호스트 커널의 `sch_netem` 지원이 필요합니다. Docker 런타임은 해당 Peer에만 `NET_ADMIN`을 추가합니다. 커널 지원이 없거나 `tc` 명령이 실패하면 노드 시작도 명시적인 오류로 실패합니다. process 런타임 Agent는 공유 호스트 인터페이스를 변경하지 않으며 네트워크 조건이 있는 요청을 거부합니다.
 
@@ -311,6 +323,7 @@ phases:
 ```bash
 curl -X POST http://localhost:8080/api/v1/experiments \
   -H 'Content-Type: application/yaml' \
+  -H "Authorization: Bearer ${KPL_API_TOKEN:-}" \
   --data-binary @examples/smoke.yaml
 ```
 
@@ -322,7 +335,11 @@ Agent는 Controller가 cleanup에 사용하는 다음 내부 운영 endpoint를 
 |---|---|---|
 | `DELETE` | `/api/v1/runs/{runId}/nodes?generation=N` | unsigned `generation`이 필수이며, run fence를 N까지 원자적으로 높이고 이후 generation N 이하의 create를 거부하며 해당 generation의 기존 노드를 종료한 뒤 `202 Accepted`를 반환합니다. |
 
-이 endpoint와 Controller와 Agent 사이의 등록, heartbeat, 노드 lifecycle, publish, batch telemetry endpoint는 REST/JSON을 사용합니다. 이들은 client-facing Controller API가 아닌 내부 cluster·운영 API이며 별개로 변경될 수 있습니다. `KPL_API_TOKEN`을 설정한 경우 상태를 변경하는 API 호출에 `Authorization: Bearer <token>`이 필요하며 GET과 HEAD는 read-only로 유지됩니다.
+이 endpoint와 Controller와 Agent 사이의 등록, heartbeat, 노드 lifecycle, publish, batch telemetry endpoint는 REST/JSON을 사용합니다. 이들은 client-facing Controller API가 아닌 내부 cluster·운영 API이며 별개로 변경될 수 있습니다.
+
+`KPL_API_TOKEN`은 KPL 변경 API에 쓰는 공통 Bearer 토큰이며 Swarm join token, Docker 권한, Grafana 비밀번호와는 별개입니다. Controller와 모든 Agent에 같은 값을 설정하면 Agent가 Peer에도 전달합니다. Swarm stack에서는 필수이고 Compose/CLI에서는 선택 사항입니다. 빈 값이면 토큰 검사를 비활성화하며, 사용자·역할별 권한 분리는 없습니다.
+
+대시보드의 **Run experiment → API token**에 같은 값을 입력하십시오. 실행 버튼을 누르면 해당 origin의 브라우저 `localStorage`에 저장하여 이후 실행·중지 요청에 사용하며 자동 만료되지 않습니다. REST 요청에는 `Authorization: Bearer <token>`을 붙입니다. 상태·이벤트·SSE·metrics 등 GET 조회는 토큰 설정 후에도 공개입니다. Controller는 HEAD도 인증 검사에서 제외하고 Agent와 Peer는 GET만 제외합니다. 토큰 자체가 HTTP 전송을 암호화하지는 않습니다.
 
 같은 네 가지 job counter가 `/api/v1/snapshot`과 SSE snapshot에도 포함됩니다. 대시보드는 각 run에 이를 표시하므로 Controller 로그를 열지 않아도 실행 중, 성공, 실패, 취소된 background 작업 수를 확인할 수 있습니다.
 

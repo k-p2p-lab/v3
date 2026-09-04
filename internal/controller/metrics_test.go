@@ -266,7 +266,7 @@ func TestMetricsCurrentStateAggregationAndTransitions(t *testing.T) {
 
 func TestMetricsEndpointEscapesLabelsAndIncludesRuntime(t *testing.T) {
 	server := New(ServerConfig{DataDir: t.TempDir(), Token: "token"}, nil)
-	topic := "topic\"\\\n한글"
+	topic := "topic\"\\\nUnicode-\u2603"
 	event := model.TraceEvent{RunID: "run", AgentID: "agent", Type: "publish", Topic: topic}
 	if err := server.state.appendEvents(model.EventBatch{Events: []model.TraceEvent{event}}); err != nil {
 		t.Fatal(err)
