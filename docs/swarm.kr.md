@@ -16,7 +16,7 @@ sh scripts/swarm.sh init
 # .env.swarm에 KPL_IMAGE=registry.example.com/kpl-v3:v3를 설정합니다.
 # KPL_CONTROL_NODE_ID와 KPL_AGENT_CAPACITY도 확인합니다.
 vi .env.swarm
-sh scripts/swarm.sh deploy worker-a worker-b
+sh scripts/swarm.sh deploy --all-excluding-self
 sh scripts/swarm.sh status
 ```
 
@@ -26,9 +26,9 @@ sh scripts/swarm.sh status
 
 helper는 `.env.swarm`의 허용된 `KEY=VALUE` 항목을 **문자 그대로** 읽으며 `source`하거나 셸 명령을 실행하지 않습니다. 바깥쪽 한 쌍의 따옴표는 제거하지만 `$VAR`, `$(command)`, escape는 확장하지 않습니다. `export KEY=...`와 인라인 주석도 사용하지 마십시오. 이미 export된 환경변수가 파일보다 우선합니다. 다른 파일은 `sh scripts/swarm.sh --env-file /path/to/lab.env status`처럼 지정합니다. Compose의 `.env`는 읽지 않으며, Docker 명령을 직접 실행할 때는 이 파일도 자동 적용되지 않습니다.
 
-`deploy worker-a worker-b`는 이미지를 확정하고 두 노드에 `kpl.<stack>.agent=true` label을 설정하며, 없으면 attachable Peer overlay를 생성한 뒤 사전 검사와 stack 배포를 수행합니다. 기본 stack은 `kpl`, helper의 기본 Peer network는 `kpl-peers`입니다. 기존 label이 있는 다른 노드는 그대로 유지합니다. 서버/LAN/VPN/기존 Docker 네트워크와 주소가 겹치지 않는지 확인하고, 별도 stack은 고유한 이름과 Peer network를 사용하십시오. `deploy`는 배포 접수 후 반환하므로 `status`와 Controller의 `/api/v1/agents`에서 등록을 확인한 뒤 실험을 시작합니다. 기본 최소 Agent 수는 1이며, 두 서버를 필수로 하려면 `.env.swarm`에 `KPL_MIN_AGENTS=2`를 설정하십시오.
+`deploy --all-excluding-self`는 현재 Docker context로 접속한 manager를 제외하고 조건에 맞는 노드를 선택합니다. 이미지를 확정하고 해당 노드에 `kpl.<stack>.agent=true` label을 추가하며, 없으면 attachable Peer overlay를 생성한 뒤 사전 검사와 stack 배포를 수행합니다. `deploy worker-a worker-b`처럼 명시적 목록도 사용할 수 있습니다. 기본 stack은 `kpl`, helper의 기본 Peer network는 `kpl-peers`입니다. 기존 label이 있는 다른 노드는 그대로 유지합니다. 서버/LAN/VPN/기존 Docker 네트워크와 주소가 겹치지 않는지 확인하고, 별도 stack은 고유한 이름과 Peer network를 사용하십시오. `deploy`는 배포 접수 후 반환하므로 `status`와 Controller의 `/api/v1/agents`에서 등록을 확인한 뒤 실험을 시작합니다. 기본 최소 Agent 수는 1이며, 두 서버를 필수로 하려면 `.env.swarm`에 `KPL_MIN_AGENTS=2`를 설정하십시오.
 
-Agent는 worker의 Docker socket만 사용하며 manager API 접근이 필요 없습니다. `{{.Service.Name}}-{{.Node.ID}}`로 ID를 만들고 자신의 task가 연결된 Peer overlay IPv4를 `advertise-url`과 `self-url`로 사용합니다. 서비스 VIP나 공통 DNSRR 주소를 개별 Agent 주소로 지정하면 다른 서버가 요청을 받을 수 있습니다. Agent 시작 시 자신의 실제 로컬 image ID를 조회해 Peer에 사용하므로 같은 서버의 Agent·Peer 바이너리가 일치합니다. [Swarm global 서비스와 템플릿](https://docs.docker.com/engine/swarm/services/)
+Agent는 배치된 노드의 로컬 Docker socket만 사용하며 manager API 접근이 필요 없습니다. `{{.Service.Name}}-{{.Node.ID}}`로 ID를 만들고 자신의 task가 연결된 Peer overlay IPv4를 `advertise-url`과 `self-url`로 사용합니다. 서비스 VIP나 공통 DNSRR 주소를 개별 Agent 주소로 지정하면 다른 서버가 요청을 받을 수 있습니다. Agent 시작 시 자신의 실제 로컬 image ID를 조회해 Peer에 사용하므로 같은 서버의 Agent·Peer 바이너리가 일치합니다. [Swarm global 서비스와 템플릿](https://docs.docker.com/engine/swarm/services/)
 
 ## 동일 태그로 이미지 업데이트
 
@@ -50,11 +50,32 @@ amd64/arm64 서버가 혼합되어 있다면 manager와 모든 대상 아키텍�
 
 ## Manager에서 Agent 추가·철거
 
-`NODE`에는 Swarm node ID 또는 hostname을 사용합니다. 아래 명령은 서버를 Swarm에 가입시키거나 탈퇴시키지 않고, 해당 stack의 Agent 배치만 변경합니다.
+명시적 `NODE` 목록에는 Swarm node ID 또는 hostname을 사용합니다. `deploy`, `add-node`, `remove-node`에는 목록 대신 다음 선택 옵션 중 하나를 사용할 수 있습니다. 선택 옵션끼리 또는 선택 옵션과 명시적 노드 목록을 섞을 수 없습니다. 아래 명령은 서버를 Swarm에 가입시키거나 탈퇴시키지 않고, 해당 stack의 Agent 배치만 변경합니다.
+
+| 선택 옵션 | 후보 노드 |
+|---|---|
+| `--all` | manager를 포함한 전체 노드 |
+| `--all-excluding-self` | 현재 Docker context로 접속한 manager를 제외한 전체 노드 |
+| `--workers` | Swarm 역할이 `worker`인 노드. manager는 제외 |
+
+**self는 현재 context로 선택한 Docker daemon이 보고하는 `.Swarm.NodeID`입니다.** `KPL_CONTROL_NODE_ID`나 명령을 입력하는 셸의 hostname을 기준으로 하지 않습니다. manager가 여러 개인 클러스터에서는 `--all-excluding-self`가 다른 manager를 선택할 수 있습니다. 모든 manager를 제외하려면 `--workers`를 사용하십시오.
+
+자동 `deploy`/`add-node`는 Linux·Ready·Active 노드만 포함하며 조건에 맞지 않는 후보는 건너뛰었다고 안내합니다. 자동 `remove-node`는 먼저 이 stack의 `kpl.<stack>.agent=true` label이 있는 노드로 대상을 제한합니다. 철거 대상이 접근 불가이거나 조건에 맞지 않으면 건너뛰지 않고 실패하여 기존 정리 확인 절차를 유지합니다. 선택 결과가 비어도 실패합니다.
+
+배포·추가는 기존 배치 label에 대상을 추가하며, 선택 밖의 노드에서 label을 제거하지 않습니다. 인자 없는 `deploy`는 기존 label을 재사용합니다. 선택 옵션은 해당 명령 실행 시에만 평가하므로, 이후 Swarm에 가입한 노드에 Agent를 자동 배치하는 영구 규칙이 되지는 않습니다.
+
+```sh
+# 새로 가입한 worker를 포함하여 현재 조건에 맞는 worker 역할 노드를 추가합니다.
+sh scripts/swarm.sh add-node --workers
+# 해당 노드의 실험을 마친 뒤 이 stack의 선택된 Agent를 종료합니다.
+sh scripts/swarm.sh remove-node --all-excluding-self
+```
+
+Makefile은 `NODES`를 그대로 전달하므로 `make swarm-add-node NODES='--workers'`도 같은 대상을 선택합니다.
 
 | 명령 | 동작 |
 |---|---|
-| `sh scripts/swarm.sh deploy [NODE...]` | 이미지 태그를 pull·확정하거나 명시 digest를 사용하고 네트워크·노드를 검사한 뒤 stack 배포·업데이트. 지정한 노드에 Agent 배치 label 추가 |
+| `sh scripts/swarm.sh deploy [NODE...]` | 노드 목록 또는 선택 옵션 하나로 배포·업데이트하며, 둘 다 없으면 기존 label 재사용. 이미지 태그를 pull·확정하거나 명시 digest 사용 |
 | `sh scripts/swarm.sh status` | stack 서비스, Agent task, 선택된 노드 표시 |
 | `sh scripts/swarm.sh add-node worker-c` | 기존 서비스에 Agent 배치 노드 추가. Linux·Ready·Active 상태 필요 |
 | `sh scripts/swarm.sh remove-node worker-b` | 서비스에서 대상 노드를 제외하고 Agent 정상 종료 확인 후 배치 label 정리 |

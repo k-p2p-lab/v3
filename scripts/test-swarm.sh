@@ -46,7 +46,7 @@ case "$1 $2" in
         esac ;;
     'info --format')
         case "$3" in
-            '{{.Swarm.NodeID}}') printf 'control1\n' ;;
+            '{{.Swarm.NodeID}}') printf '%s\n' "${KPL_TEST_SELF_ID:-control1}" ;;
             '{{.Swarm.LocalNodeState}} {{.Swarm.ControlAvailable}}') printf 'active true\n' ;;
             *) die "$@" ;;
         esac ;;
@@ -93,6 +93,9 @@ case "$1 $2" in
                 case "$*" in
                     *node=worker1*) printf 'taskA1\noldA1\n' ;;
                     *node=worker2*) printf 'taskA2\n' ;;
+                    *node=control1*) printf 'taskA-control1\n' ;;
+                    *node=manager2*) printf 'taskA-manager2\n' ;;
+                    *node=unlabeled1*) printf 'taskA-unlabeled1\n' ;;
                     *) printf 'taskA1\noldA1\ntaskA2\n' ;;
                 esac ;;
             *) die "$@" ;;
@@ -114,8 +117,8 @@ case "$1 $2" in
                         nonzero) code=1 ;;
                     esac
                 fi ;;
-            taskA1|taskA2)
-                if [ "$last" = taskA1 ]; then node=worker1; else node=worker2; fi
+            taskA1|taskA2|taskA-control1|taskA-manager2|taskA-unlabeled1)
+                case "$last" in taskA1) node=worker1 ;; taskA2) node=worker2 ;; *) node=${last#taskA-} ;; esac
                 container=container$node
                 if [ -f "$s/stopped-$node" ]; then
                     state=shutdown; pid=0
@@ -140,31 +143,54 @@ case "$1 $2" in
             case "$node" in
                 worker-a) node=worker1 ;;
                 worker-b) node=worker2 ;;
-                control1|worker1|worker2) ;;
+                control1|manager2|worker1|worker2|unlabeled1|windows1|down1|paused1|drained1) ;;
                 *) die "$@" ;;
             esac
-            state=ready
+            if [ "${KPL_TEST_NODE_INSPECT_FAIL:-}" = "$node" ]; then printf 'mock node inspection failed\n' >&2; exit 2; fi
+            os=linux; state=ready; availability=active; role=worker; hostname=$node
+            case "$node" in
+                control1|manager2) role=manager ;;
+                windows1) os=windows ;;
+                down1) state=down ;;
+                paused1) availability=pause ;;
+                drained1) availability=drain ;;
+            esac
             if [ "${KPL_TEST_DOWN_NODE:-}" = "$node" ]; then state=down; fi
             case "$format" in
                 '{{.ID}}') printf '%s\n' "$node" ;;
                 '{{.Status.State}}') printf '%s\n' "$state" ;;
-                '{{.Description.Platform.OS}} {{.Status.State}}') printf 'linux %s\n' "$state" ;;
-                '{{.Description.Platform.OS}} {{.Status.State}} {{.Spec.Availability}}') printf 'linux %s active\n' "$state" ;;
-                '{{.ID}} {{.Description.Platform.OS}} {{.Status.State}} {{.Spec.Availability}}') printf '%s linux %s active\n' "$node" "$state" ;;
+                '{{.Description.Platform.OS}} {{.Status.State}}') printf '%s %s\n' "$os" "$state" ;;
+                '{{.Description.Platform.OS}} {{.Status.State}} {{.Spec.Availability}}') printf '%s %s %s\n' "$os" "$state" "$availability" ;;
+                '{{.ID}} {{.Description.Platform.OS}} {{.Status.State}} {{.Spec.Availability}}') printf '%s %s %s %s\n' "$node" "$os" "$state" "$availability" ;;
+                '{{.ID}}|{{.Spec.Role}}|{{.Description.Platform.OS}}|{{.Status.State}}|{{.Spec.Availability}}') printf '%s|%s|%s|%s|%s\n' "$node" "$role" "$os" "$state" "$availability" ;;
                 *) die "$format" ;;
             esac
         done ;;
     'node ls')
+        if [ "${KPL_TEST_NODE_LS_FAIL:-0}" = 1 ]; then printf 'mock node listing failed\n' >&2; exit 2; fi
+        if [ "$#" = 3 ] && [ "$3" = --quiet ]; then
+            printf '%s\n' "${KPL_TEST_NODE_IDS-control1 worker1 worker2}" | tr ' ' '\n'
+            exit 0
+        fi
         case "$*" in *"node.label=kpl.$stack.agent=true") ;; *) die "$@" ;; esac
-        for node in worker1 worker2; do [ -f "$s/unlabeled-$node" ] || printf '%s\n' "$node"; done ;;
+        seen=' '
+        for node in ${KPL_TEST_LABEL_NODES-worker1 worker2} control1 manager2 worker1 worker2 unlabeled1 windows1 down1 paused1 drained1; do
+            case "$seen" in *" $node "*) continue ;; esac
+            seen="$seen$node "
+            case " ${KPL_TEST_LABEL_NODES-worker1 worker2} " in
+                *" $node "*) ;;
+                *) [ -f "$s/labeled-$node" ] || continue ;;
+            esac
+            [ -f "$s/unlabeled-$node" ] || printf '%s\n' "$node"
+        done ;;
     'node update')
         case "$3 $4" in
             "--label-rm kpl.$stack.agent")
-                case "$last" in worker1) task=taskA1 ;; worker2) task=taskA2 ;; *) die "$@" ;; esac
+                case "$last" in worker1) task=taskA1 ;; worker2) task=taskA2 ;; control1|manager2|unlabeled1) task=taskA-$last ;; *) die "$@" ;; esac
                 if [ ! -f "$s/clean-$task" ]; then : > "$s/rejected-$last"; fi
                 : > "$s/unlabeled-$last"; event "unlabel-$last" ;;
             "--label-add kpl.$stack.agent=true")
-                rm -f "$s/unlabeled-$last"; event "label-$last" ;;
+                rm -f "$s/unlabeled-$last"; : > "$s/labeled-$last"; event "label-$last" ;;
             *) die "$@" ;;
         esac ;;
     'service update')
@@ -178,7 +204,7 @@ case "$1 $2" in
         shift 4
         while [ "$#" -gt 1 ]; do
             action=$1; constraint=$2
-            case "$constraint" in 'node.id!=worker1'|'node.id!=worker2') node=${constraint#node.id!=} ;; *) die "$@" ;; esac
+            case "$constraint" in 'node.id!=control1'|'node.id!=manager2'|'node.id!=worker1'|'node.id!=worker2'|'node.id!=unlabeled1') node=${constraint#node.id!=} ;; *) die "$@" ;; esac
             case "$action" in
                 --constraint-add)
                     : > "$s/excluded-$node"; : > "$s/stopped-$node"; event "exclude-$node" ;;
@@ -222,6 +248,7 @@ reset_case() {
     export KPL_API_TOKEN=private-test-token GRAFANA_ADMIN_PASSWORD=private-test-password
     export KPL_DOCKER_TIMEOUT=3 KPL_CONTROLLER_STOP_TIMEOUT=3 KPL_AGENT_STOP_TIMEOUT=3
     unset KPL_TEST_FOREIGN KPL_TEST_FOREIGN_STACK KPL_TEST_DOWN_NODE KPL_TEST_CONTROLLER_STOP KPL_TEST_AGENT_STOP KPL_TEST_EMPTY_STACK KPL_TEST_NO_NETWORK KPL_MIN_AGENTS KPL_TEST_FINAL_LIST_FAIL KPL_TEST_INSPECT_FAIL KPL_TEST_EMPTY_HISTORY KPL_TEST_OLD_FAILED KPL_TEST_PENDING_STATE KPL_TEST_PENDING_CONTAINER KPL_TEST_PULL_DIGEST KPL_TEST_PULL_FAULT KPL_IMAGE_PULL_TIMEOUT DOCKER_DEFAULT_PLATFORM
+    unset KPL_TEST_SELF_ID KPL_TEST_NODE_IDS KPL_TEST_LABEL_NODES KPL_TEST_NODE_LS_FAIL KPL_TEST_NODE_INSPECT_FAIL
 }
 run() { sh "$root/scripts/swarm.sh" --env-file "$scratch/config.env" "$@" > "$KPL_TEST_STATE/output" 2>&1; }
 reject() {
@@ -479,6 +506,154 @@ if sh "$root/scripts/swarm.sh" --env-file "$scratch/missing.env" remove > "$KPL_
 no_mutation
 [ ! -s "$KPL_TEST_STATE/calls" ]
 
+# Bare deploy still leaves placement labels unchanged, while explicit aliases
+# and IDs that resolve to the same node must cause only one placement update.
+reset_case
+run deploy
+printf 'stack-deploy\n' > "$scratch/expected"
+cmp "$scratch/expected" "$KPL_TEST_STATE/events"
+for command in deploy add-node remove-node; do
+    reset_case
+    run "$command" worker-a worker1 worker-a
+    case "$command" in
+        deploy) printf 'label-worker1\nstack-deploy\n' > "$scratch/expected" ;;
+        add-node) printf 'label-worker1\ninclude-worker1\n' > "$scratch/expected" ;;
+        remove-node) printf 'exclude-worker1\nclean-taskA1\nunlabel-worker1\ninclude-worker1\n' > "$scratch/expected" ;;
+    esac
+    cmp "$scratch/expected" "$KPL_TEST_STATE/events"
+done
+
+# --all includes Managers, but admission skips unsupported OS/state/availability
+# with an explanation. These skips must not silently become placement updates.
+for command in deploy add-node; do
+    reset_case
+    export KPL_TEST_NODE_IDS='control1 manager2 worker1 worker2 windows1 down1 paused1 drained1'
+    run "$command" --all
+    for node in control1 manager2 worker1 worker2; do
+        [ "$(grep -c "^label-$node$" "$KPL_TEST_STATE/events")" = 1 ]
+    done
+    for node in windows1 down1 paused1 drained1; do
+        grep -q "Skipping node $node:" "$KPL_TEST_STATE/output"
+        if grep -q "^label-$node$\|^include-$node$" "$KPL_TEST_STATE/events"; then exit 1; fi
+    done
+    if [ "$command" = deploy ]; then
+        [ "$(tail -n 1 "$KPL_TEST_STATE/events")" = stack-deploy ]
+    else
+        for node in control1 manager2 worker1 worker2; do
+            [ "$(grep -c "^include-$node$" "$KPL_TEST_STATE/events")" = 1 ]
+        done
+    fi
+done
+
+# The Docker context's actual Manager is self, even when configuration pins the
+# Controller to another Manager. --workers filters Spec.Role, not hostnames.
+reset_case
+export KPL_TEST_SELF_ID=manager2 KPL_TEST_NODE_IDS='control1 manager2 worker1'
+run add-node --all-excluding-self
+printf 'label-control1\nlabel-worker1\ninclude-control1\ninclude-worker1\n' > "$scratch/expected"
+cmp "$scratch/expected" "$KPL_TEST_STATE/events"
+grep -Fq 'info --format {{.Swarm.NodeID}}' "$KPL_TEST_STATE/calls"
+
+reset_case
+export KPL_TEST_NODE_IDS='control1 manager2 worker1 worker2'
+run add-node --workers
+printf 'label-worker1\nlabel-worker2\ninclude-worker1\ninclude-worker2\n' > "$scratch/expected"
+cmp "$scratch/expected" "$KPL_TEST_STATE/events"
+
+# Auto removal must start from this stack's placement labels. An unlabeled or
+# differently labeled node must not be excluded, even if it is otherwise ready.
+reset_case
+export KPL_TEST_NODE_IDS='control1 worker1 worker2 unlabeled1 down1'
+export KPL_TEST_LABEL_NODES=worker1
+run remove-node --all
+printf 'exclude-worker1\nclean-taskA1\nunlabel-worker1\ninclude-worker1\n' > "$scratch/expected"
+cmp "$scratch/expected" "$KPL_TEST_STATE/events"
+grep -q 'node ls --quiet --filter node.label=kpl.lab.agent=true' "$KPL_TEST_STATE/calls"
+if grep -q 'node inspect .* unlabeled1\|node inspect .* down1\|node.label=kpl.agent=' "$KPL_TEST_STATE/calls"; then exit 1; fi
+
+reset_case
+export KPL_TEST_SELF_ID=manager2 KPL_TEST_LABEL_NODES='control1 manager2 worker1'
+run remove-node --all-excluding-self
+cat > "$scratch/expected" <<'EXPECTED'
+exclude-control1
+exclude-worker1
+clean-taskA-control1
+clean-taskA1
+unlabel-control1
+unlabel-worker1
+include-control1
+include-worker1
+EXPECTED
+cmp "$scratch/expected" "$KPL_TEST_STATE/events"
+
+reset_case
+export KPL_TEST_LABEL_NODES='control1 worker1' KPL_TEST_DOWN_NODE=control1
+run remove-node --workers
+printf 'exclude-worker1\nclean-taskA1\nunlabel-worker1\ninclude-worker1\n' > "$scratch/expected"
+cmp "$scratch/expected" "$KPL_TEST_STATE/events"
+
+# A selected labeled node cannot be silently skipped during cleanup. Validate
+# the complete selected set before excluding even its healthy first member.
+for invalid_node in down1 windows1 paused1 drained1; do
+    reset_case
+    export KPL_TEST_LABEL_NODES="worker1 $invalid_node"
+    reject remove-node --all
+    no_mutation
+    grep -q "$invalid_node" "$KPL_TEST_STATE/output"
+done
+
+# Selection queries and empty selections fail before placement/network changes.
+for command in deploy add-node remove-node; do
+    reset_case
+    export KPL_TEST_NODE_LS_FAIL=1
+    reject "$command" --all
+    no_mutation
+    grep -q 'mock node listing failed' "$KPL_TEST_STATE/output"
+
+    reset_case
+    export KPL_TEST_NODE_INSPECT_FAIL=worker1
+    reject "$command" --all
+    no_mutation
+    grep -q 'mock node inspection failed' "$KPL_TEST_STATE/output"
+
+    reset_case
+    export KPL_TEST_NODE_IDS='' KPL_TEST_LABEL_NODES=''
+    reject "$command" --all
+    no_mutation
+    grep -q 'matched no eligible nodes' "$KPL_TEST_STATE/output"
+done
+for selector in --workers --all-excluding-self; do
+    reset_case
+    export KPL_TEST_NODE_IDS=control1
+    reject add-node "$selector"
+    no_mutation
+    grep -q 'matched no eligible nodes' "$KPL_TEST_STATE/output"
+done
+reset_case
+export KPL_TEST_NODE_IDS='windows1 down1 paused1 drained1'
+reject add-node --all
+no_mutation
+grep -q 'matched no eligible nodes' "$KPL_TEST_STATE/output"
+
+# Syntax mistakes must fail before the very first Docker query, not merely
+# before a later mutation. Selectors cannot be combined with one another or
+# with explicit node names, including the same selector appearing twice.
+for command in deploy add-node remove-node; do
+    for arguments in '--all --workers' '--all --all' '--workers --all-excluding-self' '--all worker-a' 'worker-a --all' '--unknown' '--workers=1'; do
+        reset_case
+        # Intentional splitting: all fixtures contain literal CLI tokens.
+        reject "$command" $arguments
+        no_mutation
+        [ ! -s "$KPL_TEST_STATE/calls" ]
+    done
+done
+for command in init status remove; do
+    reset_case
+    reject "$command" --all
+    no_mutation
+    [ ! -s "$KPL_TEST_STATE/calls" ]
+done
+
 reset_case
 sh "$root/scripts/swarm.sh" --env-file "$scratch/generated.env" init > "$KPL_TEST_STATE/output" 2>&1
 [ "$(stat -c '%a' "$scratch/generated.env")" = 600 ]
@@ -491,4 +666,4 @@ if sh "$root/scripts/swarm.sh" --env-file "$scratch/generated.env" init > "$KPL_
 cmp "$scratch/original.env" "$scratch/generated.env"
 no_mutation
 
-printf '%s\n' 'PASS: Manager commands enforce cleanup order, stack ownership, failed-task retry safety, literal config, and fresh tag-to-digest resolution before deployment mutations.'
+printf '%s\n' 'PASS: Manager commands enforce cleanup order, stack ownership, safe node selectors, deduplicated placement, literal config, and fresh tag-to-digest resolution before deployment mutations.'

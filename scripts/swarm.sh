@@ -5,14 +5,21 @@ set -efu
 fail() { printf 'KPL Swarm: %s\n' "$*" >&2; exit 1; }
 usage() {
     cat <<'EOF'
-Usage: sh scripts/swarm.sh [--env-file PATH] COMMAND [NODE...]
+Usage: sh scripts/swarm.sh [--env-file PATH] COMMAND [NODE... | SELECTOR]
   init                 Create a private .env.swarm with random credentials
-  deploy [NODE...]      Deploy the stack; optionally enable Agents on these nodes
+  deploy [NODE... | SELECTOR]  Deploy; bare deploy reuses existing Agent labels
   status               Show services, Agent tasks and selected nodes
-  add-node NODE...      Enable one Agent per selected Linux node
-  remove-node NODE...   Stop Agents and wait for their Peer cleanup
+  add-node NODE... | SELECTOR     Enable one Agent per selected Linux node
+  remove-node NODE... | SELECTOR  Stop Agents and wait for their Peer cleanup
   remove               Stop Controller, then Agents, then remove stack services
 Environment overrides the config file. NODE is a Swarm node ID or hostname.
+Use one selector without NODE arguments:
+  --all                 All nodes, including managers
+  --all-excluding-self  All except the current Docker daemon's Swarm node
+  --workers             Worker nodes only
+Deploy/add selectors skip nodes that are not Linux, Ready and Active.
+Remove selectors target only this stack's labeled Agents; unavailable targets fail.
+Selection uses the current cluster snapshot, not nodes that join later.
 KPL_IMAGE accepts an explicit tag or digest; deploy resolves tags without editing the file.
 KPL_IMAGE_PULL_TIMEOUT sets the tag pull timeout in seconds (default: 300).
 Removal preserves experiment/monitoring volumes and the external Peer network.
@@ -37,8 +44,26 @@ case "$command_name" in
 esac
 case "$command_name" in
     init|status|remove) [ "$#" -eq 0 ] || fail "$command_name takes no nodes." ;;
-    add-node|remove-node) [ "$#" -gt 0 ] || fail "$command_name requires at least one node." ;;
+    add-node|remove-node) [ "$#" -gt 0 ] || fail "$command_name requires at least one node or a selector." ;;
 esac
+# Reject ambiguous selectors and options before contacting Docker or loading config.
+node_selector=''
+explicit_nodes=no
+for argument do
+    case "$argument" in
+        --all|--all-excluding-self|--workers)
+            [ -z "$node_selector" ] && [ "$explicit_nodes" = no ] || fail 'Use exactly one selector without explicit nodes.'
+            node_selector=$argument
+            ;;
+        -*) fail "Unknown option: $argument" ;;
+        *)
+            [ -z "$node_selector" ] || fail 'Use exactly one selector without explicit nodes.'
+            case "$argument" in ''|*[!a-zA-Z0-9_.-]*) fail "Invalid node: $argument" ;; esac
+            explicit_nodes=yes
+            ;;
+    esac
+done
+[ -z "$node_selector" ] || set --
 
 # Only literal KEY=VALUE entries are accepted. No shell evaluation/expansion.
 if [ "$command_name" != init ] && [ "$explicit_env_file" = yes ] && [ ! -f "$env_file" ]; then
@@ -135,9 +160,14 @@ service_exists() {
     esac
 }
 resolve_nodes() {
+    resolved_seen=' '
     for node do
         case "$node" in ''|-*|*[!a-zA-Z0-9_.-]*) fail "Invalid node: $node" ;; esac
-        dock node inspect --format '{{.ID}}' "$node" || return 1
+        resolved_id=$(dock node inspect --format '{{.ID}}' "$node") || return 1
+        case "$resolved_id" in ''|*[!a-zA-Z0-9]*) fail "Docker returned an invalid node ID for $node." ;; esac
+        case "$resolved_seen" in *" $resolved_id "*) continue ;; esac
+        resolved_seen="$resolved_seen$resolved_id "
+        printf '%s\n' "$resolved_id"
     done
 }
 ready_node() {
@@ -145,6 +175,55 @@ ready_node() {
     [ "$state" = 'linux ready active' ] || fail "Node $1 must be Linux, Ready and Active; got $state."
 }
 selected_nodes() { dock node ls --quiet --filter "node.label=$agent_label=true"; }
+command_nodes() {
+    if [ -z "$node_selector" ]; then resolve_nodes "$@"; return; fi
+    if [ "$command_name" = remove-node ]; then
+        candidates=$(selected_nodes) || fail 'Cannot list Agent nodes for this stack; no changes made.'
+    else
+        candidates=$(dock node ls --quiet) || fail 'Cannot list Swarm nodes; no changes made.'
+    fi
+    selector_self=''
+    if [ "$node_selector" = --all-excluding-self ]; then
+        selector_self=$(dock info --format '{{.Swarm.NodeID}}') || fail 'Cannot identify the Swarm node of the current Docker daemon.'
+        case "$selector_self" in ''|*[!a-zA-Z0-9]*) fail 'Docker returned an invalid current Swarm node ID.' ;; esac
+    fi
+    selection=''
+    selection_seen=' '
+    for candidate in $candidates; do
+        case "$candidate" in ''|*[!a-zA-Z0-9]*) fail 'Docker returned an invalid node list.' ;; esac
+        selection_record=$(dock node inspect --format '{{.ID}}|{{.Spec.Role}}|{{.Description.Platform.OS}}|{{.Status.State}}|{{.Spec.Availability}}' "$candidate") || fail "Cannot inspect node $candidate; no changes made."
+        selection_id=${selection_record%%|*}; selection_rest=${selection_record#*|}
+        selection_role=${selection_rest%%|*}; selection_rest=${selection_rest#*|}
+        selection_os=${selection_rest%%|*}; selection_rest=${selection_rest#*|}
+        selection_state=${selection_rest%%|*}; selection_availability=${selection_rest#*|}
+        case "$selection_id" in ''|*[!a-zA-Z0-9]*) fail "Docker returned an invalid node ID for $candidate." ;; esac
+        case "$selection_role" in manager|worker) ;; *) fail "Docker returned an invalid role for node $selection_id." ;; esac
+        for field in "$selection_os" "$selection_state" "$selection_availability"; do
+            case "$field" in ''|*[!a-zA-Z0-9_.-]*) fail "Docker returned invalid node metadata for $selection_id." ;; esac
+        done
+        # Require the complete five-field record even if missing delimiters would
+        # otherwise leave plausible values in the shell parameter expansions.
+        [ "$selection_record" = "$selection_id|$selection_role|$selection_os|$selection_state|$selection_availability" ] || fail "Docker returned incomplete node metadata for $selection_id."
+        case "$selection_seen" in *" $selection_id "*) continue ;; esac
+        selection_seen="$selection_seen$selection_id "
+        [ "$selection_id" != "$selector_self" ] || continue
+        if [ "$node_selector" = --workers ] && [ "$selection_role" != worker ]; then continue; fi
+        # Removal must retain unavailable labeled nodes so the strict preflight
+        # refuses cleanup that cannot be verified, before changing any placement.
+        if [ "$command_name" != remove-node ] && [ "$selection_os $selection_state $selection_availability" != 'linux ready active' ]; then
+            printf 'Skipping node %s: requires Linux, Ready and Active; got %s %s %s.\n' "$selection_id" "$selection_os" "$selection_state" "$selection_availability" >&2
+            continue
+        fi
+        selection="$selection $selection_id"
+    done
+    [ -n "$selection" ] || fail "Selector $node_selector matched no eligible nodes."
+    for selection_id in $selection; do printf '%s\n' "$selection_id"; done
+}
+report_nodes() {
+    [ -n "$1" ] || return 0
+    set -- $1
+    printf 'Selected %s node(s): %s\n' "$#" "$*" >&2
+}
 resolve_deployment_image() {
     case "$KPL_IMAGE" in
         *@sha256:*) export KPL_IMAGE; return 0 ;;
@@ -274,8 +353,9 @@ case "$command_name" in
         # Validate interpolation without printing credentials.
         dock stack config --compose-file "$root/stack.swarm.yaml" >/dev/null
         ready_node "$KPL_CONTROL_NODE_ID"
-        nodes=$(resolve_nodes "$@")
+        nodes=$(command_nodes "$@")
         for node in $nodes; do ready_node "$node"; done
+        report_nodes "$nodes"
         resolve_deployment_image
         networks=$(dock network ls --quiet --filter "name=^$KPL_PEER_NETWORK$")
         if [ -z "$networks" ]; then
@@ -290,8 +370,9 @@ case "$command_name" in
         ;;
     add-node)
         service_exists "${KPL_STACK_NAME}_agent" || fail 'Deploy the stack before adding nodes.'
-        nodes=$(resolve_nodes "$@")
+        nodes=$(command_nodes "$@")
         for node in $nodes; do ready_node "$node"; done
+        report_nodes "$nodes"
         for node in $nodes; do dock node update --label-add "$agent_label=true" "$node"; done
         # Resume a node left excluded by an interrupted removal.
         placement_exclusions rm "$nodes"
@@ -299,13 +380,14 @@ case "$command_name" in
         ;;
     remove-node)
         service_exists "${KPL_STACK_NAME}_agent" || fail 'Agent service does not exist.'
-        nodes=$(resolve_nodes "$@")
+        nodes=$(command_nodes "$@")
         tasks=''
         for node in $nodes; do
             ready_node "$node"
             captured=$(capture_tasks "${KPL_STACK_NAME}_agent" "$node")
             tasks="$tasks $captured"
         done
+        report_nodes "$nodes"
         # Changing a node label first invalidates the old task's own constraints:
         # Docker can report Rejected with stale PID/exit data even after exit 0.
         # A service-only exclusion preserves the old task's valid node labels

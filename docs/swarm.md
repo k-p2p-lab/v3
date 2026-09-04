@@ -16,7 +16,7 @@ sh scripts/swarm.sh init
 # Set KPL_IMAGE=registry.example.com/kpl-v3:v3 in .env.swarm.
 # Also check KPL_CONTROL_NODE_ID and KPL_AGENT_CAPACITY.
 vi .env.swarm
-sh scripts/swarm.sh deploy worker-a worker-b
+sh scripts/swarm.sh deploy --all-excluding-self
 sh scripts/swarm.sh status
 ```
 
@@ -26,9 +26,9 @@ For a private registry, run `docker login <registry>` on the manager first. The 
 
 The helper reads allowed `KEY=VALUE` entries in `.env.swarm` **literally**; it never uses `source` or executes shell commands from the file. It removes one matching pair of surrounding quotes, but does not expand `$VAR`, `$(command)`, or escapes. Do not use `export KEY=...` or inline comments in this file. Exported environment variables take precedence over file values. To select another file, use a command such as `sh scripts/swarm.sh --env-file /path/to/lab.env status`. The helper does not read Compose's `.env`, and direct Docker commands do not automatically load `.env.swarm` either.
 
-`deploy worker-a worker-b` resolves the image, sets the `kpl.<stack>.agent=true` label on those two nodes, creates an attachable Peer overlay if needed, then runs the preflight check and deploys the stack. The default stack name is `kpl`; the helper's default Peer network is `kpl-peers`. Existing labels on other nodes are preserved. Check for address conflicts with server, LAN, VPN, and existing Docker networks, and use a unique name and Peer network for each separate stack. `deploy` returns once the deployment is submitted. Check `status` and the Controller's `/api/v1/agents` for registration before starting an experiment. The default minimum Agent count is 1; set `KPL_MIN_AGENTS=2` in `.env.swarm` to require two servers.
+`deploy --all-excluding-self` selects eligible nodes other than the manager reached through the current Docker context. It resolves the image, adds `kpl.<stack>.agent=true` labels to those nodes, creates an attachable Peer overlay if needed, then runs the preflight check and deploys the stack. Explicit lists such as `deploy worker-a worker-b` also remain supported. The default stack name is `kpl`; the helper's default Peer network is `kpl-peers`. Existing labels on other nodes are preserved. Check for address conflicts with server, LAN, VPN, and existing Docker networks, and use a unique name and Peer network for each separate stack. `deploy` returns once the deployment is submitted. Check `status` and the Controller's `/api/v1/agents` for registration before starting an experiment. The default minimum Agent count is 1; set `KPL_MIN_AGENTS=2` in `.env.swarm` to require two servers.
 
-Agents use only the worker's Docker socket and do not require access to the manager API. Each Agent derives its ID from `{{.Service.Name}}-{{.Node.ID}}` and uses its own task's Peer overlay IPv4 address for `advertise-url` and `self-url`. A service VIP or shared DNSRR address is unsuitable as an individual Agent address because requests may reach another server. At startup, the Agent looks up its actual local image ID and uses it for Peers, keeping Agent and Peer binaries identical on that server. [Swarm global services and templates](https://docs.docker.com/engine/swarm/services/)
+Agents use only their local node's Docker socket and do not require access to the manager API. Each Agent derives its ID from `{{.Service.Name}}-{{.Node.ID}}` and uses its own task's Peer overlay IPv4 address for `advertise-url` and `self-url`. A service VIP or shared DNSRR address is unsuitable as an individual Agent address because requests may reach another server. At startup, the Agent looks up its actual local image ID and uses it for Peers, keeping Agent and Peer binaries identical on that server. [Swarm global services and templates](https://docs.docker.com/engine/swarm/services/)
 
 ## Update an image using the same tag
 
@@ -50,11 +50,32 @@ For mixed amd64/arm64 servers, publish the same tag as a multi-platform manifest
 
 ## Add and Remove Agents from the Manager
 
-Use a Swarm node ID or hostname for `NODE`. These commands change Agent placement for the specified stack; they do not join servers to or remove them from the Swarm.
+Use Swarm node IDs or hostnames for an explicit `NODE` list. For `deploy`, `add-node`, and `remove-node`, you may instead supply one of these selectors. They are mutually exclusive and cannot be mixed with an explicit node list. These commands change Agent placement for the specified stack; they do not join servers to or remove them from the Swarm.
+
+| Selector | Nodes considered |
+|---|---|
+| `--all` | All nodes, including managers |
+| `--all-excluding-self` | All nodes except the manager reached through the current Docker context |
+| `--workers` | Nodes whose Swarm role is `worker`; managers are excluded |
+
+**“Self” is the `.Swarm.NodeID` reported by the Docker daemon selected through the current context.** It is not `KPL_CONTROL_NODE_ID` or the hostname of the shell's machine. In a multi-manager cluster, `--all-excluding-self` can select other managers. Use `--workers` to exclude every manager.
+
+For automatic `deploy`/`add-node` selection, only Linux, Ready, Active nodes are included; other matching nodes are reported as skipped. For automatic `remove-node` selection, candidates are first limited to nodes carrying this stack's `kpl.<stack>.agent=true` label. Unavailable or ineligible removal targets cause failure rather than being skipped, preserving cleanup verification. An empty selection fails.
+
+Deployment and addition add to the existing placement labels; they do not remove labels from nodes outside the selection. Bare `deploy` reuses the existing labels. A selector is evaluated only when its command runs: it does not create a persistent rule that automatically enables Agents on future Swarm members.
+
+```sh
+# Add all currently eligible worker-role nodes, including newly joined workers.
+sh scripts/swarm.sh add-node --workers
+# After finishing experiments on these nodes, stop this stack's selected Agents.
+sh scripts/swarm.sh remove-node --all-excluding-self
+```
+
+Makefile targets forward `NODES` unchanged, so `make swarm-add-node NODES='--workers'` runs the same selection.
 
 | Command | Behavior |
 |---|---|
-| `sh scripts/swarm.sh deploy [NODE...]` | Pull and resolve an image tag or use an explicit digest, check the network and nodes, then deploy or update the stack. Add Agent placement labels to the specified nodes |
+| `sh scripts/swarm.sh deploy [NODE...]` | Deploy or update using a node list or one selector; without either, reuse existing labels. Pull and resolve the image tag or use an explicit digest |
 | `sh scripts/swarm.sh status` | Show stack services, Agent tasks, and selected nodes |
 | `sh scripts/swarm.sh add-node worker-c` | Add an Agent placement node to the existing service. Requires Linux, Ready, and Active status |
 | `sh scripts/swarm.sh remove-node worker-b` | Exclude the target node from the service, confirm clean Agent shutdown, then remove its placement label |

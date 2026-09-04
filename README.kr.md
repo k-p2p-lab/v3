@@ -75,12 +75,16 @@ Agent를 재시작하면 동일 Docker daemon·network에서 같은 Agent ID의 
 ```sh
 sh scripts/swarm.sh init
 # .env.swarm에 KPL_IMAGE=registry.example.com/kpl-v3:v3를 설정하고 control Node ID를 확인합니다.
-sh scripts/swarm.sh deploy worker-a worker-b
+sh scripts/swarm.sh deploy --all-excluding-self
 sh scripts/swarm.sh status
-# 이후: add-node worker-c, remove-node worker-b, 전체 철거는 remove
+# 이후: add-node --workers, remove-node --all-excluding-self, 전체 철거는 remove
 ```
 
 `init`은 권한 `0600`의 `.env.swarm`과 서로 다른 API 토큰·Grafana 비밀번호를 생성합니다. helper는 `KEY=VALUE`를 문자 그대로 읽으며 이미 export된 환경변수가 우선합니다. 셸 표현식을 실행하거나 Compose의 `.env`를 읽지 않습니다. `deploy`는 배포 접수 후 반환하므로 Controller에서 Agent 등록을 확인한 뒤 실험을 시작하십시오. `add-node`와 `remove-node`는 Swarm 가입 상태가 아닌 stack별 `kpl.<stack>.agent` label을 변경합니다. 노드 철거 시 해당 Peer가 종료되어 진행 중 실험에 영향을 줍니다.
+
+`deploy`, `add-node`, `remove-node`에는 노드 ID/hostname 목록 또는 선택 옵션 하나를 사용합니다. `--all`은 manager도 포함하고, `--workers`는 Swarm worker 역할의 노드만 선택하며, `--all-excluding-self`는 현재 Docker context로 접속한 manager를 제외합니다. 여기서 self는 `KPL_CONTROL_NODE_ID`나 명령을 입력하는 셸의 서버가 아닙니다. 선택 옵션끼리 또는 선택 옵션과 명시적 노드 목록을 섞을 수 없습니다.
+
+자동 배포·추가는 Linux·Ready·Active 노드만 선택하고 제외한 노드를 안내합니다. 자동 철거는 이 stack의 label이 있는 노드와 선택 대상의 교집합만 처리하며, 대상 노드에 접근할 수 없으면 건너뛰지 않고 실패합니다. 선택 결과가 비어도 실패합니다. 배포·추가는 기존 label을 유지하며, 인자 없는 `deploy`는 기존 배치를 재사용합니다. 선택은 명령 실행 시마다 평가하므로 새로 가입한 노드도 다음 명령에서 선택해야 합니다. [노드 선택 규칙](docs/swarm.kr.md#manager에서-agent-추가철거)을 참고하십시오.
 
 `.env.swarm`의 이미지 태그는 그대로 유지하십시오. 새 코드를 같은 태그로 빌드·push한 뒤 `sh scripts/swarm.sh deploy`를 다시 실행하면 됩니다. 매 배포마다 태그를 pull하여 현재 registry digest를 확인하고, 파일을 수정하지 않은 채 이번 배포만 해당 digest로 고정합니다. **push할 때마다 새 SHA를 복사할 필요가 없습니다.** 특정 버전을 고정하려면 기존처럼 `repository@sha256:...`도 사용할 수 있습니다. Agent 교체 시 담당 Peer가 종료되므로 진행 중 실험을 마친 뒤 업데이트하십시오. [동일 태그로 이미지 업데이트](docs/swarm.kr.md#동일-태그로-이미지-업데이트)를 참고하십시오.
 

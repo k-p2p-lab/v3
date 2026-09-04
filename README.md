@@ -75,12 +75,16 @@ The supplied Compose bridge connects containers on one Docker host. For an exist
 ```sh
 sh scripts/swarm.sh init
 # Set KPL_IMAGE=registry.example.com/kpl-v3:v3 in .env.swarm and verify the control Node ID.
-sh scripts/swarm.sh deploy worker-a worker-b
+sh scripts/swarm.sh deploy --all-excluding-self
 sh scripts/swarm.sh status
-# Later: add-node worker-c, remove-node worker-b, or remove for the whole stack.
+# Later: add-node --workers, remove-node --all-excluding-self, or remove for the whole stack.
 ```
 
 `init` creates a private `.env.swarm` and generates separate API and Grafana credentials. The helper reads literal `KEY=VALUE` entries; exported environment variables take precedence. It does not evaluate shell expressions or load Compose's `.env`. `deploy` returns after submission; wait for Agent registration in the Controller before running an experiment. `add-node` and `remove-node` change the stack-specific `kpl.<stack>.agent` label, not Swarm membership. Removing a node stops its Peers and affects any experiment using them.
+
+For `deploy`, `add-node`, or `remove-node`, choose explicit node IDs/hostnames or one selector: `--all` includes managers, `--workers` selects only Swarm worker-role nodes, and `--all-excluding-self` excludes the manager reached through the current Docker context. Here, “self” is neither `KPL_CONTROL_NODE_ID` nor necessarily the machine running the shell. Selectors cannot be combined or mixed with an explicit node list.
+
+Automatic deployment/addition selects Linux, Ready, Active nodes and reports skipped nodes. Automatic removal selects only matching nodes already labeled for this stack and fails on unavailable targets instead of skipping them. An empty selection fails. Deployment/addition preserves existing labels; bare `deploy` reuses them. Selectors are evaluated for each command, so run the command again to select newly joined nodes. See the [node selection rules](docs/swarm.md#add-and-remove-agents-from-the-manager).
 
 Keep the same image tag in `.env.swarm`. After building and pushing new code to that tag, run `sh scripts/swarm.sh deploy` again. Each deployment pulls the tag, resolves its current registry digest, and pins that deployment to the digest without rewriting the file. **You do not need to copy a new SHA after each push.** Explicit `repository@sha256:...` references remain supported for a fixed version. Finish active experiments before updating, since replacing Agents stops their Peers. See the [Swarm image update workflow](docs/swarm.md#update-an-image-using-the-same-tag).
 
