@@ -9,14 +9,30 @@ import (
 	"github.com/k-p2p-lab/v3/internal/model"
 )
 
+const (
+	containerCleanupTimeout = 2 * time.Minute
+	// An in-flight create may need its remaining 45 seconds to return the
+	// daemon's container ID before its independent cleanup can begin.
+	containerStopTimeout = 175 * time.Second
+)
+
 // A Docker create runs outside Server.mu: peers report status during startup,
 // and stop-all must be able to fence/cancel a create while the daemon is busy.
-func (s *Server) runDockerProcess(ctx context.Context, proc *process, config []byte) {
+func (s *Server) runDockerProcess(ctx context.Context, proc *process, config []byte, lifetime string) {
+	defer proc.cancel()
 	s.mu.RLock()
 	node := proc.node
 	s.mu.RUnlock()
 	createCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-	id, apiURL, err := s.docker.create(createCtx, node, config)
+	id, apiURL, err := s.docker.createWithAdmission(createCtx, node, config, func() {
+		// Match v2's ServiceCreate admission boundary. Docker CLI/daemon create
+		// latency must not consume a peer's lifetime before it exists. Copy,
+		// startup and bootstrap still consume lifetime, as scheduling did in v2.
+		s.mu.Lock()
+		setProcessMetadata(proc, "containerCreatedAt", time.Now().UTC().Format(time.RFC3339Nano))
+		s.mu.Unlock()
+		scheduleLifetimeStop(ctx, lifetime, func() { _ = s.stopNode(node.ID) })
+	})
 	cancel()
 	if err != nil {
 		var cleanupErr error
@@ -37,12 +53,13 @@ func (s *Server) runDockerProcess(ctx context.Context, proc *process, config []b
 		metadata[key] = value
 	}
 	metadata["containerId"] = id
+	metadata["containerStartedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
 	proc.node.Metadata = metadata
 	s.mu.Unlock()
 	err = s.docker.wait(ctx, id)
 	// Killing the Docker CLI does not kill the container. Always ask the daemon
 	// to remove this exact container using an independent cleanup context.
-	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), containerCleanupTimeout)
 	cleanupErr := s.docker.remove(cleanupCtx, id)
 	cleanupCancel()
 	if cleanupErr != nil {
@@ -50,6 +67,17 @@ func (s *Server) runDockerProcess(ctx context.Context, proc *process, config []b
 		s.logger.Error("peer container cleanup failed", "node", node.ID, "container", id, "error", cleanupErr)
 	}
 	s.finishProcess(node.ID, proc, err, cleanupErr)
+}
+
+// Caller holds Server.mu. Clone metadata because previously returned snapshots
+// and the startup configuration may still reference the earlier map.
+func setProcessMetadata(proc *process, key, value string) {
+	metadata := make(map[string]string, len(proc.node.Metadata)+1)
+	for k, v := range proc.node.Metadata {
+		metadata[k] = v
+	}
+	metadata[key] = value
+	proc.node.Metadata = metadata
 }
 
 func (s *Server) beginShutdown() {
@@ -67,7 +95,7 @@ func (s *Server) retryContainerCleanupLocked(proc *process) {
 	proc.done = make(chan struct{})
 	id, nodeID := proc.containerID, proc.node.ID
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), containerCleanupTimeout)
 		defer cancel()
 		err := s.docker.remove(ctx, id)
 		s.finishProcess(nodeID, proc, nil, err)

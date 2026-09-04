@@ -1,6 +1,7 @@
 // Package netem configures outbound network impairments inside an isolated
 // Linux peer container. Callers must never apply these rules in a host network
-// namespace. Control HTTP, telemetry, and other non-P2P traffic bypass netem.
+// namespace. By default control HTTP and telemetry bypass netem; scope all
+// deliberately includes them for whole-interface experiments.
 package netem
 
 import (
@@ -37,6 +38,9 @@ type networkInterface struct {
 func Apply(ctx context.Context, config model.NetworkConfig, p2pPort int) error {
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("network impairment: %w", err)
+	}
+	if config.DelayDistribution != nil {
+		return fmt.Errorf("network impairment: delayDistribution must be resolved to a per-peer delay before applying tc")
 	}
 	if !config.Enabled() {
 		return nil
@@ -105,6 +109,9 @@ func apply(ctx context.Context, config model.NetworkConfig, p2pPort int, interfa
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("network impairment: %w", err)
 	}
+	if config.DelayDistribution != nil {
+		return fmt.Errorf("network impairment: delayDistribution must be resolved to a per-peer delay before applying tc")
+	}
 	if !config.Enabled() {
 		return nil
 	}
@@ -123,7 +130,7 @@ func apply(ctx context.Context, config model.NetworkConfig, p2pPort int, interfa
 		for index, args := range commands(device, config, p2pPort) {
 			output, err := run(ctx, args...)
 			if err != nil {
-				failure := fmt.Errorf("network impairment: tc %s: %w: %s; requires CAP_NET_ADMIN and kernel sch_prio, sch_netem, cls_u32 support", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+				failure := fmt.Errorf("network impairment: tc %s: %w: %s; requires CAP_NET_ADMIN and kernel support for the configured qdiscs (sch_prio, sch_netem, cls_u32, and sch_tbf when enabled)", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 				return errors.Join(failure, rollback(installed, run))
 			}
 			if index == 0 {
@@ -148,6 +155,15 @@ func rollback(devices []string, run commandRunner) error {
 }
 
 func commands(device string, config model.NetworkConfig, p2pPort int) [][]string {
+	if config.Scope == "all" {
+		root := []string{"qdisc", "replace", "dev", device, "root", "handle", "1:", "netem"}
+		root = append(root, options(config)...)
+		result := [][]string{root}
+		if config.TBF != nil {
+			result = append(result, tbfCommand(device, "1:1", "2:", *config.TBF))
+		}
+		return result
+	}
 	// Every unclassified priority goes to band 0 (class 1:1), keeping the
 	// peer's HTTP server and telemetry usable even with lossPercent: 100.
 	root := []string{"qdisc", "replace", "dev", device, "root", "handle", "1:", "prio", "bands", "3", "priomap"}
@@ -157,6 +173,9 @@ func commands(device string, config model.NetworkConfig, p2pPort int) [][]string
 	child := []string{"qdisc", "replace", "dev", device, "parent", "1:3", "handle", "30:", "netem"}
 	child = append(child, options(config)...)
 	result := [][]string{root, child}
+	if config.TBF != nil {
+		result = append(result, tbfCommand(device, "30:1", "31:", *config.TBF))
+	}
 	for index, direction := range []string{"sport", "dport"} {
 		result = append(result, []string{
 			"filter", "add", "dev", device, "protocol", "ip", "parent", "1:", "prio", strconv.Itoa(index + 1), "u32",
@@ -167,6 +186,18 @@ func commands(device string, config model.NetworkConfig, p2pPort int) [][]string
 	return result
 }
 
+func tbfCommand(device, parent, handle string, config model.TBFConfig) []string {
+	latency, _ := time.ParseDuration(config.Latency)
+	// tc's TBF parser uses an unsigned 32-bit microsecond duration and does
+	// not accept netem's nanosecond suffix. Round up to retain the requested
+	// minimum queueing allowance at the parser's microsecond resolution.
+	latencyMicros := (latency + time.Microsecond - 1) / time.Microsecond
+	return []string{"qdisc", "replace", "dev", device, "parent", parent, "handle", handle, "tbf",
+		"rate", strconv.FormatFloat(config.RateMbps, 'f', -1, 64) + "mbit",
+		"burst", strconv.FormatFloat(config.BurstKbit, 'f', -1, 64) + "kbit",
+		"latency", strconv.FormatInt(int64(latencyMicros), 10) + "us"}
+}
+
 func options(config model.NetworkConfig) []string {
 	var args []string
 	delay, _ := time.ParseDuration(config.Delay)
@@ -174,7 +205,16 @@ func options(config model.NetworkConfig) []string {
 	if delay > 0 {
 		args = append(args, "delay", strconv.FormatInt(int64(delay), 10)+"ns")
 		if jitter > 0 {
-			args = append(args, strconv.FormatInt(int64(jitter), 10)+"ns", "distribution", "normal")
+			args = append(args, strconv.FormatInt(int64(jitter), 10)+"ns")
+			distribution := config.JitterDistribution
+			if distribution == "" {
+				distribution = "normal"
+			}
+			// Uniform is netem's built-in default; unlike normal/pareto it
+			// does not require a distribution table installed with iproute2.
+			if distribution != "uniform" {
+				args = append(args, "distribution", distribution)
+			}
 		}
 	}
 	for _, field := range []struct {
@@ -188,6 +228,9 @@ func options(config model.NetworkConfig) []string {
 	} {
 		if field.value != nil && *field.value > 0 {
 			args = append(args, field.name, strconv.FormatFloat(*field.value, 'f', -1, 64)+"%")
+			if field.name == "reorder" && config.ReorderCorrelationPercent != nil {
+				args = append(args, strconv.FormatFloat(*config.ReorderCorrelationPercent, 'f', -1, 64)+"%")
+			}
 		}
 	}
 	if config.RateMbps != nil && *config.RateMbps > 0 {

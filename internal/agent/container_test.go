@@ -161,7 +161,7 @@ func TestDuplicateAgentDoesNotRemoveRunningPeers(t *testing.T) {
 }
 
 func TestContainerFenceCancelsAnInFlightCreate(t *testing.T) {
-	server, path := newContainerTestServer(t, map[string]string{"HANG": "create"})
+	server, path := newContainerTestServer(t, map[string]string{"DELAY": "create", "DELAY_MS": "300"})
 	_, err := server.createNode(context.Background(), model.CreateNodeRequest{ID: "peer", RunID: "run", Group: "workers"})
 	if err != nil {
 		t.Fatal(err)
@@ -175,4 +175,41 @@ func TestContainerFenceCancelsAnInFlightCreate(t *testing.T) {
 	}
 	waitDockerCall(t, path, "rm")
 	waitForNodeState(t, server, "peer", model.NodeStopped)
+}
+
+func TestDockerLifetimeBeginsAfterDaemonAdmission(t *testing.T) {
+	// A zero lifetime is an immediate departure, but only once Docker has
+	// admitted the container. It must not cancel a pending create command.
+	server, path := newContainerTestServer(t, map[string]string{"DELAY": "create", "DELAY_MS": "300"})
+	_, err := server.createNode(context.Background(), model.CreateNodeRequest{
+		ID: "peer", RunID: "run", Group: "workers", Lifetime: "0s",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitDockerCall(t, path, "create")
+	time.Sleep(50 * time.Millisecond)
+	server.mu.RLock()
+	proc := server.processes["peer"]
+	state, admitted := proc.node.State, proc.node.Metadata["containerCreatedAt"]
+	server.mu.RUnlock()
+	if state != model.NodeStarting || admitted != "" {
+		t.Fatalf("lifetime elapsed before daemon admission: state=%s admitted=%s", state, admitted)
+	}
+	server.stopAll()
+	server.waitStopped(5 * time.Second)
+
+	admittedServer, admittedPath := newContainerTestServer(t, map[string]string{"HANG": "cp"})
+	_, err = admittedServer.createNode(context.Background(), model.CreateNodeRequest{
+		ID: "admitted", RunID: "run", Group: "workers", Lifetime: "100ms",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitDockerCall(t, admittedPath, "cp")
+	waitForNodeState(t, admittedServer, "admitted", model.NodeStopped)
+	node := admittedServer.nodes()[0]
+	if node.Metadata["containerCreatedAt"] == "" || node.Metadata["containerStartedAt"] != "" || node.Metadata["lifetimeBasis"] != "container-created" {
+		t.Fatalf("incorrect lifecycle timeline: %v", node.Metadata)
+	}
 }

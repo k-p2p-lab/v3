@@ -12,11 +12,20 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
+	"github.com/libp2p/go-libp2p/p2p/muxer/yamux"
 	connmgr "github.com/libp2p/go-libp2p/p2p/net/connmgr"
+	"github.com/libp2p/go-libp2p/p2p/security/noise"
+	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 )
 
 func hostOptions(config model.NodeConfig) ([]libp2p.Option, error) {
-	options := make([]libp2p.Option, 0, 8)
+	// Keep the v2 transport/security stack explicit: libp2p defaults also
+	// enable TLS and additional transports, changing connection startup costs.
+	options := []libp2p.Option{
+		libp2p.Transport(tcp.NewTCPTransport),
+		libp2p.Security(noise.ID, noise.New),
+		libp2p.Muxer(yamux.ID, yamux.DefaultTransport),
+	}
 	if config.Libp2p.UserAgent != "" {
 		options = append(options, libp2p.UserAgent(config.Libp2p.UserAgent))
 	}

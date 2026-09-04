@@ -3,10 +3,8 @@ package peer
 import (
 	"context"
 	"crypto/ed25519"
-	crand "crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -284,39 +282,42 @@ func (s *Server) handlePublish(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "payload exceeds 16 MiB", http.StatusBadRequest)
 		return
 	}
-	topicName := request.Topic
-	if topicName == "" {
-		topicName = s.config.NodeConfig.GossipSub.Topics[0]
-	}
-	topic, ok := s.topics[topicName]
-	if !ok {
-		http.Error(w, "unknown topic", http.StatusBadRequest)
+	if request.PayloadEncoding != "" && request.PayloadEncoding != "envelope" && request.PayloadEncoding != "raw" {
+		http.Error(w, "payloadEncoding must be envelope or raw", http.StatusBadRequest)
 		return
 	}
-	payload := make([]byte, request.PayloadSize)
-	if _, err := crand.Read(payload); err != nil {
-		http.Error(w, "cannot generate payload", http.StatusInternalServerError)
-		return
-	}
-	now := time.Now().UTC()
-	sequence := s.publishSeq.Add(1)
-	digest := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%d", s.config.Node.ID, now.UnixNano(), sequence)))
-	message := envelope{ID: hex.EncodeToString(digest[:16]), RunID: s.config.Node.RunID, Publisher: s.config.Node.ID, SentAt: now.UnixNano(), Payload: payload}
-	wire, err := json.Marshal(message)
+	topicNames, err := s.publishTopics(request.Topic)
 	if err != nil {
-		http.Error(w, "cannot encode message", http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	publishCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	if err := topic.Publish(publishCtx, wire); err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
+	results := make([]map[string]any, 0, len(topicNames))
+	for _, topicName := range topicNames {
+		message, err := s.preparePublication(request, time.Now().UTC())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := s.topics[topicName].Publish(publishCtx, message.wire); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		targetNodes := request.TargetNodes
+		if perTopic, exists := request.TargetNodesByTopic[topicName]; exists {
+			targetNodes = perTopic
+		}
+		s.telemetry.emit(model.TraceEvent{PeerID: s.host.ID().String(), Type: "publish", MessageID: message.id, Topic: topicName, Timestamp: message.sentAt, Fields: map[string]any{"payloadBytes": request.PayloadSize, "wireBytes": len(message.wire), "payloadEncoding": message.encoding, "targetNodes": targetNodes}})
+		results = append(results, map[string]any{"messageId": message.id, "topic": topicName, "payloadBytes": request.PayloadSize, "wireBytes": len(message.wire), "payloadEncoding": message.encoding})
 	}
-	s.telemetry.emit(model.TraceEvent{PeerID: s.host.ID().String(), Type: "publish", MessageID: message.ID, Topic: topicName, Timestamp: now, Fields: map[string]any{"payloadBytes": request.PayloadSize, "wireBytes": len(wire), "targetNodes": request.TargetNodes}})
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]any{"messageId": message.ID, "topic": topicName, "payloadBytes": request.PayloadSize})
+	if request.Topic != "*" {
+		_ = json.NewEncoder(w).Encode(results[0])
+	} else {
+		_ = json.NewEncoder(w).Encode(map[string]any{"messages": results})
+	}
 }
 
 func (s *Server) consume(ctx context.Context, topic string, sub *pubsub.Subscription) {
@@ -325,64 +326,14 @@ func (s *Server) consume(ctx context.Context, topic string, sub *pubsub.Subscrip
 		if err != nil {
 			return
 		}
-		var payload envelope
-		if err := json.Unmarshal(message.Data, &payload); err != nil {
-			s.telemetry.emit(model.TraceEvent{PeerID: s.host.ID().String(), Type: "reject", Topic: topic, Timestamp: time.Now().UTC(), Fields: map[string]any{"reason": "invalid-envelope"}})
-			continue
+		if event, ok := s.deliveryEvent(message.Data, topic, message.ReceivedFrom.String(), time.Now().UTC()); ok {
+			s.telemetry.emit(event)
 		}
-		if payload.RunID != s.config.Node.RunID {
-			continue
-		}
-		now := time.Now().UTC()
-		latency := float64(now.UnixNano()-payload.SentAt) / float64(time.Millisecond)
-		fields := map[string]any{"publisher": payload.Publisher, "payloadBytes": len(payload.Payload)}
-		if latency < 0 {
-			fields["clockSkewDetected"] = true
-		}
-		s.telemetry.emit(model.TraceEvent{PeerID: s.host.ID().String(), Type: "deliver", MessageID: payload.ID, RemotePeerID: message.ReceivedFrom.String(), Topic: topic, Timestamp: now, LatencyMS: latency, Fields: fields})
 	}
 }
 
 func (s *Server) connectBootstrap(ctx context.Context) error {
-	bootstrapTimeout, _ := time.ParseDuration(s.config.NodeConfig.Kademlia.BootstrapTimeout)
-	retryInterval, _ := time.ParseDuration(s.config.NodeConfig.Kademlia.BootstrapRetryInterval)
-	dialTimeout := 5 * time.Second
-	if s.config.NodeConfig.Libp2p.DialTimeout != "" {
-		dialTimeout, _ = time.ParseDuration(s.config.NodeConfig.Libp2p.DialTimeout)
-	}
-	deadline := time.NewTimer(bootstrapTimeout)
-	defer deadline.Stop()
-	for {
-		nodes, err := s.fetchBootstrap(ctx)
-		if err == nil {
-			connected := 0
-			for _, node := range nodes {
-				if node.PeerID == s.host.ID().String() {
-					continue
-				}
-				info, err := addrInfo(node)
-				if err != nil {
-					continue
-				}
-				connectCtx, cancel := context.WithTimeout(ctx, dialTimeout)
-				err = s.host.Connect(connectCtx, info)
-				cancel()
-				if err == nil {
-					connected++
-				}
-			}
-			if s.config.Node.Role == "boot" || connected > 0 {
-				return nil
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline.C:
-			return fmt.Errorf("no reachable bootstrap node after %s", bootstrapTimeout)
-		case <-time.After(retryInterval):
-		}
-	}
+	return connectBootstrapPeers(ctx, s.config, s.host.ID(), s.fetchBootstrap, s.host.Connect)
 }
 
 func (s *Server) fetchBootstrap(ctx context.Context) ([]bootstrapNode, error) {

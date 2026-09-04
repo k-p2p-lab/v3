@@ -19,7 +19,35 @@ func (t *gossipTracer) Trace(event *pubsubpb.TraceEvent) {
 		return
 	}
 	trace := model.TraceEvent{PeerID: t.peerID, Timestamp: time.Now().UTC()}
+	if event.GetTimestamp() > 0 {
+		trace.Timestamp = time.Unix(0, event.GetTimestamp()).UTC()
+	}
 	switch event.GetType() {
+	case pubsubpb.TraceEvent_ADD_PEER:
+		if event.AddPeer == nil {
+			return
+		}
+		trace.Type = "add_peer"
+		trace.RemotePeerID = peerID(event.AddPeer.PeerID)
+		trace.Fields = map[string]any{"protocol": event.AddPeer.GetProto()}
+	case pubsubpb.TraceEvent_REMOVE_PEER:
+		if event.RemovePeer == nil {
+			return
+		}
+		trace.Type = "remove_peer"
+		trace.RemotePeerID = peerID(event.RemovePeer.PeerID)
+	case pubsubpb.TraceEvent_JOIN:
+		if event.Join == nil {
+			return
+		}
+		trace.Type = "join"
+		trace.Topic = event.Join.GetTopic()
+	case pubsubpb.TraceEvent_LEAVE:
+		if event.Leave == nil {
+			return
+		}
+		trace.Type = "leave"
+		trace.Topic = event.Leave.GetTopic()
 	case pubsubpb.TraceEvent_DUPLICATE_MESSAGE:
 		if event.DuplicateMessage == nil {
 			return

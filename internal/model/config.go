@@ -276,6 +276,20 @@ func (c NodeConfig) Merge(overlay NodeConfig) NodeConfig {
 	if overlay.Kademlia.ProtocolPrefix != "" && overlay.Kademlia.ProtocolID == "" {
 		c.Kademlia.ProtocolID = ""
 	}
+	// Switching network delay/shaper modes replaces the inherited alternative.
+	// Explicitly supplying both in one overlay remains invalid during Validate.
+	if overlay.Network.Delay != "" && overlay.Network.DelayDistribution == nil {
+		c.Network.DelayDistribution = nil
+	}
+	if overlay.Network.DelayDistribution != nil && overlay.Network.Delay == "" {
+		c.Network.Delay = ""
+	}
+	if overlay.Network.TBF != nil && overlay.Network.RateMbps == nil {
+		c.Network.RateMbps = nil
+	}
+	if overlay.Network.RateMbps != nil && overlay.Network.TBF == nil {
+		c.Network.TBF = nil
+	}
 	base := reflect.ValueOf(&c).Elem()
 	mergeNonZero(base, reflect.ValueOf(overlay))
 	return c

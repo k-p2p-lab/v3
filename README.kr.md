@@ -97,7 +97,7 @@ version: 2
 name: mixed-workers
 seed: 42
 onExit: cancel
-jobShutdownTimeout: 30s
+jobShutdownTimeout: 3m
 
 profiles:
   tuned-mesh:
@@ -164,7 +164,7 @@ RandomSub에서 `randomDegree`는 libp2p의 process-global `RandomSubD`를 통�
 
 ### 노드별 네트워크 조건
 
-Docker 런타임에서는 profile 또는 join 단계의 `node` 블록에 `network`를 추가할 수 있습니다. Linux `tc netem`은 각 Peer 컨테이너 안에서 출발지 또는 목적지 포트가 `20000`인 송신 P2P TCP 패킷에만 설정을 적용합니다. Controller, Agent, Peer의 HTTP 제어 트래픽에는 적용하지 않습니다. `delay`는 편도 egress 추가 지연이며 왕복 지연의 목표값이 아닙니다.
+Docker 런타임에서는 profile 또는 join 단계의 `node` 블록에 `network`를 추가할 수 있습니다. 기본 `scope: p2p`는 각 Peer 컨테이너 안에서 포트 `20000`의 송신 P2P TCP에만 적용합니다. v2처럼 제어 API·telemetry까지 포함한 전체 송신을 제한하려면 `scope: all`을 지정하십시오. `delay`는 편도 egress 추가 지연이며 왕복 지연의 목표값이 아닙니다.
 
 ```yaml
 node:
@@ -185,6 +185,13 @@ node:
 | `lossPercent`, `duplicatePercent`, `corruptPercent`, `reorderPercent` | `0`~`100` 범위의 패킷 비율입니다. 재정렬에는 양수 delay가 필요합니다. |
 | `rateMbps` | 음수가 아닌 송신 속도 제한(Mbps)입니다. `0`은 속도 제한을 해제합니다. |
 | `queueLimit` | netem 큐의 최대 패킷 수이며 양의 정수입니다. |
+| `scope` | `p2p`(기본) 또는 `all` 송신 트래픽입니다. |
+| `delayDistribution` | interval과 같은 분포 형식으로 피어별 기본 지연을 한 번 추출합니다. `delay`와 배타적입니다. |
+| `jitterDistribution` | `normal`(기본), `uniform`(v2 방식), `pareto`, `paretonormal`입니다. |
+| `reorderCorrelationPercent` | 재정렬 상관계수이며 v2의 `reorder.chance`에 대응합니다. |
+| `tbf` | `rateMbps`, `burstKbit`, `latency`로 token bucket을 설정합니다. 양수 netem `rateMbps`와 배타적입니다. |
+
+v2 실험을 옮기실 때는 [재현 검토와 설정 대응표](docs/v2-reproduction.md), [churn 예제](examples/v2-churn.yaml)를 참고하십시오. 여기에는 `placement`, `agentId`, `onError: continue`, 정확한 PubSub 데이터 크기를 위한 `payloadEncoding: raw`, 전체 topic 발행을 위한 `topic: '*'`의 사용법과 남은 차이가 정리되어 있습니다.
 
 네트워크 조건을 적용하는 Peer에는 Linux `NET_ADMIN`과 호스트 커널의 `sch_netem` 지원이 필요합니다. Docker 런타임은 해당 Peer에만 `NET_ADMIN`을 추가합니다. 커널 지원이 없거나 `tc` 명령이 실패하면 노드 시작도 명시적인 오류로 실패합니다. process 런타임 Agent는 공유 호스트 인터페이스를 변경하지 않으며 네트워크 조건이 있는 요청을 거부합니다.
 
@@ -216,7 +223,7 @@ curl -X POST http://localhost:8080/api/v1/experiments \
 
 phase 목록이 자연스럽게 끝났을 때 background job을 처리하는 방식은 최상위 `onExit`으로 결정합니다. 기본값 `cancel`은 남은 job을 취소한 다음 종료될 때까지 기다립니다. `onExit: drain`은 job이 자연스럽게 완료될 때까지 기다립니다. 자연스럽게 성공한 실행에서는 이 job 정책만 적용하며, 명시적인 `stop-all` phase가 없으면 Peer 프로세스는 계속 실행됩니다.
 
-`jobShutdownTimeout`의 기본값은 `30s`입니다. 사용자 또는 API 요청이 scenario를 취소하거나 phase 또는 background job이 실패하면 Controller는 남은 job을 취소하고 이 제한 안에서 종료를 기다린 뒤, 모든 Agent에 현재 generation까지 generation fence를 설정하고 Peer를 정리하도록 요청합니다. 명시적인 `stop-all`도 같은 제한 시간 내 job 종료를 적용하고 job 추적 상태를 초기화한 뒤 현재 run generation을 fence로 설정합니다. Agent는 일치하는 프로세스를 종료하기 전에 단조 증가하는 fence를 기록합니다. 따라서 generation N의 늦은 create는 fence보다 먼저 완료되어 cleanup에 포함되거나, generation이 fence 이하이므로 거부됩니다. `stop-all`이 성공하면 scenario는 generation N+1로 진행하므로 이후 phase에서 같은 run ID로 새 노드를 만들고 job ID도 다시 사용할 수 있습니다.
+`jobShutdownTimeout`의 기본값은 `3m`입니다. 사용자 또는 API 요청이 scenario를 취소하거나 phase 또는 background job이 실패하면 Controller는 남은 job을 취소하고 이 제한 안에서 종료를 기다린 뒤, 모든 Agent에 현재 generation까지 generation fence를 설정하고 Peer를 정리하도록 요청합니다. 명시적인 `stop-all`도 같은 제한 시간 내 job 종료를 적용하고 job 추적 상태를 초기화한 뒤 현재 run generation을 fence로 설정합니다. Agent는 일치하는 프로세스를 종료하기 전에 단조 증가하는 fence를 기록합니다. 따라서 generation N의 늦은 create는 fence보다 먼저 완료되어 cleanup에 포함되거나, generation이 fence 이하이므로 거부됩니다. `stop-all`이 성공하면 scenario는 generation N+1로 진행하므로 이후 phase에서 같은 run ID로 새 노드를 만들고 job ID도 다시 사용할 수 있습니다.
 
 `wait-ready`는 실패, 종료 중, 종료된 노드를 포함하여 현재 run generation에서 조건에 맞는 전체 cohort를 검사하며 이전 generation의 노드는 무시합니다. cohort에 실패한 노드가 하나라도 있으면 barrier는 성공하지 않으며, 준비 상태로 보고된 노드도 해당 Agent가 online일 때만 ready 수에 포함됩니다. 이 cohort 역시 지금까지 관측된 노드로만 구성되므로 `await: false` join 다음의 `wait-ready`에는 `jobs: [job-id]` 또는 `minCount` 중 하나가 필요합니다. `jobs`는 지정 producer job이 완료된 뒤 readiness를 검사합니다. `minCount`는 producer를 계속 실행하면서 일부만 생성된 그룹이 준비율을 너무 일찍 만족하지 못하게 합니다.
 

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -170,11 +171,15 @@ func (s *Server) Run(ctx context.Context) error {
 	defer listener.Close()
 	if s.docker != nil {
 		checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		if err := s.docker.check(checkCtx); err != nil {
+		err := s.docker.check(checkCtx)
+		cancel()
+		if err != nil {
 			return fmt.Errorf("Docker runtime: %w", err)
 		}
-		if err := s.docker.removeAgentContainers(checkCtx, s.config.ID); err != nil {
+		cleanupCtx, cleanupCancel := context.WithTimeout(ctx, containerStopTimeout)
+		err = s.docker.removeAgentContainers(cleanupCtx, s.config.ID)
+		cleanupCancel()
+		if err != nil {
 			return fmt.Errorf("clean up previous peer containers: %w", err)
 		}
 	}
@@ -182,10 +187,10 @@ func (s *Server) Run(ctx context.Context) error {
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      3 * time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
-	defer func() { s.beginShutdown(); s.waitStopped(25 * time.Second) }()
+	defer func() { s.beginShutdown(); s.waitStopped(containerStopTimeout) }()
 	go s.controlLoop(ctx)
 	go func() {
 		<-ctx.Done()
@@ -289,6 +294,12 @@ func (s *Server) createNode(ctx context.Context, request model.CreateNodeRequest
 	if resolvedConfig.Network.Enabled() && s.config.Runtime != "docker" {
 		return model.Node{}, fmt.Errorf("network conditions require the docker runtime; process mode cannot isolate network changes")
 	}
+	requestedNetwork, _ := json.Marshal(resolvedConfig.Network)
+	networkConfig, err := resolvedConfig.Network.Resolve(rand.New(rand.NewSource(request.Seed)))
+	if err != nil {
+		return model.Node{}, fmt.Errorf("resolve peer network conditions: %w", err)
+	}
+	resolvedConfig.Network = networkConfig
 	s.mu.Lock()
 	if s.shuttingDown {
 		s.mu.Unlock()
@@ -354,6 +365,15 @@ func (s *Server) createNode(ctx context.Context, request model.CreateNodeRequest
 	}
 	networkJSON, _ := json.Marshal(resolvedConfig.Network)
 	node.Metadata["network"] = string(networkJSON)
+	node.Metadata["networkRequested"] = string(requestedNetwork)
+	node.Metadata["seed"] = strconv.FormatInt(request.Seed, 10)
+	if request.Lifetime != "" {
+		node.Metadata["lifetime"] = request.Lifetime
+		node.Metadata["lifetimeBasis"] = "process-started"
+		if s.config.Runtime == "docker" {
+			node.Metadata["lifetimeBasis"] = "container-created"
+		}
+	}
 	peerConfig := model.PeerProcessConfig{
 		Runtime:       s.config.Runtime,
 		Node:          node,
@@ -382,8 +402,7 @@ func (s *Server) createNode(ctx context.Context, request model.CreateNodeRequest
 		proc := &process{node: node, configPath: configPath, cancel: cancel, done: make(chan struct{})}
 		s.processes[request.ID] = proc
 		s.mu.Unlock()
-		go s.runDockerProcess(processCtx, proc, data)
-		scheduleLifetimeStop(processCtx, request.Lifetime, func() { _ = s.stopNode(request.ID) })
+		go s.runDockerProcess(processCtx, proc, data, request.Lifetime)
 		return node, nil
 	}
 	commandContext := s.commandContext
@@ -506,6 +525,7 @@ func (s *Server) finishProcess(nodeID string, proc *process, runErr, cleanupErr 
 	current, ok := s.processes[nodeID]
 	if ok && current == proc {
 		current.node.LastSeen = time.Now().UTC()
+		setProcessMetadata(current, "stoppedAt", current.node.LastSeen.Format(time.RFC3339Nano))
 		if cleanupErr == nil && (current.node.State == model.NodeStopping || runErr == nil) {
 			current.node.State = model.NodeStopped
 			current.node.Error = ""
@@ -542,6 +562,9 @@ func (s *Server) stopNode(nodeID string) error {
 	}
 	proc.node.State = model.NodeStopping
 	proc.node.LastSeen = time.Now().UTC()
+	if proc.node.Metadata["stopRequestedAt"] == "" {
+		setProcessMetadata(proc, "stopRequestedAt", proc.node.LastSeen.Format(time.RFC3339Nano))
+	}
 	cancel := proc.cancel
 	s.mu.Unlock()
 	cancel()
@@ -591,6 +614,9 @@ func (s *Server) stopRunGeneration(runID string, generation uint64) {
 		}
 		proc.node.State = model.NodeStopping
 		proc.node.LastSeen = now
+		if proc.node.Metadata["stopRequestedAt"] == "" {
+			setProcessMetadata(proc, "stopRequestedAt", now.Format(time.RFC3339Nano))
+		}
 		if proc.cancel != nil {
 			cancels = append(cancels, proc.cancel)
 		}
@@ -616,6 +642,9 @@ func (s *Server) updateNode(update model.Node) error {
 	// Keep it starting until Agent can actually route publish requests to it.
 	if update.State != model.NodeReady || proc.apiURL != "" || s.config.Runtime != "docker" {
 		proc.node.State = update.State
+	}
+	if proc.node.State == model.NodeReady && proc.node.Metadata["readyAt"] == "" {
+		setProcessMetadata(proc, "readyAt", time.Now().UTC().Format(time.RFC3339Nano))
 	}
 	proc.node.Addresses = append([]string(nil), update.Addresses...)
 	proc.node.ConnectedPeers = append([]string(nil), update.ConnectedPeers...)

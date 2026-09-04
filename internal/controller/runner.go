@@ -112,7 +112,7 @@ func (s *Server) runScenario(parentCtx context.Context, experiment model.Experim
 	jobs := newPhaseJobs()
 	shutdownTimeout, _ := time.ParseDuration(spec.JobShutdownTimeout)
 	if shutdownTimeout <= 0 {
-		shutdownTimeout = 30 * time.Second
+		shutdownTimeout = 3 * time.Minute
 	}
 
 	var asyncMu sync.Mutex
@@ -339,9 +339,21 @@ func (s *Server) runJoin(ctx context.Context, runID string, generation uint64, p
 		})
 	}
 	delays := sampleDelays(rng, phase.Interval, phase.Count)
+	agentID := phase.AgentID
+	if agentID == "" && phase.Placement == "single-agent" {
+		var err error
+		agentID, err = s.selectBatchAgent(ctx, rng)
+		if err != nil {
+			return err
+		}
+	}
 	return runOperations(ctx, phase.Count, phase.Parallel, phase.Parallelism, delays, false, func(operationCtx context.Context, i int) error {
 		request := requests[i]
-		agent, err := s.acquireAgent(operationCtx, request.ID)
+		var placementRNG *rand.Rand
+		if phase.Placement == "random" && agentID == "" {
+			placementRNG = rand.New(rand.NewSource(request.Seed))
+		}
+		agent, err := s.acquireAgentWithPlacement(operationCtx, request.ID, agentID, placementRNG)
 		if err != nil {
 			return err
 		}
@@ -386,21 +398,23 @@ func (s *Server) waitReadyUntil(ctx context.Context, runID string, generation ui
 }
 
 func (s *Server) runPublish(ctx context.Context, runID string, phase scenario.Phase, rng *rand.Rand) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	candidates := s.matchingNodes(runID, phase.Group, model.NodeReady, phase.NodeType)
 	nodes := make([]model.Node, 0, len(candidates))
 	for _, node := range candidates {
 		if !s.nodeAgentOnline(node) {
 			continue
 		}
-		topic := phase.Topic
-		if topic == "" {
-			topic = nodeDefaultTopic(node)
-		}
-		if nodeCanPublishTopic(node, topic) {
+		if len(nodePublishTopics(node, phase.Topic)) > 0 {
 			nodes = append(nodes, node)
 		}
 	}
 	if len(nodes) == 0 {
+		if phase.OnError == "continue" {
+			return nil
+		}
 		return fmt.Errorf("no publish-capable ready nodes in group %q for topic %q", phase.Group, phase.Topic)
 	}
 	rng.Shuffle(len(nodes), func(i, j int) { nodes[i], nodes[j] = nodes[j], nodes[i] })
@@ -413,49 +427,68 @@ func (s *Server) runPublish(ctx context.Context, runID string, phase scenario.Ph
 		node := nodes[i]
 		agent, ok := s.agent(node.AgentID)
 		if !ok || agent.State != model.AgentOnline {
-			return fmt.Errorf("agent %q for node %q is unavailable", node.AgentID, node.ID)
+			return s.phaseOperationError(operationCtx, runID, phase, node, "", fmt.Errorf("agent %q for node %q is unavailable", node.AgentID, node.ID))
 		}
 		topic := phase.Topic
 		if topic == "" {
 			topic = nodeDefaultTopic(node)
 		}
-		targetNodes := s.topicReachTargetCount(runID, topic, node.ID)
-		request := model.PublishRequest{RunID: runID, Topic: topic, PayloadSize: phase.PayloadSize, TargetNodes: targetNodes}
+		request := model.PublishRequest{RunID: runID, Topic: topic, PayloadSize: phase.PayloadSize, PayloadEncoding: phase.PayloadEncoding}
+		if topic == "*" {
+			request.TargetNodesByTopic = make(map[string]int)
+			for _, configuredTopic := range nodePublishTopics(node, topic) {
+				request.TargetNodesByTopic[configuredTopic] = s.topicReachTargetCount(runID, configuredTopic, node.ID)
+			}
+		} else {
+			request.TargetNodes = s.topicReachTargetCount(runID, topic, node.ID)
+		}
 		path := "/api/v1/nodes/" + node.ID + "/publish"
 		if err := s.callAgent(operationCtx, agent.URL, http.MethodPost, path, request, nil); err != nil {
-			return fmt.Errorf("publish through node %s: %w", node.ID, err)
+			return s.phaseOperationError(operationCtx, runID, phase, node, topic, fmt.Errorf("publish through node %s on topic %q: %w", node.ID, topic, err))
 		}
 		return nil
 	})
 }
 
 func (s *Server) runLeave(ctx context.Context, runID string, phase scenario.Phase, rng *rand.Rand) error {
-	return s.stopNodes(ctx, runID, phase.Group, phase.NodeType, phase.Count, rng, phase.Interval, phase.Parallel, phase.Parallelism)
+	return s.stopNodesWithPolicy(ctx, runID, phase, rng)
 }
 
 func (s *Server) stopNodes(ctx context.Context, runID, group, nodeType string, count int, rng *rand.Rand, interval scenario.Distribution, parallel bool, parallelism int) error {
-	nodes := s.matchingNodes(runID, group, "", nodeType)
+	return s.stopNodesWithPolicy(ctx, runID, scenario.Phase{Action: "leave", Group: group, NodeType: nodeType, Count: count, Interval: interval, Parallel: parallel, Parallelism: parallelism}, rng)
+}
+
+func (s *Server) stopNodesWithPolicy(ctx context.Context, runID string, phase scenario.Phase, rng *rand.Rand) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	nodes := s.matchingNodes(runID, phase.Group, "", phase.NodeType)
 	rng.Shuffle(len(nodes), func(i, j int) { nodes[i], nodes[j] = nodes[j], nodes[i] })
+	count := phase.Count
 	if count <= 0 || count > len(nodes) {
 		count = len(nodes)
 	}
-	delays := sampleDelays(rng, interval, count)
+	delays := sampleDelays(rng, phase.Interval, count)
 	var stopErrorsMu sync.Mutex
 	var stopErrors []error
-	operationErr := runOperations(ctx, count, parallel, parallelism, delays, false, func(operationCtx context.Context, i int) error {
+	recordFailure := func(operationCtx context.Context, node model.Node, err error) error {
+		if phase.OnError == "continue" || operationCtx.Err() != nil {
+			return s.phaseOperationError(operationCtx, runID, phase, node, "", err)
+		}
+		// The default policy still attempts every selected delete before failing.
+		stopErrorsMu.Lock()
+		stopErrors = append(stopErrors, err)
+		stopErrorsMu.Unlock()
+		return nil
+	}
+	operationErr := runOperations(ctx, count, phase.Parallel, phase.Parallelism, delays, false, func(operationCtx context.Context, i int) error {
 		node := nodes[i]
 		agent, ok := s.agent(node.AgentID)
 		if !ok {
-			stopErrorsMu.Lock()
-			stopErrors = append(stopErrors, fmt.Errorf("stop node %s: agent %q is unavailable", node.ID, node.AgentID))
-			stopErrorsMu.Unlock()
-			return nil
+			return recordFailure(operationCtx, node, fmt.Errorf("stop node %s: agent %q is unavailable", node.ID, node.AgentID))
 		}
 		if err := s.callAgent(operationCtx, agent.URL, http.MethodDelete, "/api/v1/nodes/"+node.ID, nil, nil); err != nil {
-			stopErrorsMu.Lock()
-			stopErrors = append(stopErrors, fmt.Errorf("stop node %s: %w", node.ID, err))
-			stopErrorsMu.Unlock()
-			return nil
+			return recordFailure(operationCtx, node, fmt.Errorf("stop node %s: %w", node.ID, err))
 		}
 		s.markNodeStoppingAndReleaseCapacity(node.ID)
 		return nil
@@ -464,6 +497,24 @@ func (s *Server) stopNodes(ctx context.Context, runID, group, nodeType string, c
 		stopErrors = append(stopErrors, operationErr)
 	}
 	return errors.Join(stopErrors...)
+}
+
+func (s *Server) phaseOperationError(ctx context.Context, runID string, phase scenario.Phase, node model.Node, topic string, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if phase.OnError != "continue" {
+		return err
+	}
+	event := model.TraceEvent{
+		RunID: runID, NodeID: node.ID, AgentID: node.AgentID, Topic: topic,
+		Type:   "phase-operation-failed",
+		Fields: map[string]any{"phase": phase.Name, "job": phase.Job, "action": phase.Action, "error": err.Error()},
+	}
+	if persistErr := s.state.appendEvents(model.EventBatch{Events: []model.TraceEvent{event}}); persistErr != nil {
+		return fmt.Errorf("record phase operation failure: %w", errors.Join(err, persistErr))
+	}
+	return nil
 }
 
 // stopRunGeneration is the stop-all transaction boundary. Each Agent records
@@ -558,10 +609,17 @@ func (s *Server) refreshAgentState(ctx context.Context) error {
 }
 
 func (s *Server) acquireAgent(ctx context.Context, nodeID string) (model.Agent, error) {
+	return s.acquireAgentWithPlacement(ctx, nodeID, "", nil)
+}
+
+func (s *Server) acquireAgentWithPlacement(ctx context.Context, nodeID, agentID string, rng *rand.Rand) (model.Agent, error) {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if agent, ok := s.tryReserveAgent(nodeID); ok {
+		if err := ctx.Err(); err != nil {
+			return model.Agent{}, err
+		}
+		if agent, ok := s.tryReserveAgentWithPlacement(nodeID, agentID, rng); ok {
 			return agent, nil
 		}
 		select {
@@ -573,14 +631,21 @@ func (s *Server) acquireAgent(ctx context.Context, nodeID string) (model.Agent, 
 }
 
 func (s *Server) tryReserveAgent(nodeID string) (model.Agent, bool) {
+	return s.tryReserveAgentWithPlacement(nodeID, "", nil)
+}
+
+func (s *Server) tryReserveAgentWithPlacement(nodeID, targetAgentID string, rng *rand.Rand) (model.Agent, bool) {
 	s.state.mu.Lock()
 	defer s.state.mu.Unlock()
 	if agentID, exists := s.state.reservations[nodeID]; exists {
 		agent, ok := s.state.agents[agentID]
-		return agent, ok && agent.State == model.AgentOnline
+		return agent, ok && agent.State == model.AgentOnline && (targetAgentID == "" || agentID == targetAgentID)
 	}
 	var candidates []model.Agent
 	for _, agent := range s.state.agents {
+		if targetAgentID != "" && agent.ID != targetAgentID {
+			continue
+		}
 		if agent.State == model.AgentOnline && (agent.Capacity <= 0 || agent.ActiveNodes < agent.Capacity) {
 			candidates = append(candidates, agent)
 		}
@@ -589,6 +654,9 @@ func (s *Server) tryReserveAgent(nodeID string) (model.Agent, bool) {
 		return model.Agent{}, false
 	}
 	sort.Slice(candidates, func(i, j int) bool {
+		if rng != nil {
+			return candidates[i].ID < candidates[j].ID
+		}
 		left, right := utilization(candidates[i]), utilization(candidates[j])
 		if left == right {
 			return candidates[i].ID < candidates[j].ID
@@ -596,10 +664,42 @@ func (s *Server) tryReserveAgent(nodeID string) (model.Agent, bool) {
 		return left < right
 	})
 	selected := candidates[0]
+	if rng != nil {
+		selected = candidates[rng.Intn(len(candidates))]
+	}
 	selected.ActiveNodes++
 	s.state.agents[selected.ID] = selected
 	s.state.reservations[nodeID] = selected.ID
 	return selected, true
+}
+
+// A single-agent join picks its target once, then waits for that Agent's
+// capacity for every replica rather than spilling the batch to other Agents.
+func (s *Server) selectBatchAgent(ctx context.Context, rng *rand.Rand) (string, error) {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		s.state.mu.RLock()
+		var candidates []string
+		for _, agent := range s.state.agents {
+			if agent.State == model.AgentOnline && (agent.Capacity <= 0 || agent.ActiveNodes < agent.Capacity) {
+				candidates = append(candidates, agent.ID)
+			}
+		}
+		s.state.mu.RUnlock()
+		if len(candidates) > 0 {
+			sort.Strings(candidates)
+			return candidates[rng.Intn(len(candidates))], nil
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func utilization(agent model.Agent) float64 {
@@ -792,6 +892,35 @@ func nodeCanPublishTopic(node model.Node, topic string) bool {
 	return nodeHasTopic(node, topic)
 }
 
+func nodePublishTopics(node model.Node, requested string) []string {
+	if requested != "*" {
+		if requested == "" {
+			requested = nodeDefaultTopic(node)
+		}
+		if nodeCanPublishTopic(node, requested) {
+			return []string{requested}
+		}
+		return nil
+	}
+	configured := nodeTopics(node)
+	if len(configured) == 0 {
+		configured = []string{"kpl/default"}
+	}
+	unique := make(map[string]struct{}, len(configured))
+	for _, topic := range configured {
+		topic = strings.TrimSpace(topic)
+		if topic != "" && nodeCanPublishTopic(node, topic) {
+			unique[topic] = struct{}{}
+		}
+	}
+	topics := make([]string, 0, len(unique))
+	for topic := range unique {
+		topics = append(topics, topic)
+	}
+	sort.Strings(topics)
+	return topics
+}
+
 func nodeSubscribesToTopic(node model.Node, topic string) bool {
 	if !nodeFeatureEnabled(node, "pubsubEnabled", node.Type != "boot" && node.Type != "dht-only") {
 		return false
@@ -884,12 +1013,20 @@ func publishDelays(rng *rand.Rand, distribution scenario.Distribution, count int
 }
 
 func runOperations(ctx context.Context, count int, parallel bool, parallelism int, delays []time.Duration, delayParallel bool, operation func(context.Context, int) error) error {
-	if !parallel {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// A batch with one dispatch slot has stable request order. Parallel join
+	// and leave ignore interval; their serial dispatch must do so as well.
+	if !parallel || parallelism == 1 && !delayParallel {
 		for i := 0; i < count; i++ {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if err := operation(ctx, i); err != nil {
 				return err
 			}
-			if i+1 < count && i < len(delays) {
+			if !parallel && i+1 < count && i < len(delays) {
 				if err := sleepContext(ctx, delays[i]); err != nil {
 					return err
 				}
@@ -970,7 +1107,7 @@ func (s *Server) callAgent(ctx context.Context, baseURL, method, path string, in
 		// Removing Docker namespaces/filesystems can exceed the ordinary 10s
 		// control request timeout. The scenario context still bounds cleanup.
 		cleanupClient := *s.client
-		cleanupClient.Timeout = 30 * time.Second
+		cleanupClient.Timeout = 3 * time.Minute
 		client = &cleanupClient
 	}
 	resp, err := client.Do(req)

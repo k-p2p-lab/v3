@@ -306,7 +306,10 @@ func calculateMetrics(nodes []model.Node, experiments []model.Experiment, events
 		case "publish":
 			result.Published++
 			if event.MessageID != "" {
-				reached[event.MessageID] = map[string]struct{}{event.NodeID: {}}
+				if reached[event.MessageID] == nil {
+					reached[event.MessageID] = make(map[string]struct{})
+				}
+				reached[event.MessageID][event.NodeID] = struct{}{}
 				published[event.MessageID] = struct{}{}
 				if count := numberField(event.Fields, "targetNodes"); count > 0 {
 					targets[event.MessageID] = count

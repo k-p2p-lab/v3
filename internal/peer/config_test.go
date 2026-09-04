@@ -14,9 +14,47 @@ import (
 	corehost "github.com/libp2p/go-libp2p/core/host"
 	corepeer "github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/libp2p/go-libp2p/p2p/muxer/yamux"
+	"github.com/libp2p/go-libp2p/p2p/security/noise"
 )
 
 type discardEventTracer struct{}
+
+func TestHostOptionsPreserveV2TCPNoiseYamuxStack(t *testing.T) {
+	options, err := hostOptions(model.NodeConfig{}.WithDefaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config libp2p.Config
+	if err := config.Apply(options...); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Transports) != 1 || len(config.SecurityTransports) != 1 || config.SecurityTransports[0].ID != noise.ID || len(config.Muxers) != 1 || config.Muxers[0].ID != yamux.ID {
+		t.Fatalf("v2 transport stack was changed: transports=%d security=%v muxers=%v", len(config.Transports), config.SecurityTransports, config.Muxers)
+	}
+	createHost := func() corehost.Host {
+		h, err := libp2p.New(append(options, libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"), libp2p.DisableMetrics())...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = h.Close() })
+		return h
+	}
+	first, second := createHost(), createHost()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := first.Connect(ctx, corepeer.AddrInfo{ID: second.ID(), Addrs: second.Addrs()}); err != nil {
+		t.Fatal(err)
+	}
+	connections := first.Network().ConnsToPeer(second.ID())
+	if len(connections) == 0 {
+		t.Fatal("hosts did not connect")
+	}
+	state := connections[0].ConnState()
+	if state.Security != noise.ID || state.StreamMultiplexer != yamux.ID || state.Transport != "tcp" {
+		t.Fatalf("negotiated unexpected stack: %+v", state)
+	}
+}
 
 func (discardEventTracer) Trace(*pubsubpb.TraceEvent) {}
 

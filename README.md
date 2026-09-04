@@ -97,7 +97,7 @@ version: 2
 name: mixed-workers
 seed: 42
 onExit: cancel
-jobShutdownTimeout: 30s
+jobShutdownTimeout: 3m
 
 profiles:
   tuned-mesh:
@@ -164,7 +164,7 @@ When `gossipsub.score` is enabled, `scoreInspectInterval` defaults to `1s`. Each
 
 ### Per-node network conditions
 
-With the Docker runtime, add `network` to a profile or a join phase's `node` block. Linux `tc netem` applies the settings inside each Peer container to outgoing P2P TCP packets with source or destination port `20000`. Controller, Agent, and Peer HTTP control traffic bypasses these rules. A configured delay is a one-way egress delay, not a round-trip latency target.
+With the Docker runtime, add `network` to a profile or a join phase's `node` block. The default `scope: p2p` shapes outgoing P2P TCP on port `20000` inside each Peer container. Select `scope: all` to reproduce v2's shaping of all egress, including control HTTP and telemetry. A configured delay is a one-way egress delay, not a round-trip latency target.
 
 ```yaml
 node:
@@ -185,6 +185,13 @@ node:
 | `lossPercent`, `duplicatePercent`, `corruptPercent`, `reorderPercent` | Packet percentages from `0` to `100`; reordering requires a positive delay. |
 | `rateMbps` | Non-negative egress rate in megabits per second; `0` disables the rate limit. |
 | `queueLimit` | Positive integer specifying the maximum packets in the netem queue. |
+| `scope` | `p2p` (default) or `all` outgoing traffic. |
+| `delayDistribution` | Samples one base delay per Peer using the interval distribution schema; mutually exclusive with `delay`. |
+| `jitterDistribution` | `normal` (default), `uniform` (v2 behavior), `pareto`, or `paretonormal`. |
+| `reorderCorrelationPercent` | Reordering correlation, corresponding to v2's `reorder.chance`. |
+| `tbf` | Token bucket with `rateMbps`, `burstKbit`, and `latency`; mutually exclusive with positive netem `rateMbps`. |
+
+See the [v2 reproduction audit and mapping (Korean)](docs/v2-reproduction.md) and [churn example](examples/v2-churn.yaml). They cover placement (`balanced`, per-node `random`, batch `single-agent`, or explicit `agentId`), `onError: continue` for churn, `payloadEncoding: raw` for exact PubSub data length, and `topic: '*'` for all topics. Network scope and payload encoding retain their existing defaults. Worker bootstrap now uses seeded first-success selection, and the transport stack is explicitly TCP/Noise/Yamux.
 
 Peers with network conditions require Linux `NET_ADMIN` and host-kernel `sch_netem` support. The Docker runtime adds `NET_ADMIN` only to those Peers. Missing kernel support or a failed `tc` command fails node startup explicitly. A process-runtime Agent rejects network conditions rather than applying rules to its shared host interface.
 
@@ -216,7 +223,7 @@ For `join`, `count` is the exact number of create operations. For `publish` and 
 
 Background-job behavior at the natural end of the phase list is controlled by top-level `onExit`. Its default, `cancel`, cancels remaining jobs and then waits for them to stop. `onExit: drain` instead waits for them to complete naturally. A naturally successful completion applies this job policy but leaves Peer processes running unless the scenario contains an explicit `stop-all`.
 
-`jobShutdownTimeout` defaults to `30s`. When a user or API request cancels a scenario, or when any scenario phase or background job fails, the Controller cancels outstanding jobs and waits for their termination within this bound, then asks every Agent to generation-fence and clean up Peer processes through the current generation. An explicit `stop-all` uses the same bounded job shutdown, resets job tracking, and fences the current run generation. The Agent records the monotonically increasing fence before stopping matching processes: a late create at generation N either committed before the fence and is included in cleanup, or is rejected because its generation is at or below the fence. After `stop-all` succeeds, the scenario advances to generation N+1, so later phases may create new nodes under the same run ID and may reuse job IDs.
+`jobShutdownTimeout` defaults to `3m`. When a user or API request cancels a scenario, or when any scenario phase or background job fails, the Controller cancels outstanding jobs and waits for their termination within this bound, then asks every Agent to generation-fence and clean up Peer processes through the current generation. An explicit `stop-all` uses the same bounded job shutdown, resets job tracking, and fences the current run generation. The Agent records the monotonically increasing fence before stopping matching processes: a late create at generation N either committed before the fence and is included in cleanup, or is rejected because its generation is at or below the fence. After `stop-all` succeeds, the scenario advances to generation N+1, so later phases may create new nodes under the same run ID and may reuse job IDs.
 
 `wait-ready` evaluates the complete matching cohort in the current run generation, including failed, stopping, and stopped nodes; nodes from previous generations are ignored. A failed cohort member prevents the barrier from succeeding, and a node reported as ready contributes to the ready count only while its Agent is online. Because the cohort still contains only nodes observed so far, `wait-ready` after an `await: false` join must specify either `jobs: [job-id]` or `minCount`. `jobs` waits for the selected producer jobs to finish before checking readiness; `minCount` leaves them running but prevents a partially created group from satisfying the ratio too early.
 

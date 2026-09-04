@@ -1,0 +1,82 @@
+version: 2
+name: v2-churn-with-network-conditions
+seed: 2603
+onExit: cancel
+jobShutdownTimeout: 3m
+
+# Scaled adaptation of v2 exp-2603_churn-02.sh, with explicit network conditions.
+# Two Compose Agents share one Docker host; use one Agent per physical host and
+# an attachable overlay for multi-host comparisons.
+profiles:
+  legacy-boot:
+    type: boot
+  legacy-worker:
+    type: full
+    gossipsub:
+      topics: [kpl/v2-churn]
+    network:
+      scope: all
+      delayDistribution:
+        model: normal
+        mean: 50ms
+        sigma: 10ms
+        min: 1ms
+      jitter: 5ms
+      jitterDistribution: uniform
+      lossPercent: 1
+      reorderPercent: 2
+      reorderCorrelationPercent: 25
+      tbf:
+        rateMbps: 10
+        burstKbit: 64
+        latency: 100ms
+
+phases:
+  - action: join
+    group: boot
+    role: boot
+    profile: legacy-boot
+    count: 2
+    parallel: true
+    parallelism: 1
+    placement: single-agent
+    await: true
+  - action: wait-ready
+    group: boot
+    readyRatio: 1
+    timeout: 1m
+  - name: background churn
+    job: churn
+    action: join
+    group: worker
+    role: worker
+    profile: legacy-worker
+    count: 24
+    parallel: false
+    placement: random
+    await: false
+    interval:
+      model: exponential
+      mean: 4s
+    lifetime:
+      model: pareto
+      xm: 20s
+      alpha: 2.5
+  - name: population and mesh settling
+    action: wait
+    duration: 40s
+  - action: publish
+    group: worker
+    count: 10
+    payloadSize: 32
+    payloadEncoding: raw
+    topic: '*'
+    parallel: false
+    await: true
+    onError: continue
+    interval:
+      model: exponential
+      mean: 1s
+  - action: wait
+    duration: 10s
+  - action: stop-all

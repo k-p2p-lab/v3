@@ -190,7 +190,8 @@ function renderEvents(events) {
     return;
   }
   $("#eventList").innerHTML = recent.map((event) => {
-    const detail = [event.nodeId, event.remotePeerId ? `← ${event.remotePeerId.slice(0, 10)}` : "", event.latencyMs ? `${formatNumber(event.latencyMs, 1)} ms` : ""].filter(Boolean).join(" · ");
+    const latency = event.fields?.latencyAvailable === false ? "지연 미측정" : event.latencyMs > 0 ? `${formatNumber(event.latencyMs, 1)} ms` : "";
+    const detail = [event.nodeId, event.remotePeerId ? `← ${event.remotePeerId.slice(0, 10)}` : "", latency].filter(Boolean).join(" · ");
     return `<li class="event-item"><time>${new Date(event.timestamp).toLocaleTimeString("ko-KR", { hour12: false })}</time><span class="event-type">${escapeHTML(event.type)}</span><span class="event-summary" title="${escapeHTML(detail)}">${escapeHTML(detail)}</span></li>`;
   }).join("");
 }

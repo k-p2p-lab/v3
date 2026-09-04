@@ -51,7 +51,7 @@ func (s *Server) handleRunAction(w http.ResponseWriter, r *http.Request) {
 	}
 	s.stopRunGeneration(parts[0], generation)
 	if s.config.Runtime == "docker" {
-		cleanupCtx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+		cleanupCtx, cancel := context.WithTimeout(r.Context(), containerStopTimeout)
 		defer cancel()
 		if err := s.waitRunContainers(cleanupCtx, parts[0], generation); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())

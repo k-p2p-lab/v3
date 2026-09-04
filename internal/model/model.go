@@ -89,7 +89,11 @@ type PublishRequest struct {
 	RunID       string `json:"runId"`
 	Topic       string `json:"topic,omitempty"`
 	PayloadSize int    `json:"payloadSize"`
-	TargetNodes int    `json:"targetNodes,omitempty"`
+	// PayloadEncoding defaults to envelope. Raw publishes exactly PayloadSize
+	// bytes as PubSub data and carries no run, sender, or timestamp metadata.
+	PayloadEncoding    string         `json:"payloadEncoding,omitempty"`
+	TargetNodes        int            `json:"targetNodes,omitempty"`
+	TargetNodesByTopic map[string]int `json:"targetNodesByTopic,omitempty"`
 }
 
 type Experiment struct {

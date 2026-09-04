@@ -34,3 +34,15 @@ func TestCalculateMetrics(t *testing.T) {
 		t.Fatalf("unexpected propagation metrics: %+v", metrics)
 	}
 }
+
+func TestRawDeliveryBeforePublisherClockPreservesReachWithoutLatency(t *testing.T) {
+	nodes := []model.Node{{ID: "a", RunID: "run"}, {ID: "b", RunID: "run"}}
+	events := []model.TraceEvent{
+		{RunID: "run", NodeID: "b", Type: "deliver", MessageID: "raw-hash", LatencyMS: -1, Timestamp: time.Unix(1, 0)},
+		{RunID: "run", NodeID: "a", Type: "publish", MessageID: "raw-hash", Timestamp: time.Unix(2, 0)},
+	}
+	metrics := calculateMetrics(nodes, []model.Experiment{{ID: "run"}}, events)
+	if metrics.Reachability != 1 || metrics.Delivered != 1 || metrics.AverageLatencyMS != 0 || metrics.P95LatencyMS != 0 {
+		t.Fatalf("clock skew lost raw delivery or fabricated latency: %+v", metrics)
+	}
+}

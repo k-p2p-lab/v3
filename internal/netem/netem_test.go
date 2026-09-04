@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-p2p-lab/v3/internal/distribution"
 	"github.com/k-p2p-lab/v3/internal/model"
 )
 
@@ -224,5 +225,98 @@ func TestApplyDisabledAndUnsupportedPlatform(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "isolated Linux peer container") {
 			t.Fatalf("error=%v", err)
 		}
+	}
+}
+
+func TestWholeInterfaceScopeIncludesAllTrafficWithoutPortFilters(t *testing.T) {
+	var calls [][]string
+	err := apply(context.Background(), model.NetworkConfig{Scope: "all", LossPercent: floatPtr(100)}, 20000, []networkInterface{ipv4Interface("eth0")}, func(_ context.Context, args ...string) ([]byte, error) { calls = append(calls, args); return nil, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || strings.Join(calls[0], " ") != "qdisc replace dev eth0 root handle 1: netem loss 100%" {
+		t.Fatalf("whole-interface scope must apply loss at root with no TCP filters: %v", calls)
+	}
+}
+
+func TestTBFIsAttachedUnderTheImpairedClass(t *testing.T) {
+	for _, scope := range []string{"p2p", "all"} {
+		t.Run(scope, func(t *testing.T) {
+			config := model.NetworkConfig{Scope: scope, Delay: "10ms", TBF: &model.TBFConfig{RateMbps: 12.5, BurstKbit: 128, Latency: "25ms"}}
+			if err := config.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			calls := commands("eth0", config, 20000)
+			index, parent, handle := 2, "30:1", "31:"
+			if scope == "all" {
+				index, parent, handle = 1, "1:1", "2:"
+			}
+			want := []string{"qdisc", "replace", "dev", "eth0", "parent", parent, "handle", handle, "tbf", "rate", "12.5mbit", "burst", "128kbit", "latency", "25000us"}
+			if !reflect.DeepEqual(calls[index], want) {
+				t.Fatalf("TBF command = %v, want %v", calls[index], want)
+			}
+			for _, call := range calls {
+				if strings.Contains(strings.Join(call, " "), "netem rate") {
+					t.Fatal("TBF also enabled netem rate")
+				}
+			}
+			if scope == "p2p" && len(calls) != 5 {
+				t.Fatalf("P2P filters missing after TBF insertion: %v", calls)
+			}
+		})
+	}
+}
+
+func TestTBFLatencyUsesSupportedMicrosecondUnits(t *testing.T) {
+	for _, test := range []struct{ value, want string }{
+		{"100ms", "100000us"},
+		{"1us", "1us"},
+		{"1.5us", "2us"},
+		{"4294967295us", "4294967295us"},
+	} {
+		config := model.TBFConfig{RateMbps: 10, BurstKbit: 64, Latency: test.value}
+		if err := (model.NetworkConfig{TBF: &config}).Validate(); err != nil {
+			t.Fatal(err)
+		}
+		args := tbfCommand("eth0", "1:1", "2:", config)
+		if args[len(args)-2] != "latency" || args[len(args)-1] != test.want {
+			t.Fatalf("TBF latency %s rendered as %v, want %s", test.value, args, test.want)
+		}
+	}
+}
+
+func TestJitterDistributionsAndReorderCorrelation(t *testing.T) {
+	for _, dist := range []string{"", "uniform", "normal", "pareto", "paretonormal"} {
+		t.Run(dist, func(t *testing.T) {
+			config := model.NetworkConfig{Delay: "20ms", Jitter: "2ms", JitterDistribution: dist, ReorderPercent: floatPtr(25), ReorderCorrelationPercent: floatPtr(50)}
+			if err := config.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			args := strings.Join(options(config), " ")
+			if !strings.Contains(args, "reorder 25% 50%") {
+				t.Fatalf("correlation missing: %s", args)
+			}
+			if dist == "uniform" {
+				if strings.Contains(args, "distribution") {
+					t.Fatalf("uniform should use built-in default without a table file: %s", args)
+				}
+			} else {
+				if dist == "" {
+					dist = "normal"
+				}
+				if !strings.Contains(args, "distribution "+dist) {
+					t.Fatalf("jitter distribution missing: %s", args)
+				}
+			}
+		})
+	}
+}
+
+func TestUnresolvedPeerDelayDistributionNeverExecutesTC(t *testing.T) {
+	calls := 0
+	config := model.NetworkConfig{DelayDistribution: &distribution.Distribution{Model: "fixed", Value: "10ms"}}
+	err := apply(context.Background(), config, 20000, []networkInterface{ipv4Interface("eth0")}, func(context.Context, ...string) ([]byte, error) { calls++; return nil, nil })
+	if err == nil || !strings.Contains(err.Error(), "must be resolved") || calls != 0 {
+		t.Fatalf("error=%v, calls=%d", err, calls)
 	}
 }

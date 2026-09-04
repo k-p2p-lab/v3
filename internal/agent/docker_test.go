@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +53,10 @@ func TestDockerCLIHelper(t *testing.T) {
 	}
 	_ = json.NewEncoder(file).Encode(dockerInvocation{Args: args, Input: input})
 	_ = file.Close()
+	if os.Getenv("KPL_DOCKER_DELAY") == args[0] {
+		delayMS, _ := strconv.Atoi(os.Getenv("KPL_DOCKER_DELAY_MS"))
+		time.Sleep(time.Duration(delayMS) * time.Millisecond)
+	}
 	if os.Getenv("KPL_DOCKER_HANG") == args[0] {
 		for {
 			time.Sleep(time.Hour)
@@ -78,7 +83,30 @@ func TestDockerCLIHelper(t *testing.T) {
 	case "start":
 		fmt.Println(fakeContainerID)
 	case "inspect":
-		fmt.Print(`{"kpl-v3-peers":{"IPAddress":"172.25.0.8"}}`)
+		if len(args) > 1 && args[1] == "--type" {
+			limit, _ := strconv.Atoi(os.Getenv("KPL_DOCKER_REMOVAL_PRESENT_POLLS"))
+			data, _ := os.ReadFile(os.Getenv("KPL_DOCKER_LOG"))
+			decoder := json.NewDecoder(bytes.NewReader(data))
+			polls := 0
+			for {
+				var call dockerInvocation
+				if err := decoder.Decode(&call); err != nil {
+					break
+				}
+				if len(call.Args) > 1 && call.Args[0] == "inspect" && call.Args[1] == "--type" {
+					polls++
+				}
+			}
+			if limit >= 0 && polls > limit {
+				fmt.Fprint(os.Stderr, "Error: No such object: "+args[len(args)-1])
+				os.Exit(1)
+			}
+			fmt.Println(fakeContainerID)
+		} else if os.Getenv("KPL_DOCKER_NO_IP") == "1" {
+			fmt.Print(`{"kpl-v3-peers":{"IPAddress":""}}`)
+		} else {
+			fmt.Print(`{"kpl-v3-peers":{"IPAddress":"172.25.0.8"}}`)
+		}
 	case "wait":
 		code := os.Getenv("KPL_DOCKER_EXIT")
 		if code == "" {
@@ -92,6 +120,10 @@ func TestDockerCLIHelper(t *testing.T) {
 	case "rm":
 		if os.Getenv("KPL_DOCKER_MISSING") == "1" {
 			fmt.Fprint(os.Stderr, "Error response from daemon: No such container: "+args[len(args)-1])
+			os.Exit(1)
+		}
+		if os.Getenv("KPL_DOCKER_REMOVING") == "1" {
+			fmt.Fprint(os.Stderr, "Error response from daemon: removal of container "+args[len(args)-1]+" is already in progress")
 			os.Exit(1)
 		}
 		fmt.Println(args[len(args)-1])
@@ -240,10 +272,27 @@ func TestDockerCreateCleansUpFailures(t *testing.T) {
 	}
 }
 
+func TestDockerEarlyPeerExitPreservesStartupLogs(t *testing.T) {
+	d, path := fakeDocker(t, map[string]string{"NO_IP": "1"})
+	node, config := dockerTestConfig(t, false)
+	_, _, err := d.create(context.Background(), node, config)
+	if err == nil || !strings.Contains(err.Error(), "tc: specified qdisc kind is unknown") {
+		t.Fatalf("early startup failure lost its cause: %v", err)
+	}
+	calls := dockerCalls(t, path)
+	if len(calls) < 2 || calls[len(calls)-2].Args[0] != "logs" || calls[len(calls)-1].Args[0] != "rm" {
+		t.Fatal("must capture startup logs before removing the exited peer")
+	}
+}
+
 func TestDockerCreateCancellationCleansUpWithIndependentContext(t *testing.T) {
 	for _, stage := range []string{"create", "start"} {
 		t.Run(stage, func(t *testing.T) {
-			d, logPath := fakeDocker(t, map[string]string{"HANG": stage})
+			settings := map[string]string{"HANG": stage}
+			if stage == "create" {
+				settings = map[string]string{"DELAY": "create", "DELAY_MS": "200"}
+			}
+			d, logPath := fakeDocker(t, settings)
 			node, config := dockerTestConfig(t, false)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -278,7 +327,32 @@ func TestDockerCreateCancellationCleansUpWithIndependentContext(t *testing.T) {
 			if calls[len(calls)-1].Args[0] != "rm" {
 				t.Fatal("cleanup did not run after cancellation")
 			}
+			if stage == "create" {
+				if len(calls) != 2 || calls[1].Args[2] != fakeContainerID {
+					t.Fatalf("cancellation must await the late create ID and remove it without cp/start: %v", calls)
+				}
+			}
 		})
+	}
+}
+
+func TestDockerCreateAdmissionPreservesTheOriginalDeadline(t *testing.T) {
+	d, _ := fakeDocker(t, map[string]string{"DELAY": "create", "DELAY_MS": "5000"})
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	wantDeadline, _ := ctx.Deadline()
+	commandContext := d.commandContext
+	var observedDeadline time.Time
+	d.commandContext = func(commandCtx context.Context, binary string, args ...string) *exec.Cmd {
+		if args[0] == "create" {
+			observedDeadline, _ = commandCtx.Deadline()
+		}
+		return commandContext(commandCtx, binary, args...)
+	}
+	node, config := dockerTestConfig(t, false)
+	_, _, err := d.create(ctx, node, config)
+	if !errors.Is(err, context.DeadlineExceeded) || !observedDeadline.Equal(wantDeadline) {
+		t.Fatalf("create lost its original deadline: got=%v want=%v error=%v", observedDeadline, wantDeadline, err)
 	}
 }
 
@@ -303,6 +377,55 @@ func TestDockerCleanupReportsDaemonFailuresAndAcceptsAbsence(t *testing.T) {
 	}
 	if err := d.remove(context.Background(), "unrelated-container"); err == nil {
 		t.Fatal("arbitrary container name accepted")
+	}
+}
+
+func TestDockerRemoveWaitsForInProgressRemovalToActuallyFinish(t *testing.T) {
+	for _, target := range []string{fakeContainerID, "kpl-peer-0123456789abcdef0123-0123456789ab"} {
+		t.Run(target[:12], func(t *testing.T) {
+			d, path := fakeDocker(t, map[string]string{"REMOVING": "1", "REMOVAL_PRESENT_POLLS": "2"})
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := d.remove(ctx, target); err != nil {
+				t.Fatal(err)
+			}
+			calls := dockerCalls(t, path)
+			if len(calls) != 4 || calls[0].Args[0] != "rm" {
+				t.Fatalf("expected rm conflict, two present inspections and one not-found inspection: %v", calls)
+			}
+			for _, call := range calls[1:] {
+				want := []string{"inspect", "--type", "container", "--format", "{{.Id}}", target}
+				if !reflect.DeepEqual(call.Args, want) {
+					t.Fatalf("cleanup changed target or object type: %v", call.Args)
+				}
+			}
+		})
+	}
+}
+
+func TestDockerRemoveInProgressHonorsContextCancellation(t *testing.T) {
+	d, path := fakeDocker(t, map[string]string{"REMOVING": "1", "REMOVAL_PRESENT_POLLS": "-1"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- d.remove(ctx, fakeContainerID) }()
+	waitDockerCall(t, path, "inspect")
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("removal error = %v, want context cancellation", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("removal polling ignored context cancellation")
+	}
+}
+
+func TestDockerRemoveInProgressPreservesInspectDaemonFailure(t *testing.T) {
+	d, _ := fakeDocker(t, map[string]string{"REMOVING": "1", "FAIL": "inspect"})
+	err := d.remove(context.Background(), fakeContainerID)
+	if err == nil || !strings.Contains(err.Error(), "daemon unavailable during inspect") {
+		t.Fatalf("inspect failure must not be treated as deleted: %v", err)
 	}
 }
 

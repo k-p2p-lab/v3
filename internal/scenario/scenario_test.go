@@ -264,7 +264,7 @@ phases:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.OnExit != "cancel" || s.JobShutdownTimeout != "30s" {
+	if s.OnExit != "cancel" || s.JobShutdownTimeout != "3m" {
 		t.Fatalf("scenario shutdown defaults were not applied: onExit=%q timeout=%q", s.OnExit, s.JobShutdownTimeout)
 	}
 

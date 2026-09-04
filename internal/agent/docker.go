@@ -88,6 +88,13 @@ func (d *dockerRuntime) check(ctx context.Context) error {
 }
 
 func (d *dockerRuntime) create(ctx context.Context, node model.Node, configData []byte) (id, apiURL string, err error) {
+	return d.createWithAdmission(ctx, node, configData, nil)
+}
+
+func (d *dockerRuntime) createWithAdmission(ctx context.Context, node model.Node, configData []byte, admitted func()) (id, apiURL string, err error) {
+	if err := ctx.Err(); err != nil {
+		return "", "", err
+	}
 	var config model.PeerProcessConfig
 	if err := json.Unmarshal(configData, &config); err != nil {
 		return "", "", fmt.Errorf("decode peer container configuration: %w", err)
@@ -118,7 +125,7 @@ func (d *dockerRuntime) create(ctx context.Context, node model.Node, configData 
 		if err == nil {
 			return
 		}
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		if cleanupErr := d.remove(cleanupCtx, cleanupTarget); cleanupErr != nil {
 			err = errors.Join(err, fmt.Errorf("%w for peer container %s: %w", errDockerCleanup, cleanupTarget, cleanupErr))
@@ -129,7 +136,16 @@ func (d *dockerRuntime) create(ctx context.Context, node model.Node, configData 
 		}
 		id, apiURL = "", ""
 	}()
-	output, err := d.run(ctx, nil, args...)
+	// A canceled Docker create HTTP request can still commit on the daemon.
+	// Wait for its admission result so cleanup has a real ID rather than racing
+	// a not-yet-created name. Keep the original deadline to bound stalled daemons.
+	deadline, hasDeadline := ctx.Deadline()
+	if !hasDeadline {
+		deadline = time.Now().Add(45 * time.Second)
+	}
+	admissionCtx, admissionCancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
+	output, err := d.run(admissionCtx, nil, args...)
+	admissionCancel()
 	if err != nil {
 		return "", "", fmt.Errorf("create peer container: %w", err)
 	}
@@ -138,6 +154,12 @@ func (d *dockerRuntime) create(ctx context.Context, node model.Node, configData 
 		return "", "", fmt.Errorf("Docker create returned an invalid container ID")
 	}
 	cleanupTarget = id
+	if err := ctx.Err(); err != nil {
+		return "", "", err
+	}
+	if admitted != nil {
+		admitted()
+	}
 	archive, err := peerConfigArchive(configData)
 	if err != nil {
 		return "", "", err
@@ -160,6 +182,15 @@ func (d *dockerRuntime) create(ctx context.Context, node model.Node, configData 
 	}
 	ip := net.ParseIP(networks[d.network].IPAddress)
 	if ip == nil || ip.To4() == nil || ip.IsLoopback() || ip.IsUnspecified() {
+		// A peer that fails during netem/bootstrap setup can exit before this
+		// inspect, clearing its endpoint. Preserve its startup error before
+		// deferred cleanup removes the container and its logs.
+		logCtx, logCancel := context.WithTimeout(ctx, 5*time.Second)
+		defer logCancel()
+		logs, logErr := d.run(logCtx, nil, "logs", "--tail", "30", id)
+		if logErr == nil && len(bytes.TrimSpace(logs)) != 0 {
+			return "", "", fmt.Errorf("peer container has no usable IPv4 address on network %q; startup logs: %s", d.network, bytes.TrimSpace(logs))
+		}
 		return "", "", fmt.Errorf("peer container has no usable IPv4 address on network %q", d.network)
 	}
 	if err := ctx.Err(); err != nil {
@@ -197,10 +228,37 @@ func (d *dockerRuntime) remove(ctx context.Context, id string) error {
 		return fmt.Errorf("refusing to remove invalid peer container ID or name")
 	}
 	output, err := d.run(ctx, nil, "rm", "--force", id)
-	if err != nil && !strings.Contains(strings.ToLower(string(output)), "no such container:") {
-		return fmt.Errorf("remove peer container %s: %w", id, err)
+	if err == nil || strings.Contains(strings.ToLower(string(output)), "no such container:") {
+		return nil
 	}
-	return nil
+	message := strings.ToLower(string(output))
+	if strings.Contains(message, "removal of container") && strings.Contains(message, "is already in progress") {
+		return d.waitUntilRemoved(ctx, id)
+	}
+	return fmt.Errorf("remove peer container %s: %w", id, err)
+}
+
+// Docker may keep removing a container after its original CLI command was
+// canceled. A second rm then reports a conflict, not completion. Only an
+// explicit not-found response confirms cleanup; daemon failures are preserved.
+func (d *dockerRuntime) waitUntilRemoved(ctx context.Context, id string) error {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		output, err := d.run(ctx, nil, "inspect", "--type", "container", "--format", "{{.Id}}", id)
+		if err != nil {
+			message := strings.ToLower(string(output))
+			if strings.Contains(message, "no such container:") || strings.Contains(message, "no such object:") {
+				return nil
+			}
+			return fmt.Errorf("wait for peer container %s removal: %w", id, err)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("wait for peer container %s removal: %w", id, ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 // removeAgentContainers reclaims peers left behind by an Agent crash. Agent IDs
