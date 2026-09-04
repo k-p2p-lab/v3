@@ -47,7 +47,7 @@ func (s *Server) serve(ctx context.Context, listener net.Listener) error {
 			case <-runCtx.Done():
 				return
 			case <-ticker.C:
-				s.state.markStaleAgents(10 * time.Second)
+				s.state.markStaleAgents(agentStaleAfter)
 			}
 		}
 	}()

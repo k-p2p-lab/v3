@@ -81,7 +81,7 @@ func TestAcquireAgentWaitsUntilObservedSlotIsReleased(t *testing.T) {
 	}
 }
 
-func TestStoppingNodeImmediatelyReleasesObservedCapacity(t *testing.T) {
+func TestStoppingNodeWaitsForObservedCapacityRelease(t *testing.T) {
 	server := New(ServerConfig{DataDir: t.TempDir()}, nil)
 	if _, err := server.state.registerAgent(model.Agent{ID: "a", URL: "http://agent", Capacity: 1}); err != nil {
 		t.Fatal(err)
@@ -95,8 +95,17 @@ func TestStoppingNodeImmediatelyReleasesObservedCapacity(t *testing.T) {
 	server.markNodeStoppingAndReleaseCapacity("node-1")
 
 	agent, ok := server.agent("a")
-	if !ok || agent.ActiveNodes != 0 {
-		t.Fatalf("agent capacity was not released: %+v", agent)
+	if !ok || agent.ActiveNodes != 1 {
+		t.Fatalf("capacity was released before Agent confirmation: %+v", agent)
+	}
+	if _, ok := server.tryReserveAgent("node-2"); ok {
+		t.Fatal("cleanup-occupied capacity was reused before heartbeat")
+	}
+	if err := server.state.heartbeat(model.AgentHeartbeat{
+		Agent: model.Agent{ID: "a", Capacity: 1},
+		Nodes: []model.Node{{ID: "node-1", AgentID: "a", RunID: "run", State: model.NodeStopped}},
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if _, ok := server.tryReserveAgent("node-2"); !ok {
 		t.Fatal("released capacity was not immediately reusable")
@@ -109,7 +118,7 @@ func TestStaleHeartbeatCannotResurrectStoppingNode(t *testing.T) {
 		t.Fatal(err)
 	}
 	ready := model.AgentHeartbeat{
-		Agent: model.Agent{ID: "a", Capacity: 1},
+		Agent: model.Agent{ID: "a", Capacity: 1, ActiveNodes: 1},
 		Nodes: []model.Node{{ID: "node-1", AgentID: "a", RunID: "run", State: model.NodeReady}},
 	}
 	if err := server.state.heartbeat(ready); err != nil {
@@ -124,7 +133,7 @@ func TestStaleHeartbeatCannotResurrectStoppingNode(t *testing.T) {
 	node := server.state.nodes["node-1"]
 	agent := server.state.agents["a"]
 	server.state.mu.RUnlock()
-	if node.State != model.NodeStopping || agent.ActiveNodes != 0 {
+	if node.State != model.NodeStopping || agent.ActiveNodes != 1 {
 		t.Fatalf("stale heartbeat resurrected stopped capacity: node=%+v agent=%+v", node, agent)
 	}
 }

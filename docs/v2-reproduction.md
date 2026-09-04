@@ -10,6 +10,8 @@ v2의 parallel join은 한 Worker 호스트를 무작위 선택한 뒤 ServiceCr
 
 기본 Compose의 Agent 두 개는 **같은 Docker 호스트**를 사용합니다. 물리 호스트 간 지연·overlay 실험에는 호스트마다 Agent를 두고 공통 attachable overlay를 구성해야 합니다. Agent capacity 대기, Docker CLI 비용, 실제 머신 부하에 따라 목표 join rate와 실제 시작 rate는 달라집니다. v2의 Swarm 자동 복구와 v3의 종료 상태 기록도 다릅니다.
 
+Swarm 다중 서버용 [배포 구성과 확장성 검토](swarm.md)를 추가했습니다. Swarm은 global Agent를 서버별로 배치하고 Controller가 Peer를 분배합니다. Agent task 재시작은 담당 Peer를 정리하며, v2의 Peer Service 재스케줄링을 그대로 재현하지는 않습니다. Peer 광고 주소·Agent별 직접 접근·삭제 완료까지의 capacity 보존·전체 Agent 모니터링을 반영했습니다.
+
 생성 도중 실험을 취소하더라도 Docker create의 응답을 제한시간 내 기다려 컨테이너 ID를 확보한 뒤 제거합니다. CLI만 먼저 종료하여 daemon에 늦게 생성되는 컨테이너를 남기는 경합을 방지합니다. Docker가 삭제 진행 중이라고 응답하면 실제 소멸 여부를 확인하며, 기본 `jobShutdownTimeout`과 Compose 종료 대기는 `3m`입니다. Docker admission 자체의 deadline 초과나 daemon 장애는 오류로 보고하며, 이후 재시작 시 소유 label로 잔여 컨테이너를 정리합니다.
 
 ## 네트워크 조건 대응

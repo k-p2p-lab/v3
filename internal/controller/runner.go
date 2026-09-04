@@ -3,6 +3,7 @@ package controller
 import (
 	"bytes"
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,7 +75,11 @@ func (s *Server) StartScenario(parent context.Context, raw []byte) (model.Experi
 	if err := parent.Err(); err != nil {
 		return model.Experiment{}, err
 	}
-	runID := fmt.Sprintf("run-%s-%04x", time.Now().UTC().Format("20060102T150405Z"), rand.New(rand.NewSource(time.Now().UnixNano())).Intn(65536))
+	var nonce [16]byte
+	if _, err := cryptorand.Read(nonce[:]); err != nil {
+		return model.Experiment{}, fmt.Errorf("generate experiment id: %w", err)
+	}
+	runID := fmt.Sprintf("run-%s-%x", time.Now().UTC().Format("20060102T150405Z"), nonce)
 	experiment := model.Experiment{
 		ID:           runID,
 		Name:         spec.Name,
@@ -375,7 +380,10 @@ func (s *Server) runJoin(ctx context.Context, runID string, generation uint64, p
 			s.releaseReservation(request.ID)
 			return fmt.Errorf("create node %s on agent %s: %w", request.ID, agent.ID, err)
 		}
-		s.recordCreatedNode(request, agent.ID, node)
+		if !s.recordCreatedNode(request, agent.ID, node, agent.StartedAt) {
+			s.releaseReservation(request.ID)
+			return fmt.Errorf("agent %s changed instance while creating node %s", agent.ID, request.ID)
+		}
 		return nil
 	})
 }
@@ -652,14 +660,14 @@ func (s *Server) tryReserveAgentWithPlacement(nodeID, targetAgentID string, rng 
 	defer s.state.mu.Unlock()
 	if agentID, exists := s.state.reservations[nodeID]; exists {
 		agent, ok := s.state.agents[agentID]
-		return agent, ok && agent.State == model.AgentOnline && (targetAgentID == "" || agentID == targetAgentID)
+		return agent, ok && agentIsOnline(agent, time.Now()) && (targetAgentID == "" || agentID == targetAgentID)
 	}
 	var candidates []model.Agent
 	for _, agent := range s.state.agents {
 		if targetAgentID != "" && agent.ID != targetAgentID {
 			continue
 		}
-		if agent.State == model.AgentOnline && (agent.Capacity <= 0 || agent.ActiveNodes < agent.Capacity) {
+		if agentIsOnline(agent, time.Now()) && (agent.Capacity <= 0 || agent.ActiveNodes < agent.Capacity) {
 			candidates = append(candidates, agent)
 		}
 	}
@@ -698,7 +706,7 @@ func (s *Server) selectBatchAgent(ctx context.Context, rng *rand.Rand) (string, 
 		s.state.mu.RLock()
 		var candidates []string
 		for _, agent := range s.state.agents {
-			if agent.State == model.AgentOnline && (agent.Capacity <= 0 || agent.ActiveNodes < agent.Capacity) {
+			if agentIsOnline(agent, time.Now()) && (agent.Capacity <= 0 || agent.ActiveNodes < agent.Capacity) {
 				candidates = append(candidates, agent.ID)
 			}
 		}
@@ -739,7 +747,7 @@ func (s *Server) releaseReservation(nodeID string) {
 	}
 }
 
-func (s *Server) recordCreatedNode(request model.CreateNodeRequest, agentID string, node model.Node) {
+func (s *Server) recordCreatedNode(request model.CreateNodeRequest, agentID string, node model.Node, expectedInstance ...time.Time) bool {
 	now := time.Now().UTC()
 	config := request.Config.WithDefaults()
 	if node.ID == "" {
@@ -789,33 +797,37 @@ func (s *Server) recordCreatedNode(request model.CreateNodeRequest, agentID stri
 		node.LastSeen = now
 	}
 	s.state.mu.Lock()
+	if len(expectedInstance) > 0 {
+		current, exists := s.state.agents[agentID]
+		if !exists || !current.StartedAt.Equal(expectedInstance[0]) {
+			s.state.mu.Unlock()
+			return false
+		}
+	}
 	if current, exists := s.state.nodes[node.ID]; !exists || current.LastSeen.Before(node.LastSeen) {
 		s.state.nodes[node.ID] = node
 	}
 	s.state.mu.Unlock()
 	s.state.notify()
+	return true
 }
 
 func (s *Server) markNodeStoppingAndReleaseCapacity(nodeID string) {
 	s.state.mu.Lock()
 	node, exists := s.state.nodes[nodeID]
 	releaseCapacity := false
-	agentID := node.AgentID
 	if exists && node.State != model.NodeStopping && node.State != model.NodeStopped && node.State != model.NodeFailed {
 		releaseCapacity = true
 		node.State = model.NodeStopping
 		node.LastSeen = time.Now().UTC()
 		s.state.nodes[nodeID] = node
 	}
-	if reservedAgentID, reserved := s.state.reservations[nodeID]; reserved {
+	if _, reserved := s.state.reservations[nodeID]; reserved {
 		delete(s.state.reservations, nodeID)
-		agentID = reservedAgentID
 		releaseCapacity = true
 	}
-	if agent, ok := s.state.agents[agentID]; ok && releaseCapacity && agent.ActiveNodes > 0 {
-		agent.ActiveNodes--
-		s.state.agents[agentID] = agent
-	}
+	// A successful DELETE marks logical state only. Reuse capacity after the
+	// Agent reports completed cleanup in its next heartbeat/status snapshot.
 	s.state.mu.Unlock()
 	if exists || releaseCapacity {
 		s.state.notify()
@@ -832,7 +844,7 @@ func (s *Server) readyCount(runID string, generation uint64, group, nodeType str
 		total++
 		switch node.State {
 		case model.NodeReady:
-			if agent, ok := s.state.agents[node.AgentID]; ok && agent.State == model.AgentOnline {
+			if agent, ok := s.state.agents[node.AgentID]; ok && agentIsOnline(agent, time.Now()) {
 				ready++
 			}
 		case model.NodeFailed:
@@ -1093,6 +1105,9 @@ func (s *Server) agent(id string) (model.Agent, bool) {
 	s.state.mu.RLock()
 	defer s.state.mu.RUnlock()
 	agent, ok := s.state.agents[id]
+	if ok && !agentIsOnline(agent, time.Now()) {
+		agent.State = model.AgentOffline
+	}
 	return agent, ok
 }
 

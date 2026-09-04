@@ -69,6 +69,8 @@ Agent의 기본값은 `--runtime docker`, `--docker-image kpl-v3:local`, `--dock
 Agent를 재시작하면 동일 Docker daemon·network에서 같은 Agent ID의 관리 label이 붙은 이전 Peer 컨테이너를 제거합니다. 기존 실험을 복구하거나 재개하지는 않습니다. Agent ID는 같은 daemon·network 내에서 고유해야 합니다. 컨테이너 제거가 일시적으로 실패하면 오류를 보고하며 후속 종료 요청으로 다시 정리할 수 있습니다.
 
 기본 Compose bridge는 같은 Docker 호스트의 컨테이너만 연결합니다. 여러 호스트에서는 Docker 호스트를 같은 Swarm에 참여시키고 공통 attachable overlay 네트워크를 사용하십시오. 예를 들어 Swarm manager에서 `docker network create --driver overlay --attachable kpl-v3-peers`를 실행합니다. 각 Agent의 `--docker-network`를 해당 네트워크로 지정하고 Controller와 Agent도 여기에 연결하며, 고유한 Agent ID와 접근 가능한 `--advertise-url`, `--self-url`, `--controller-url`을 설정해야 합니다. 미리 생성한 overlay에 Compose를 연결할 경우 `networks.peers` 정의를 `name: kpl-v3-peers`, `external: true`로 바꾸십시오. 호스트별 bridge만으로는 호스트 간 Peer 연결이 되지 않습니다. 세부 조건은 [Docker overlay 네트워크 문서](https://docs.docker.com/engine/network/drivers/overlay/)를 참고하십시오.
+다중 서버 Swarm 배포에는 [stack.swarm.yaml](stack.swarm.yaml)과 [Swarm 배포·분배·확장성 가이드](docs/swarm.md)를 사용하십시오. 서버별 Agent 하나, 개별 task 주소, 용량 기반 분배 및 Prometheus의 전체 Agent 탐색을 구성합니다.
+
 
 ### Prometheus와 Grafana
 

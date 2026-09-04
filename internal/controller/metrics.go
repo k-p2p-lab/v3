@@ -5,6 +5,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/k-p2p-lab/v3/internal/model"
 	"github.com/prometheus/client_golang/prometheus"
@@ -204,7 +205,7 @@ func (c *controllerStateCollector) Collect(ch chan<- prometheus.Metric) {
 
 	for _, agent := range agents {
 		up := 0.0
-		if agent.State == model.AgentOnline {
+		if agentIsOnline(agent, time.Now()) {
 			up = 1
 		}
 		lastSeen := 0.0

@@ -69,6 +69,8 @@ The Agent defaults are `--runtime docker`, `--docker-image kpl-v3:local`, `--doc
 On restart, an Agent removes previously managed Peer containers with its Agent ID on the same Docker daemon and network. It does not restore or resume previous experiments. Agent IDs must be unique within that daemon/network. Container removal failures are reported; a later stop request retries cleanup after a temporary daemon outage.
 
 The supplied Compose bridge connects containers on a single Docker host. For multiple hosts, join the Docker hosts to a Swarm and use a shared attachable overlay network, for example `docker network create --driver overlay --attachable kpl-v3-peers` on a Swarm manager. Configure each Agent's `--docker-network` to use that network, attach the Controller and Agents to it, and provide unique Agent IDs and reachable `--advertise-url`, `--self-url`, and `--controller-url` values. If reusing Compose with a pre-created overlay, replace its `networks.peers` definition with `name: kpl-v3-peers` and `external: true`; a host-local bridge cannot provide cross-host Peer connectivity. See the [Docker overlay network requirements](https://docs.docker.com/engine/network/drivers/overlay/).
+For a multi-server Swarm deployment, use [stack.swarm.yaml](stack.swarm.yaml) and the [Swarm deployment and scaling guide (Korean)](docs/swarm.md). It provides one Agent per selected server, task-specific addresses, capacity-aware placement, and discovery of every Agent in Prometheus.
+
 
 ### Prometheus and Grafana
 

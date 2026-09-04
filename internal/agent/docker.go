@@ -21,10 +21,12 @@ import (
 )
 
 const (
-	peerContainerAPIPort  = 18000
-	peerContainerP2PPort  = 20000
-	peerContainerConfig   = "/etc/kpl-peer.json"
-	managedContainerLabel = "io.kpl.managed=true"
+	peerContainerAPIPort   = 18000
+	peerContainerP2PPort   = 20000
+	peerContainerConfig    = "/etc/kpl-peer.json"
+	managedContainerLabel  = "io.kpl.managed=true"
+	dockerAdmissionTimeout = 45 * time.Second
+	dockerStartupTimeout   = 45 * time.Second
 )
 
 var (
@@ -145,10 +147,11 @@ func (d *dockerRuntime) createWithAdmission(ctx context.Context, node model.Node
 	}()
 	// A canceled Docker create HTTP request can still commit on the daemon.
 	// Wait for its admission result so cleanup has a real ID rather than racing
-	// a not-yet-created name. Keep the original deadline to bound stalled daemons.
-	deadline, hasDeadline := ctx.Deadline()
-	if !hasDeadline {
-		deadline = time.Now().Add(45 * time.Second)
+	// a not-yet-created name. Admission has its own bounded budget and still
+	// honors an earlier caller deadline.
+	deadline := time.Now().Add(dockerAdmissionTimeout)
+	if parentDeadline, ok := ctx.Deadline(); ok && parentDeadline.Before(deadline) {
+		deadline = parentDeadline
 	}
 	admissionCtx, admissionCancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
 	output, err := d.run(admissionCtx, nil, args...)
@@ -167,19 +170,24 @@ func (d *dockerRuntime) createWithAdmission(ctx context.Context, node model.Node
 	if admitted != nil {
 		admitted()
 	}
+	// Busy daemons can spend much of admission's budget just allocating the
+	// container. Give copying, startup and inspection a fresh shared budget;
+	// unlike admission, every startup step is immediately cancelable.
+	startupCtx, startupCancel := context.WithTimeout(ctx, dockerStartupTimeout)
+	defer startupCancel()
 	archive, err := peerConfigArchive(configData)
 	if err != nil {
 		return "", "", err
 	}
 	// docker cp accepts a tar stream and works before container startup, which
 	// also supports a remote daemon without sharing the Agent's filesystem.
-	if _, err := d.run(ctx, bytes.NewReader(archive), "cp", "-", id+":/"); err != nil {
+	if _, err := d.run(startupCtx, bytes.NewReader(archive), "cp", "-", id+":/"); err != nil {
 		return "", "", fmt.Errorf("copy peer container configuration: %w", err)
 	}
-	if _, err := d.run(ctx, nil, "start", id); err != nil {
+	if _, err := d.run(startupCtx, nil, "start", id); err != nil {
 		return "", "", fmt.Errorf("start peer container: %w", err)
 	}
-	output, err = d.run(ctx, nil, "inspect", "--format", "{{json .NetworkSettings.Networks}}", id)
+	output, err = d.run(startupCtx, nil, "inspect", "--format", "{{json .NetworkSettings.Networks}}", id)
 	if err != nil {
 		return "", "", fmt.Errorf("inspect peer container address: %w", err)
 	}
@@ -192,7 +200,7 @@ func (d *dockerRuntime) createWithAdmission(ctx context.Context, node model.Node
 		// A peer that fails during netem/bootstrap setup can exit before this
 		// inspect, clearing its endpoint. Preserve its startup error before
 		// deferred cleanup removes the container and its logs.
-		logCtx, logCancel := context.WithTimeout(ctx, 5*time.Second)
+		logCtx, logCancel := context.WithTimeout(startupCtx, 5*time.Second)
 		defer logCancel()
 		logs, logErr := d.run(logCtx, nil, "logs", "--tail", "30", id)
 		if logErr == nil && len(bytes.TrimSpace(logs)) != 0 {
@@ -200,7 +208,7 @@ func (d *dockerRuntime) createWithAdmission(ctx context.Context, node model.Node
 		}
 		return "", "", fmt.Errorf("peer container has no usable IPv4 address on network %q", d.network)
 	}
-	if err := ctx.Err(); err != nil {
+	if err := startupCtx.Err(); err != nil {
 		return "", "", err
 	}
 	return id, "http://" + net.JoinHostPort(ip.String(), strconv.Itoa(peerContainerAPIPort)), nil

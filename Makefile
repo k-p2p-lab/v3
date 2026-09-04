@@ -1,4 +1,4 @@
-.PHONY: build test test-linux check-linux validate run stop
+.PHONY: build test test-linux check-linux check-swarm validate run stop
 
 build:
 	go build -o bin/kpl ./cmd/kpl
@@ -11,6 +11,9 @@ test-linux:
 
 check-linux:
 	sh scripts/check-linux.sh
+
+check-swarm:
+	sh scripts/check-swarm.sh
 
 validate:
 	go run ./cmd/kpl validate --scenario examples/smoke.yaml

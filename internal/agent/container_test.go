@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -212,4 +213,53 @@ func TestDockerLifetimeBeginsAfterDaemonAdmission(t *testing.T) {
 	if node.Metadata["containerCreatedAt"] == "" || node.Metadata["containerStartedAt"] != "" || node.Metadata["lifetimeBasis"] != "container-created" {
 		t.Fatalf("incorrect lifecycle timeline: %v", node.Metadata)
 	}
+}
+
+func TestDelayedDockerAdmissionDoesNotConsumeStartupBudget(t *testing.T) {
+	const delay = 250 * time.Millisecond
+	server, path := newContainerTestServer(t, map[string]string{"DELAY": "create", "DELAY_MS": "250", "HANG": "wait"})
+	type observation struct {
+		stage        string
+		at, deadline time.Time
+		hasDeadline  bool
+	}
+	observed := make(chan observation, 5)
+	commandContext := server.docker.commandContext
+	server.docker.commandContext = func(ctx context.Context, binary string, args ...string) *exec.Cmd {
+		switch args[0] {
+		case "create", "cp", "start", "inspect", "wait":
+			deadline, ok := ctx.Deadline()
+			observed <- observation{stage: args[0], at: time.Now(), deadline: deadline, hasDeadline: ok}
+		}
+		return commandContext(ctx, binary, args...)
+	}
+	if _, err := server.createNode(context.Background(), model.CreateNodeRequest{ID: "peer", RunID: "run", Group: "workers"}); err != nil {
+		t.Fatal(err)
+	}
+	waitDockerCall(t, path, "wait")
+	stages := make(map[string]observation)
+	for i := 0; i < 5; i++ {
+		item := <-observed
+		stages[item.stage] = item
+	}
+	admission, copyStage := stages["create"], stages["cp"]
+	if !admission.hasDeadline || !copyStage.hasDeadline || copyStage.deadline.Sub(admission.deadline) < delay {
+		t.Fatalf("late admission consumed startup budget: admission=%+v startup=%+v", admission, copyStage)
+	}
+	if remaining := copyStage.deadline.Sub(copyStage.at); remaining < 44*time.Second || remaining > dockerStartupTimeout {
+		t.Fatalf("startup did not receive a fresh 45-second budget: %v", remaining)
+	}
+	for _, stage := range []string{"start", "inspect"} {
+		if !stages[stage].deadline.Equal(copyStage.deadline) {
+			t.Fatalf("%s did not share the startup budget", stage)
+		}
+	}
+	if stages["wait"].hasDeadline {
+		t.Fatal("the startup deadline leaked into the peer's running lifetime")
+	}
+	if err := server.stopNode("peer"); err != nil {
+		t.Fatal(err)
+	}
+	waitForNodeState(t, server, "peer", model.NodeStopped)
+	waitDockerCall(t, path, "rm")
 }

@@ -15,29 +15,34 @@ import (
 	"github.com/k-p2p-lab/v3/internal/model"
 )
 
-const recentEventLimit = 300
+const (
+	recentEventLimit = 300
+	agentStaleAfter  = 10 * time.Second
+)
 
 type state struct {
-	mu           sync.RWMutex
-	persistMu    sync.Mutex
-	agents       map[string]model.Agent
-	nodes        map[string]model.Node
-	reservations map[string]string
-	experiments  map[string]model.Experiment
-	events       []model.TraceEvent
-	watchers     map[chan struct{}]struct{}
-	dataDir      string
-	metrics      *controllerMetrics
+	mu             sync.RWMutex
+	persistMu      sync.Mutex
+	agents         map[string]model.Agent
+	nodes          map[string]model.Node
+	reservations   map[string]string
+	agentSnapshots map[string]time.Time
+	experiments    map[string]model.Experiment
+	events         []model.TraceEvent
+	watchers       map[chan struct{}]struct{}
+	dataDir        string
+	metrics        *controllerMetrics
 }
 
 func newState(dataDir string) *state {
 	s := &state{
-		agents:       make(map[string]model.Agent),
-		nodes:        make(map[string]model.Node),
-		reservations: make(map[string]string),
-		experiments:  make(map[string]model.Experiment),
-		watchers:     make(map[chan struct{}]struct{}),
-		dataDir:      dataDir,
+		agents:         make(map[string]model.Agent),
+		nodes:          make(map[string]model.Node),
+		reservations:   make(map[string]string),
+		agentSnapshots: make(map[string]time.Time),
+		experiments:    make(map[string]model.Experiment),
+		watchers:       make(map[chan struct{}]struct{}),
+		dataDir:        dataDir,
 	}
 	s.metrics = newControllerMetrics(s)
 	return s
@@ -48,13 +53,34 @@ func (s *state) registerAgent(agent model.Agent) (model.Agent, error) {
 		return model.Agent{}, fmt.Errorf("agent id and url are required")
 	}
 	now := time.Now().UTC()
+	reportedAt := agent.LastSeen
 	s.mu.Lock()
 	previous, exists := s.agents[agent.ID]
 	if exists && agent.StartedAt.IsZero() {
 		agent.StartedAt = previous.StartedAt
 	}
-	if exists {
-		agent.ActiveNodes = previous.ActiveNodes
+	restarted := exists && !agent.StartedAt.Equal(previous.StartedAt)
+	if restarted && (agent.StartedAt.Before(previous.StartedAt) || agentIsOnline(previous, now)) {
+		s.mu.Unlock()
+		return model.Agent{}, fmt.Errorf("agent %q is already registered by another live or newer instance", agent.ID)
+	}
+	if restarted {
+		for nodeID, agentID := range s.reservations {
+			if agentID == agent.ID {
+				delete(s.reservations, nodeID)
+			}
+		}
+		for nodeID, node := range s.nodes {
+			if node.AgentID == agent.ID && node.State != model.NodeStopped && node.State != model.NodeFailed {
+				node.State = model.NodeFailed
+				node.Error = "Agent instance restarted"
+				node.LastSeen = now
+				s.nodes[nodeID] = node
+			}
+		}
+		delete(s.agentSnapshots, agent.ID)
+	} else if exists {
+		agent.ActiveNodes = max(agent.ActiveNodes, previous.ActiveNodes)
 	} else {
 		for _, agentID := range s.reservations {
 			if agentID == agent.ID {
@@ -65,6 +91,10 @@ func (s *state) registerAgent(agent model.Agent) (model.Agent, error) {
 	if agent.StartedAt.IsZero() {
 		agent.StartedAt = now
 	}
+	if !reportedAt.IsZero() && reportedAt.After(s.agentSnapshots[agent.ID]) {
+		s.agentSnapshots[agent.ID] = reportedAt
+	}
+	agent.ActiveNodes = max(0, agent.ActiveNodes)
 	agent.LastSeen = now
 	agent.State = model.AgentOnline
 	s.agents[agent.ID] = agent
@@ -84,6 +114,29 @@ func (s *state) heartbeat(h model.AgentHeartbeat) error {
 		s.mu.Unlock()
 		return fmt.Errorf("agent %q is not registered", h.Agent.ID)
 	}
+	if !h.Agent.StartedAt.IsZero() && !h.Agent.StartedAt.Equal(previous.StartedAt) {
+		s.mu.Unlock()
+		return fmt.Errorf("agent %q heartbeat does not match its registered instance", h.Agent.ID)
+	}
+	reportedAt := h.Agent.LastSeen
+	if last := s.agentSnapshots[h.Agent.ID]; !reportedAt.IsZero() && !last.IsZero() && !reportedAt.After(last) {
+		s.mu.Unlock()
+		return nil
+	}
+	seen := make(map[string]struct{}, len(h.Nodes))
+	for _, node := range h.Nodes {
+		_, duplicate := seen[node.ID]
+		owner := s.nodes[node.ID].AgentID
+		reservation := s.reservations[node.ID]
+		if node.ID == "" || duplicate || owner != "" && owner != h.Agent.ID || reservation != "" && reservation != h.Agent.ID {
+			s.mu.Unlock()
+			return fmt.Errorf("agent %q heartbeat contains an empty, duplicate, or foreign node %q", h.Agent.ID, node.ID)
+		}
+		seen[node.ID] = struct{}{}
+	}
+	if !reportedAt.IsZero() {
+		s.agentSnapshots[h.Agent.ID] = reportedAt
+	}
 	h.Agent.URL = firstNonEmpty(h.Agent.URL, previous.URL)
 	h.Agent.Name = firstNonEmpty(h.Agent.Name, previous.Name)
 	h.Agent.Hostname = firstNonEmpty(h.Agent.Hostname, previous.Hostname)
@@ -96,8 +149,8 @@ func (s *state) heartbeat(h model.AgentHeartbeat) error {
 	}
 	h.Agent.LastSeen = now
 	h.Agent.State = model.AgentOnline
-	h.Agent.ActiveNodes = 0
-	seen := make(map[string]struct{}, len(h.Nodes))
+	reportedOccupied := max(0, h.Agent.ActiveNodes)
+	observedActive := 0
 	for _, node := range h.Nodes {
 		node.AgentID = h.Agent.ID
 		if node.LastSeen.IsZero() {
@@ -119,11 +172,13 @@ func (s *state) heartbeat(h model.AgentHeartbeat) error {
 		if s.reservations[node.ID] == h.Agent.ID {
 			delete(s.reservations, node.ID)
 		}
-		seen[node.ID] = struct{}{}
 		if node.State != model.NodeStopping && node.State != model.NodeStopped && node.State != model.NodeFailed {
-			h.Agent.ActiveNodes++
+			observedActive++
 		}
 	}
+	// Docker cleanup may still occupy capacity after a node stops being
+	// logically active. Preserve the Agent's physical occupancy report.
+	h.Agent.ActiveNodes = max(reportedOccupied, observedActive)
 	for _, agentID := range s.reservations {
 		if agentID == h.Agent.ID {
 			h.Agent.ActiveNodes++
@@ -150,6 +205,10 @@ func (s *state) heartbeat(h model.AgentHeartbeat) error {
 	}
 	s.notify()
 	return nil
+}
+
+func agentIsOnline(agent model.Agent, now time.Time) bool {
+	return agent.State == model.AgentOnline && (agent.LastSeen.IsZero() || now.Sub(agent.LastSeen) <= agentStaleAfter)
 }
 
 func (s *state) markStaleAgents(maxAge time.Duration) {

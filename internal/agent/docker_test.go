@@ -294,7 +294,7 @@ func TestDockerEarlyPeerExitPreservesStartupLogs(t *testing.T) {
 }
 
 func TestDockerCreateCancellationCleansUpWithIndependentContext(t *testing.T) {
-	for _, stage := range []string{"create", "start"} {
+	for _, stage := range []string{"create", "cp", "start", "inspect"} {
 		t.Run(stage, func(t *testing.T) {
 			settings := map[string]string{"HANG": stage}
 			if stage == "create" {
@@ -361,6 +361,34 @@ func TestDockerCreateAdmissionPreservesTheOriginalDeadline(t *testing.T) {
 	_, _, err := d.create(ctx, node, config)
 	if !errors.Is(err, context.DeadlineExceeded) || !observedDeadline.Equal(wantDeadline) {
 		t.Fatalf("create lost its original deadline: got=%v want=%v error=%v", observedDeadline, wantDeadline, err)
+	}
+}
+
+func TestDockerCreationStageBudgetsRespectCallerDeadline(t *testing.T) {
+	for _, callerTimeout := range []time.Duration{10 * time.Second, 2 * time.Minute} {
+		t.Run(callerTimeout.String(), func(t *testing.T) {
+			d, _ := fakeDocker(t, nil)
+			ctx, cancel := context.WithTimeout(context.Background(), callerTimeout)
+			defer cancel()
+			callerDeadline, _ := ctx.Deadline()
+			commandContext := d.commandContext
+			d.commandContext = func(commandCtx context.Context, binary string, args ...string) *exec.Cmd {
+				if args[0] == "create" || args[0] == "cp" {
+					deadline, ok := commandCtx.Deadline()
+					if !ok || deadline.After(callerDeadline) || time.Until(deadline) > 45*time.Second {
+						t.Errorf("%s lost its own budget or the earlier caller deadline: %v", args[0], deadline)
+					}
+					if callerTimeout < 45*time.Second && !deadline.Equal(callerDeadline) {
+						t.Errorf("%s did not preserve the earlier caller deadline", args[0])
+					}
+				}
+				return commandContext(commandCtx, binary, args...)
+			}
+			node, config := dockerTestConfig(t, false)
+			if _, _, err := d.create(ctx, node, config); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

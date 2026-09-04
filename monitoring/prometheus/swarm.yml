@@ -1,0 +1,20 @@
+global:
+  scrape_interval: 5s
+  scrape_timeout: 4s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: kpl-controller
+    static_configs:
+      - targets: [controller:8080]
+  - job_name: kpl-agent
+    # This service alias is scoped to the stack's private monitoring overlay.
+    # Resolve every task instead of scraping a load-balanced service VIP.
+    dns_sd_configs:
+      - names: [tasks.agent]
+        type: A
+        port: 8090
+        refresh_interval: 5s
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]

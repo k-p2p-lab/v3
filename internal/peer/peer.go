@@ -69,10 +69,13 @@ func Run(ctx context.Context, configPath string, logger *slog.Logger) error {
 	if err := json.Unmarshal(data, &config); err != nil {
 		return fmt.Errorf("decode peer config: %w", err)
 	}
-	if err := prepareNetwork(ctx, config); err != nil {
+	config, err = preparePeerNetwork(ctx, config, agentRouteSourceIPv4, prepareNetwork)
+	if err != nil {
 		return err
 	}
-	server, err := New(ctx, config, logger)
+	// Address discovery has already completed before netem. Avoid repeating a
+	// DNS lookup here, since scope all can deliberately impair that lookup.
+	server, err := newServer(ctx, config, logger)
 	if err != nil {
 		return err
 	}
@@ -80,6 +83,14 @@ func Run(ctx context.Context, configPath string, logger *slog.Logger) error {
 }
 
 func New(ctx context.Context, config model.PeerProcessConfig, logger *slog.Logger) (*Server, error) {
+	config, err := resolveDockerP2PListen(ctx, config, agentRouteSourceIPv4)
+	if err != nil {
+		return nil, err
+	}
+	return newServer(ctx, config, logger)
+}
+
+func newServer(ctx context.Context, config model.PeerProcessConfig, logger *slog.Logger) (*Server, error) {
 	if config.Node.ID == "" || config.Node.RunID == "" || config.AgentURL == "" || config.ControllerURL == "" {
 		return nil, fmt.Errorf("peer config requires node, run, agent, and controller")
 	}
@@ -99,6 +110,18 @@ func New(ctx context.Context, config model.PeerProcessConfig, logger *slog.Logge
 		return nil, err
 	}
 	options = append(options, libp2p.Identity(identity), libp2p.ListenAddrStrings(config.P2PListen))
+	if config.Runtime == "docker" {
+		address, err := multiaddr.NewMultiaddr(config.P2PListen)
+		if err != nil {
+			return nil, fmt.Errorf("Docker P2P address: %w", err)
+		}
+		// Overlay containers can also have a host-local docker_gwbridge
+		// address. Neither that address nor observed NAT/relay addresses
+		// should enter Identify or the bootstrap registry for this peer.
+		options = append(options, libp2p.AddrsFactory(func([]multiaddr.Multiaddr) []multiaddr.Multiaddr {
+			return []multiaddr.Multiaddr{address}
+		}))
+	}
 	h, err := libp2p.New(options...)
 	if err != nil {
 		return nil, fmt.Errorf("create libp2p host: %w", err)
@@ -402,6 +425,7 @@ func (s *Server) reportStatus(ctx context.Context, state, message string) error 
 	node.Error = message
 	node.StartedAt = s.startedAt
 	node.LastSeen = time.Now().UTC()
+	node.Addresses = nil
 	for _, address := range s.host.Addrs() {
 		node.Addresses = append(node.Addresses, address.String())
 	}

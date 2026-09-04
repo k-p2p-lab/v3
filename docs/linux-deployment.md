@@ -69,6 +69,8 @@ Peer는 IPv4 컨테이너 주소와 TCP 20000으로 통신하며, 제어 API는 
 
 ## Linux 검증 경로
 
+Swarm 다중 서버에서는 [전용 배포 구성과 노드 분배 가이드](swarm.md)를 먼저 확인하십시오. 단일 호스트 Compose를 replica만 늘려 배포하는 방식은 지원하지 않습니다.
+
 ```sh
 # 호스트의 Go 설치 없이 Linux에서 전체 Go 테스트를 실행합니다.
 docker build --target test -t kpl-v3:test .

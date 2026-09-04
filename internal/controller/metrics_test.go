@@ -221,7 +221,7 @@ func TestMetricsBytesLatencyFailuresAndDrops(t *testing.T) {
 
 func TestMetricsCurrentStateAggregationAndTransitions(t *testing.T) {
 	s := newState(t.TempDir())
-	seen := time.Unix(1700000000, 0)
+	seen := time.Now().UTC().Truncate(time.Second)
 	s.agents["agent"] = model.Agent{ID: "agent", State: model.AgentOnline, Capacity: 8, ActiveNodes: 2, LastSeen: seen}
 	for _, id := range []string{"one", "two"} {
 		s.nodes[id] = model.Node{ID: id, RunID: "run", AgentID: "agent", Group: "workers", Role: "worker", Type: "full", State: model.NodeReady}

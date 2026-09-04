@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/k-p2p-lab/v3/internal/model"
 )
@@ -75,10 +74,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	writeJSON(w, http.StatusOK, model.AgentHeartbeat{
-		Agent: model.Agent{ID: s.config.ID, Name: s.config.Name, URL: s.config.AdvertiseURL, Capacity: s.config.Capacity, ActiveNodes: activeNodeCount(s.nodes()), State: model.AgentOnline, StartedAt: s.startedAt, LastSeen: time.Now().UTC()},
-		Nodes: s.nodes(),
-	})
+	writeJSON(w, http.StatusOK, s.snapshot())
 }
 
 func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {

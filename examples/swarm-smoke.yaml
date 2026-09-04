@@ -1,0 +1,28 @@
+# Run on at least two online Swarm Agents with total capacity >= 6.
+# Equal capacities distribute six peers evenly; inspect agentId and addresses.
+version: 2
+name: swarm-distribution-smoke
+seed: 90204
+profiles:
+  boot:
+    type: boot
+    gossipsub:
+      enabled: true
+      topics: [kpl/swarm]
+  worker:
+    type: full
+    gossipsub:
+      topics: [kpl/swarm]
+    network:
+      delay: 25ms
+      jitter: 2ms
+      lossPercent: 0.5
+phases:
+  - {action: join, group: boot, role: boot, profile: boot, count: 1}
+  - {action: wait-ready, group: boot, readyRatio: 1, timeout: 1m}
+  - {action: join, group: worker, role: worker, profile: worker, count: 5, placement: balanced, parallel: true, parallelism: 4}
+  - {action: wait-ready, group: worker, readyRatio: 1, timeout: 2m}
+  - {action: wait, duration: 20s}
+  - {action: publish, group: worker, topic: kpl/swarm, count: 5, repeat: 10, payloadSize: 4096, interval: {model: fixed, value: 200ms}}
+  - {action: wait, duration: 1m}
+  - {action: stop-all}

@@ -241,24 +241,19 @@ func (s *Server) controlLoop(ctx context.Context) {
 }
 
 func (s *Server) register(ctx context.Context) error {
-	hostname, _ := os.Hostname()
-	agent := model.Agent{
-		ID:        s.config.ID,
-		Name:      s.config.Name,
-		URL:       strings.TrimRight(s.config.AdvertiseURL, "/"),
-		Hostname:  hostname,
-		Version:   "v3-dev",
-		Capacity:  s.config.Capacity,
-		State:     model.AgentOnline,
-		Labels:    s.config.Labels,
-		StartedAt: s.startedAt,
-	}
-	return s.postJSON(ctx, "/api/v1/agents/register", agent, nil)
+	return s.postJSON(ctx, "/api/v1/agents/register", s.snapshot().Agent, nil)
 }
 
 func (s *Server) heartbeat(ctx context.Context) error {
-	nodes := s.nodes()
+	return s.postJSON(ctx, "/api/v1/agents/heartbeat", s.snapshot(), nil)
+}
+
+// Capture node states, occupied capacity and observation time under one lock.
+// The Controller can compare heartbeat and status responses even when those
+// requests cross in flight or an Agent task has restarted on the same host.
+func (s *Server) snapshot() model.AgentHeartbeat {
 	hostname, _ := os.Hostname()
+	s.mu.RLock()
 	h := model.AgentHeartbeat{
 		Agent: model.Agent{
 			ID:          s.config.ID,
@@ -267,14 +262,20 @@ func (s *Server) heartbeat(ctx context.Context) error {
 			Hostname:    hostname,
 			Version:     "v3-dev",
 			Capacity:    s.config.Capacity,
-			ActiveNodes: activeNodeCount(nodes),
+			ActiveNodes: s.capacityUsedLocked(),
 			State:       model.AgentOnline,
 			Labels:      s.config.Labels,
 			StartedAt:   s.startedAt,
+			LastSeen:    time.Now().UTC(),
 		},
-		Nodes: nodes,
+		Nodes: make([]model.Node, 0, len(s.processes)),
 	}
-	return s.postJSON(ctx, "/api/v1/agents/heartbeat", h, nil)
+	for _, proc := range s.processes {
+		h.Nodes = append(h.Nodes, proc.node)
+	}
+	s.mu.RUnlock()
+	sort.Slice(h.Nodes, func(i, j int) bool { return h.Nodes[i].ID < h.Nodes[j].ID })
+	return h
 }
 
 func (s *Server) createNode(ctx context.Context, request model.CreateNodeRequest) (model.Node, error) {
@@ -313,7 +314,7 @@ func (s *Server) createNode(ctx context.Context, request model.CreateNodeRequest
 		s.mu.Unlock()
 		return model.Node{}, fmt.Errorf("node %q already exists", request.ID)
 	}
-	if activeNodeCountLocked(s.processes) >= s.config.Capacity {
+	if s.capacityUsedLocked() >= s.config.Capacity {
 		s.mu.Unlock()
 		return model.Node{}, fmt.Errorf("agent capacity reached")
 	}
@@ -680,6 +681,22 @@ func activeNodeCountLocked(processes map[string]*process) int {
 	count := 0
 	for _, proc := range processes {
 		if proc.node.State != model.NodeStopping && proc.node.State != model.NodeStopped && proc.node.State != model.NodeFailed {
+			count++
+		}
+	}
+	return count
+}
+
+// A Docker slot is occupied from admission until its container is confirmed
+// removed. Stopping and failed-cleanup peers still use the host's resources.
+// Caller holds Server.mu. Process mode retains its existing admission policy.
+func (s *Server) capacityUsedLocked() int {
+	if s.config.Runtime != "docker" {
+		return activeNodeCountLocked(s.processes)
+	}
+	count := 0
+	for _, proc := range s.processes {
+		if !proc.exited || proc.cleanupErr != nil {
 			count++
 		}
 	}
