@@ -116,3 +116,51 @@ func TestTopologyInspectorAndControlsStayInsideTopologyPanel(t *testing.T) {
 		}
 	}
 }
+
+func TestTopologyLayoutScriptIsEmbeddedAndLoadsBeforeApplication(t *testing.T) {
+	for _, name := range []string{"topology-layout.js", "app.js"} {
+		content, err := fs.ReadFile(FS(), name)
+		if err != nil || len(content) == 0 {
+			t.Fatalf("embedded script %s is missing or empty: %v", name, err)
+		}
+	}
+	content, err := fs.ReadFile(FS(), "index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := html.Parse(strings.NewReader(string(content)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var scripts []string
+	var visit func(*html.Node)
+	visit = func(node *html.Node) {
+		if node.Type == html.ElementNode && node.Data == "script" {
+			var source string
+			deferred, async := false, false
+			for _, attr := range node.Attr {
+				switch attr.Key {
+				case "src":
+					source = attr.Val
+				case "defer":
+					deferred = true
+				case "async":
+					async = true
+				}
+			}
+			if source == "/topology-layout.js" || source == "/app.js" {
+				if !deferred || async {
+					t.Errorf("%s must use ordered deferred loading", source)
+				}
+				scripts = append(scripts, source)
+			}
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			visit(child)
+		}
+	}
+	visit(document)
+	if !reflect.DeepEqual(scripts, []string{"/topology-layout.js", "/app.js"}) {
+		t.Fatalf("layout engine must load exactly once before app.js; got %v", scripts)
+	}
+}

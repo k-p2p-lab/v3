@@ -4,7 +4,9 @@ English | [Korean](topology.kr.md)
 
 ## Read the graph
 
-The Control Room shows a full-width interactive topology grouped by Agent number. Numbers match **Agent status → No.** Each Peer has a local slot number inside its Agent's card; select it to see the full node and Peer IDs. Slots are reused after departures, so a slot is a display position, not a persistent node identity. Ordinary churn preserves the positions of surviving Peers. The layout can expand when occupancy exceeds its previous size.
+The Control Room shows a full-width interactive topology with equally sized, wedge-shaped sectors for Agents. Agent numbers match **Agent status → No.** Each Peer has a local display number inside its Agent's sector; select it to see the full node and Peer IDs. The number helps identify a Peer on screen and does not fix its position. Display numbers can be reused after a Peer departs; use the full IDs for persistent identity.
+
+Peers settle gradually within their Agent's sector. Visible links apply spring-like forces, while repulsion and collision handling spread nearby Peers apart. Peers stay inside their assigned sector as they move. Changes to Peers or visible relationships restart the layout briefly; it stops when settled instead of adding continuous random movement. Placement is a display aid and does not change protocol behavior or experiment results.
 
 Use the independent checkboxes above the graph:
 
@@ -14,11 +16,15 @@ Use the independent checkboxes above the graph:
 | **GossipSub mesh** | On | Thicker orange solid | A Peer reports accepted GRAFT mesh membership for the selected topic(s). |
 | **Transport** | Off | Thin muted gray | An active libp2p transport connection reported by a Peer. |
 
-Turning off a layer only hides its lines; it does not disable that protocol or change the experiment. **GossipSub topic** filters mesh relationships and leaves the other layers unchanged. In **All topics**, a pair's mesh relations are combined into one visual line, with the topic evidence retained in the details. The summary's **Transport links** counts unique transport pairs, not the sum of all three layers.
+Turning off a layer hides its lines and updates the layout forces to use the remaining visible relationships; it does not disable that protocol or change the experiment. **GossipSub topic** filters mesh relationships while preserving the other layers. Changing these filters can reposition Peers within their sectors. In **All topics**, a pair's mesh relations are combined into one visual line, with the topic evidence retained in the details. The summary's **Transport links** counts unique transport pairs, not the sum of all three layers.
 
-Hover over a Peer to emphasize its visible neighbors and dim unrelated lines. Select a Peer to retain its details, including Agent/slot, full IDs, profile, network settings, and reporting endpoints. **Clear selection** or Escape clears the selection. Use **+ / −** or Ctrl/Command + scroll to zoom, drag the graph background to pan, and **Fit** to show the whole layout. Peers support keyboard focus and Enter/Space selection.
+Hover over a Peer to emphasize its visible neighbors and dim unrelated lines. Select a Peer to retain its details, including Agent/Peer display numbers, full IDs, profile, network settings, and reporting endpoints. **Clear selection** or Escape clears the selection. Use **+ / −** or Ctrl/Command + scroll to zoom, drag the graph background to pan, and **Fit** to show the whole layout. Peers support keyboard focus and Enter/Space selection.
 
-Agent capacity does not reserve thousands of blank visual slots. Occupied slots determine the necessary card height. Dense experiments still benefit from topic filtering, layer toggles, and zooming into a selected Agent or Peer.
+**Pause motion** keeps existing Peer positions while leaving filters, selection, zoom, and pan available. New Peers and changes to Agent sectors still appear immediately. **Resume motion** lets the layout settle again.
+
+With the operating system or browser's reduced-motion preference enabled, animated settling is off by default. The initial layout and relationship changes use a bounded settling calculation and display the result without intermediate animation. You can explicitly choose **Resume motion** to enable animation.
+
+Agent sectors have equal angles, and configured capacity does not reserve empty Peer positions. Dense experiments can still look crowded; use topic filtering, layer toggles, and zoom to inspect a selected Agent or Peer.
 
 ## What each line establishes
 
@@ -54,4 +60,4 @@ These snapshots are live state, not a complete historical topology database. Sav
 
 ## Development checks
 
-Run `go test ./...` for Peer mesh/DHT snapshots, Agent ordering/copying, Controller edges/freshness, and embedded HTML checks. Run `node --test internal/webui/topology_test.cjs` with a modern Node.js runtime for layer/topic filters, churn layout, camera behavior, and DOM interaction regressions. The JavaScript tests use built-in Node.js modules and require no npm packages. These checks do not replace a browser visual review or a real multi-server experiment.
+Run `go test ./...` for Peer mesh/DHT snapshots, Agent ordering/copying, Controller edges/freshness, and embedded HTML checks. Run `node --test internal/webui/topology_test.cjs internal/webui/topology-layout_test.cjs` with a modern Node.js runtime for layer/topic filters, sector layout and settling, churn, camera behavior, and DOM interaction regressions. The JavaScript tests use built-in Node.js modules and require no npm packages. These checks do not replace a browser visual review or a real multi-server experiment.

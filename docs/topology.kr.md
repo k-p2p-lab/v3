@@ -4,7 +4,9 @@
 
 ## 화면 사용법
 
-Control Room은 전체 폭의 대화형 토폴로지를 Agent 번호별 구획으로 표시합니다. 번호는 **Agent status → No.**와 연결됩니다. 각 Peer에는 Agent 내부 슬롯 번호가 표시되며 선택하면 전체 Node ID와 Peer ID를 확인할 수 있습니다. 이탈 후 슬롯은 재사용하므로 슬롯 번호는 영구 식별자가 아닌 화면 위치입니다. 일반적인 churn에서는 생존 Peer의 위치를 유지하고, 점유량이 기존 크기를 넘으면 배치가 확장될 수 있습니다.
+Control Room은 전체 폭의 대화형 토폴로지를 같은 크기의 Agent별 부채꼴 영역으로 표시합니다. Agent 번호는 **Agent status → No.**와 연결됩니다. 각 Peer에는 Agent 내부 표시 번호가 붙으며 선택하면 전체 Node ID와 Peer ID를 확인할 수 있습니다. 이 번호는 화면에서 Peer를 구분하기 위한 것으로 위치를 고정하지 않습니다. Peer 이탈 후 표시 번호는 재사용될 수 있으므로 영구 식별에는 전체 ID를 사용하십시오.
+
+Peer는 소속 Agent의 부채꼴 안에서 서서히 자리를 잡습니다. 표시된 연결에는 스프링과 같은 인력이 작용하고, 반발력과 충돌 처리가 가까운 Peer들을 분산시킵니다. 이동 중에도 소속 영역 밖으로 나가지 않습니다. Peer나 표시 관계가 바뀌면 배치 조정을 다시 시작하고, 안정되면 멈추므로 무작위로 계속 움직이지 않습니다. 이 배치는 화면 표시를 위한 것으로 프로토콜 동작이나 실험 결과를 바꾸지 않습니다.
 
 그래프 위 체크박스를 각각 조작하십시오.
 
@@ -14,11 +16,15 @@ Control Room은 전체 폭의 대화형 토폴로지를 Agent 번호별 구획�
 | **GossipSub mesh** | 켬 | 굵은 주황 실선 | 선택한 topic에서 수락된 GRAFT mesh 관계 |
 | **Transport** | 끔 | 가는 회색 선 | Peer가 보고한 활성 libp2p transport 연결 |
 
-체크를 해제하면 선만 숨깁니다. 프로토콜이나 실험 실행을 끄지는 않습니다. **GossipSub topic** 필터는 mesh에만 적용하며 다른 레이어는 유지합니다. **All topics**에서는 같은 쌍의 여러 topic 관계를 한 선으로 합치되 세부 정보에 topic별 근거를 유지합니다. 상단 **Transport links**는 세 레이어의 합이 아닌 고유 transport 연결 쌍 수입니다.
+체크를 해제하면 해당 선을 숨기고 남은 표시 관계를 기준으로 배치의 힘을 다시 계산합니다. 프로토콜이나 실험 실행을 끄지는 않습니다. **GossipSub topic** 필터는 mesh에만 적용하며 다른 레이어는 유지합니다. 필터를 바꾸면 Peer가 각자의 부채꼴 안에서 재배치될 수 있습니다. **All topics**에서는 같은 쌍의 여러 topic 관계를 한 선으로 합치되 세부 정보에 topic별 근거를 유지합니다. 상단 **Transport links**는 세 레이어의 합이 아닌 고유 transport 연결 쌍 수입니다.
 
-Peer에 마우스를 올리면 현재 표시 중인 이웃 연결을 강조하고 관련 없는 선을 흐리게 표시합니다. 선택하면 Agent·슬롯, 전체 ID, profile, 네트워크 설정, 보고한 endpoint 정보를 유지합니다. **Clear selection** 또는 Escape로 선택을 해제합니다. **+ / −**, Ctrl/Command + 스크롤로 확대·축소하고, 배경을 드래그해 이동하며, **Fit**으로 전체 배치를 맞춥니다. 키보드 초점 이동과 Enter/Space 선택도 지원합니다.
+Peer에 마우스를 올리면 현재 표시 중인 이웃 연결을 강조하고 관련 없는 선을 흐리게 표시합니다. 선택하면 Agent·Peer 표시 번호, 전체 ID, profile, 네트워크 설정, 보고한 endpoint 정보를 유지합니다. **Clear selection** 또는 Escape로 선택을 해제합니다. **+ / −**, Ctrl/Command + 스크롤로 확대·축소하고, 배경을 드래그해 이동하며, **Fit**으로 전체 배치를 맞춥니다. 키보드 초점 이동과 Enter/Space 선택도 지원합니다.
 
-Agent capacity가 크다는 이유로 수천 개의 빈 슬롯을 예약하지 않습니다. 점유 슬롯을 기준으로 필요한 구획 높이를 결정합니다. 큰 실험에서는 topic 필터와 레이어 체크박스를 사용하고 관심 Agent·Peer를 확대해 확인하십시오.
+**Pause motion**을 누르면 기존 Peer의 위치를 유지하면서 필터, 선택, 확대·축소와 화면 이동을 계속 사용할 수 있습니다. 새 Peer와 Agent 영역 변경은 즉시 반영합니다. **Resume motion**으로 배치 조정을 재개합니다.
+
+운영체제나 브라우저의 동작 줄이기 설정을 사용하면 기본적으로 안정화 애니메이션을 끕니다. 최초 배치와 관계 변경에는 제한된 정착 계산을 적용하고 중간 이동 과정 없이 결과를 표시합니다. **Resume motion**을 직접 선택하면 애니메이션을 켤 수 있습니다.
+
+Agent 영역의 각도는 같으며 설정한 capacity만큼 빈 Peer 위치를 예약하지 않습니다. Peer가 많은 실험은 여전히 조밀하게 보일 수 있으므로 topic 필터와 레이어 체크박스를 사용하고 관심 Agent·Peer를 확대해 확인하십시오.
 
 ## 선의 정확한 의미
 
@@ -54,4 +60,4 @@ overlay 보고가 없는 이전 Peer는 Transport 선만 제공합니다. 화면
 
 ## 개발 검증
 
-`go test ./...`로 Peer mesh·DHT snapshot, Agent 순서·복사, Controller edge·신선도, 내장 HTML을 검사합니다. 최신 Node.js 환경에서 `node --test internal/webui/topology_test.cjs`로 레이어·topic 필터, churn 배치, 카메라와 DOM 조작 회귀를 검사합니다. JavaScript 테스트는 Node.js 내장 모듈만 사용하며 npm 패키지 설치가 필요 없습니다. 이 검사는 브라우저 화면 검토나 실제 다중 서버 실험을 대신하지 않습니다.
+`go test ./...`로 Peer mesh·DHT snapshot, Agent 순서·복사, Controller edge·신선도, 내장 HTML을 검사합니다. 최신 Node.js 환경에서 `node --test internal/webui/topology_test.cjs internal/webui/topology-layout_test.cjs`로 레이어·topic 필터, 부채꼴 배치와 안정화, churn, 카메라와 DOM 조작 회귀를 검사합니다. JavaScript 테스트는 Node.js 내장 모듈만 사용하며 npm 패키지 설치가 필요 없습니다. 이 검사는 브라우저 화면 검토나 실제 다중 서버 실험을 대신하지 않습니다.

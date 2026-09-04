@@ -7,10 +7,11 @@ const state = {
   pendingStops: new Set(), deletedResultIDs: new Set(),
   pendingDelete: null, deletingResultId: null, apiToken: null,
   topology: {
-    layout: { agents: new Map(), columns: 0, cellHeight: 260 },
+    layout: {},
     filters: { kademlia: true, gossipsub: true, transport: false, topic: "" },
     selected: null, hovered: null, graph: null,
     camera: { x: 0, y: 0, scale: 1 }, autoFit: true, drag: null,
+    motion: { enabled: true, reduced: false, overridden: false, frame: null, lastFrame: 0 },
   },
 };
 
@@ -165,40 +166,6 @@ function observedTopologyTopics(nodes, edges) {
   for (const node of nodes) for (const topic of Object.keys(node.meshPeers || {})) topics.add(topic);
   for (const edge of edges) if (edge.protocol === "gossipsub" && edge.topic) topics.add(edge.topic);
   return [...topics].sort();
-}
-
-function layoutTopology(nodes, agents, memory, width) {
-  const columnCount = 8, cellWidth = 420, gap = 28, step = 46;
-  if (!memory.columns) memory.columns = Math.max(1, Math.min(3, Math.floor(width / cellWidth)));
-  const agentIDs = [...new Set([...agents.map((agent) => agent.id), ...nodes.map((node) => node.agentId)])];
-  for (const id of agentIDs) {
-    if (!memory.agents.has(id)) memory.agents.set(id, { index: memory.agents.size, slots: new Map() });
-  }
-  const liveIDs = new Set(nodes.map((node) => node.id));
-  for (const [id, group] of memory.agents) {
-    const localIDs = new Set(nodes.filter((node) => node.agentId === id).map((node) => node.id));
-    for (const nodeID of group.slots.keys()) if (!liveIDs.has(nodeID) || !localIDs.has(nodeID)) group.slots.delete(nodeID);
-    const used = new Set(group.slots.values());
-    let freeSlot = 0;
-    for (const node of nodes.filter((node) => node.agentId === id).sort((a, b) => a.id.localeCompare(b.id))) {
-      if (group.slots.has(node.id)) continue;
-      while (used.has(freeSlot)) freeSlot++;
-      group.slots.set(node.id, freeSlot);
-      used.add(freeSlot);
-    }
-    let occupiedSlots = 32;
-    for (const slot of used) occupiedSlots = Math.max(occupiedSlots, slot + 1);
-    memory.cellHeight = Math.max(memory.cellHeight, 84 + Math.ceil(occupiedSlots / columnCount) * step);
-  }
-  const positions = new Map();
-  const groups = agentIDs.map((id) => {
-    const group = memory.agents.get(id);
-    const x = (group.index % memory.columns) * (cellWidth + gap);
-    const y = Math.floor(group.index / memory.columns) * (memory.cellHeight + gap);
-    for (const [nodeID, slot] of group.slots) positions.set(nodeID, { x: x + 48 + (slot % columnCount) * step, y: y + 86 + Math.floor(slot / columnCount) * step, slot: slot + 1 });
-    return { id, x, y, width: cellWidth, height: memory.cellHeight, count: group.slots.size };
-  });
-  return { positions, groups, bounds: { width: Math.max(1, ...groups.map((group) => group.x + group.width)), height: Math.max(1, ...groups.map((group) => group.y + group.height)) } };
 }
 
 function fitTopologyCamera(bounds, width, height) {
@@ -514,6 +481,7 @@ function svgElement(tag, attributes = {}, text) {
 function renderTopology(nodes, edges) {
   ({ nodes, edges } = topologyData(nodes, edges));
   const topology = state.topology;
+  stopTopologyMotion();
   rememberAgents(nodes.map((node) => node.agentId));
   if (!nodes.some((node) => node.id === topology.selected)) topology.selected = null;
   if (!nodes.some((node) => node.id === topology.hovered)) topology.hovered = null;
@@ -536,31 +504,47 @@ function renderTopology(nodes, edges) {
   const focusedNodeID = document.activeElement?.closest?.("[data-node-id]")?.dataset.nodeId;
   const width = svg.clientWidth || 1000, height = svg.clientHeight || 560;
   const layout = layoutTopology(nodes, agents, topology.layout, width);
-  topology.graph = { nodes, edges: connections, ...layout, width, height };
+  const signature = JSON.stringify([
+    nodes.map((node) => [node.id, node.agentId]).sort(),
+    connections.map((edge) => [edge.source, edge.target, edge.protocol, edge.topics]).sort(),
+    layout.groups.map((group) => group.id), layout.bounds,
+  ]);
+  const changed = topology.signature !== signature;
+  topology.signature = signature;
+  const graph = { nodes, edges: connections, ...layout, width, height, peerElements: [], edgeElements: [] };
+  topology.graph = graph;
+  if (changed) {
+    reheatTopologyLayout(graph);
+    // Respect reduced motion without sacrificing a readable initial layout.
+    // User-paused layouts retain their existing positions instead.
+    if (topology.motion.reduced && !topology.motion.overridden) {
+      for (let i = 0; i < 36; i++) stepTopologyLayout(graph, connections, { pinnedID: topology.selected });
+    }
+  }
   $("#topologyEmpty").hidden = nodes.length > 0;
   $("#topologyLinkCount").textContent = `${formatNumber(nodes.length)} Peers · ${formatNumber(connections.length)} visible links`;
   const observed = nodes.filter((node) => node.overlayObservedAt && !node.overlayObservedAt.startsWith("0001-")).length;
   $("#topologyReportStatus").textContent = nodes.length && observed < nodes.length
     ? `Overlay reports: ${observed}/${nodes.length} Peers. Waiting for reports from the remaining Peers; older Peers may report transport only.`
-    : "Lines show reported relationships, not packet traffic. Select a Peer to inspect its visible neighbors.";
+    : "Each slice is an Agent. Peers arrange around their visible connections; lines show relationships, not packet traffic.";
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   const world = svgElement("g", { id: "topologyWorld" });
   svg.replaceChildren(world);
-  for (const group of layout.groups) {
-    const background = svgElement("g", { class: "topology-agent" });
-    background.append(svgElement("rect", { x: group.x, y: group.y, width: group.width, height: group.height, rx: 14, class: "topology-agent-background" }));
-    background.append(svgElement("text", { x: group.x + 22, y: group.y + 34, class: "topology-label", "aria-label": `Agent ${agentNumber(group.id)}` }, agentNumber(group.id)));
-    background.append(svgElement("text", { x: group.x + group.width - 22, y: group.y + 32, "text-anchor": "end", class: "topology-agent-count" }, `${group.count} Peers`));
+  for (const [index, group] of layout.groups.entries()) {
+    const background = svgElement("g", { class: "topology-agent", style: `--sector-hue: ${200 + (index % 4) * 17}` });
+    background.append(svgElement("path", { d: topologySectorPath(group), class: "topology-agent-background" }));
+    const label = svgElement("g", { class: "topology-agent-heading", transform: `translate(${group.labelX} ${group.labelY})` });
+    label.append(svgElement("rect", { x: -21, y: -18, width: 42, height: 32, rx: 11, class: "topology-agent-badge" }));
+    label.append(svgElement("text", { x: 0, y: 5, "text-anchor": "middle", class: "topology-label", "aria-label": `Agent ${agentNumber(group.id)}` }, agentNumber(group.id)));
+    label.append(svgElement("text", { x: 0, y: 31, "text-anchor": "middle", class: "topology-agent-count" }, `${group.count} Peers`));
+    label.append(svgElement("title", {}, `Agent ${agentNumber(group.id)} · ${group.id}`));
+    background.append(label);
     world.append(background);
   }
   // Paint low-emphasis transport/routing relations below the GossipSub mesh.
   const order = { transport: 0, kademlia: 1, gossipsub: 2 };
   for (const edge of [...connections].sort((a, b) => order[a.protocol] - order[b.protocol])) {
-    const a = layout.positions.get(edge.source), b = layout.positions.get(edge.target);
-    const dx = b.x - a.x, dy = b.y - a.y, distance = Math.max(1, Math.hypot(dx, dy));
-    const bend = edge.protocol === "kademlia" ? -12 : edge.protocol === "gossipsub" ? 12 : 0;
     const path = svgElement("path", {
-      d: `M ${a.x} ${a.y} Q ${(a.x + b.x) / 2 - dy / distance * bend} ${(a.y + b.y) / 2 + dx / distance * bend} ${b.x} ${b.y}`,
       class: `topology-edge ${edge.protocol}`, "data-source": edge.source, "data-target": edge.target,
     });
     const layer = edge.protocol === "gossipsub" ? "GossipSub mesh" : edge.protocol === "kademlia" ? "Kademlia routing" : "Transport";
@@ -569,6 +553,15 @@ function renderTopology(nodes, edges) {
       : edge.reportedBy.join(", ") || "reporter not available";
     path.append(svgElement("title", {}, `${layer}: ${edge.source} — ${edge.target}\nReported by: ${reports}`));
     world.append(path);
+    graph.edgeElements.push({ element: path, edge });
+  }
+  if (layout.groups.length) {
+    const { cx, cy } = layout.groups[0];
+    const hub = svgElement("g", { class: "topology-hub", transform: `translate(${cx} ${cy})` });
+    hub.append(svgElement("circle", { r: 32 }));
+    hub.append(svgElement("text", { "text-anchor": "middle", y: 2, class: "topology-hub-count" }, formatNumber(nodes.length)));
+    hub.append(svgElement("text", { "text-anchor": "middle", y: 17, class: "topology-hub-label" }, "PEERS"));
+    world.append(hub);
   }
   for (const node of nodes) {
     const point = layout.positions.get(node.id);
@@ -578,18 +571,67 @@ function renderTopology(nodes, edges) {
       "aria-label": `Peer ${point.slot}, Agent ${agentNumber(node.agentId)}: ${node.id}, ${node.state}`,
       "aria-pressed": String(topology.selected === node.id),
     });
-    peer.append(svgElement("circle", { cx: point.x, cy: point.y, r: 17, class: "topology-hit-area" }));
-    peer.append(svgElement("circle", { cx: point.x, cy: point.y, r: node.role === "boot" ? 8 : 6.5, class: `topology-node ${mode}` }));
-    peer.append(svgElement("text", { x: point.x, y: point.y + 25, "text-anchor": "middle", class: "topology-slot" }, point.slot));
+    peer.append(svgElement("circle", { r: 17, class: "topology-hit-area" }));
+    peer.append(svgElement("circle", { r: node.role === "boot" ? 8 : 6.5, class: `topology-node ${mode}` }));
+    peer.append(svgElement("text", { x: 0, y: 20, "text-anchor": "middle", class: "topology-slot" }, point.slot));
     peer.append(svgElement("title", {}, `${node.id}\nAgent ${agentNumber(node.agentId)} · ${node.role} · ${node.state}\nSelect to inspect relationships and Peer details.`));
     world.append(peer);
+    graph.peerElements.push({ element: peer, id: node.id });
   }
+  paintTopologyPositions();
   if (topology.autoFit) topology.camera = fitTopologyCamera(layout.bounds, width, height);
   applyTopologyCamera();
   highlightTopology();
   if (focusedNodeID) {
     [...svg.querySelectorAll("[data-node-id]")].find((peer) => peer.dataset.nodeId === focusedNodeID)?.focus({ preventScroll: true });
   }
+  updateTopologyMotionControl();
+  startTopologyMotion();
+}
+
+function paintTopologyPositions() {
+  const graph = state.topology.graph;
+  if (!graph) return;
+  for (const { element, id } of graph.peerElements) {
+    const point = graph.positions.get(id);
+    element.setAttribute("transform", `translate(${point.x} ${point.y})`);
+  }
+  for (const { element, edge } of graph.edgeElements) {
+    const a = graph.positions.get(edge.source), b = graph.positions.get(edge.target);
+    const dx = b.x - a.x, dy = b.y - a.y, distance = Math.max(1, Math.hypot(dx, dy));
+    const bend = edge.protocol === "kademlia" ? -12 : edge.protocol === "gossipsub" ? 12 : 0;
+    element.setAttribute("d", `M ${a.x} ${a.y} Q ${(a.x + b.x) / 2 - dy / distance * bend} ${(a.y + b.y) / 2 + dx / distance * bend} ${b.x} ${b.y}`);
+  }
+}
+
+function stopTopologyMotion() {
+  const motion = state.topology.motion;
+  if (motion.frame !== null) cancelAnimationFrame(motion.frame);
+  motion.frame = null;
+}
+
+function startTopologyMotion() {
+  const topology = state.topology, motion = topology.motion;
+  if (!motion.enabled || document.hidden || !topology.graph?.nodes.length || motion.frame !== null) return;
+  motion.frame = requestAnimationFrame(animateTopology);
+}
+
+function animateTopology(timestamp) {
+  const topology = state.topology, motion = topology.motion;
+  motion.frame = null;
+  if (!motion.enabled || document.hidden || !topology.graph) return;
+  // Cap work at 30 frames/s and avoid a jump after a background-tab pause.
+  if (topology.drag || timestamp - motion.lastFrame < 1000 / 30) { startTopologyMotion(); return; }
+  motion.lastFrame = timestamp;
+  const moving = stepTopologyLayout(topology.graph, topology.graph.edges, { pinnedID: topology.hovered || topology.selected });
+  paintTopologyPositions();
+  if (moving) startTopologyMotion();
+}
+
+function updateTopologyMotionControl() {
+  const button = $("#topologyMotion"), motion = state.topology.motion;
+  button.textContent = motion.enabled ? "Pause motion" : "Resume motion";
+  button.setAttribute("aria-pressed", String(!motion.enabled));
 }
 
 function applyTopologyCamera() {
@@ -659,7 +701,7 @@ function renderTopologyDetails(node) {
   const dht = metadata.dhtEnabled === "false" ? "Off" : metadata.dhtMode || "server";
   const entries = [
     ["Node ID", node.id], ["Peer ID", node.peerId || "Not reported"],
-    ["Placement", `Agent ${agentNumber(node.agentId)} · Slot ${graph.positions.get(node.id).slot} · ${node.group || node.role || "—"}`],
+    ["Placement", `Agent ${agentNumber(node.agentId)} · Peer ${graph.positions.get(node.id).slot} · ${node.group || node.role || "—"}`],
     ["State / profile", `${node.state} · ${node.type || node.role || "—"}${node.profile ? ` · ${node.profile}` : ""}`],
     ["Overlay observed", formatResultTime(node.overlayObservedAt)],
     ["Reported peers", `${(node.routingPeers || []).length} routing · ${Object.values(node.meshPeers || {}).reduce((sum, peers) => sum + (peers || []).length, 0)} mesh memberships · ${(node.connectedPeers || []).length} transport`],
@@ -683,6 +725,32 @@ function renderTopologyDetails(node) {
 }
 
 function setupTopologyControls() {
+  const motion = state.topology.motion;
+  const preference = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+  const applyPreference = () => {
+    motion.reduced = Boolean(preference?.matches);
+    if (!motion.overridden) motion.enabled = !motion.reduced;
+    updateTopologyMotionControl();
+    if (!motion.enabled) stopTopologyMotion();
+    else startTopologyMotion();
+  };
+  applyPreference();
+  preference?.addEventListener("change", applyPreference);
+  $("#topologyMotion").addEventListener("click", () => {
+    motion.overridden = true;
+    motion.enabled = !motion.enabled;
+    updateTopologyMotionControl();
+    if (!motion.enabled) stopTopologyMotion();
+    else {
+      if (state.topology.graph) reheatTopologyLayout(state.topology.graph, 0.3);
+      startTopologyMotion();
+    }
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) stopTopologyMotion();
+    else startTopologyMotion();
+  });
+  window.addEventListener("pagehide", stopTopologyMotion);
   for (const protocol of ["kademlia", "gossipsub", "transport"]) {
     $(`#show${protocol}`).addEventListener("change", (event) => {
       state.topology.filters[protocol] = event.target.checked;

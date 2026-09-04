@@ -6,16 +6,17 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, 'static/app.js'), 'utf8');
+const layoutSource = fs.readFileSync(path.join(__dirname, 'static/topology-layout.js'), 'utf8');
 const functions = source.slice(source.indexOf('function escapeHTML('), source.indexOf('$("#scenarioText").value = defaultScenario;'));
 function context(extra = {}) {
   const sandbox = { Intl, Date, ...extra };
   vm.createContext(sandbox);
+  vm.runInContext(layoutSource, sandbox);
   vm.runInContext(functions, sandbox);
   return sandbox;
 }
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const peer = (id, agentId = 'a', state = 'ready') => ({ id, agentId, state });
-const memory = () => ({ agents: new Map(), columns: 0, cellHeight: 260 });
 
 test('relationship layers do not misclassify legacy transport and preserve the input history', () => {
   const api = context();
@@ -69,48 +70,6 @@ test('topic choices include empty observed meshes and exclude unrelated transpor
   ])),['alpha','beta','empty']);
 });
 
-test('churn reuses vacant slots without moving surviving nodes or other Agent groups', () => {
-  const api=context(), cache=memory(), agents=[{id:'a',capacity:20},{id:'b',capacity:20}];
-  const initial=[peer('a1'),peer('a2'),peer('a3'),peer('b1','b')];
-  const first=api.layoutTopology(initial,agents,cache,1280);
-  const reordered=api.layoutTopology([...initial].reverse(),[...agents].reverse(),cache,800);
-  for(const node of initial) assert.deepEqual(plain(reordered.positions.get(node.id)),plain(first.positions.get(node.id)));
-  const changed=api.layoutTopology([peer('new'),peer('a1'),peer('a3'),peer('b1','b')],agents,cache,1280);
-  for(const id of ['a1','a3','b1']) assert.deepEqual(plain(changed.positions.get(id)),plain(first.positions.get(id)));
-  assert.deepEqual(plain(changed.positions.get('new')),plain(first.positions.get('a2')));
-  const added=api.layoutTopology([peer('new'),peer('a1'),peer('a3'),peer('b1','b'),peer('c1','c')],[...agents,{id:'c',capacity:20}],cache,1280);
-  assert.deepEqual(plain(added.positions.get('b1')),plain(first.positions.get('b1')));
-});
-
-test('occupied-slot growth contains arrivals, and moving a node releases its old Agent slot', () => {
-  const api=context(), cache=memory(), agents=[{id:'a',capacity:96},{id:'b',capacity:20}];
-  const initial=api.layoutTopology([peer('one'),peer('other','b')],agents,cache,1000);
-  const nodes=[peer('one'),peer('other','b'),...Array.from({length:95},(_,i)=>peer(`n${i}`))];
-  const full=api.layoutTopology(nodes,agents,cache,1000);
-  assert.deepEqual(plain(full.positions.get('other')),plain(initial.positions.get('other')));
-  const group=full.groups.find(g=>g.id==='a');
-  for(const node of nodes.filter(n=>n.agentId==='a')) {
-    const point=full.positions.get(node.id);
-    assert.ok(point.x>group.x && point.x<group.x+group.width);
-    assert.ok(point.y>group.y && point.y+25<group.y+group.height);
-  }
-  api.layoutTopology([peer('one','b')],agents,cache,1000);
-  assert.equal(cache.agents.get('a').slots.has('one'),false);
-  assert.equal(cache.agents.get('b').slots.has('one'),true);
-});
-
-test('configured capacity does not create empty canvas and actual slot growth never shrinks on churn', () => {
-  const api=context(), cache=memory(), agents=Array.from({length:7},(_,i)=>({id:`a${i}`,capacity:10000}));
-  const nodes=[peer('one','a0'),peer('two','a1'),peer('three','a6')];
-  const sparse=api.layoutTopology(nodes,agents,cache,1280);
-  assert.ok(sparse.bounds.height<900);
-  assert.ok(sparse.groups.every(group=>group.height<300));
-  const full=api.layoutTopology([...nodes,...Array.from({length:70},(_,i)=>peer(`n${i}`,'a0'))],agents,cache,1280);
-  assert.ok(full.bounds.height>sparse.bounds.height);
-  const after=api.layoutTopology(nodes,agents,cache,1280);
-  assert.deepEqual(plain(after.bounds),plain(full.bounds));
-});
-
 test('fit camera includes every Agent and zoom preserves the chosen world anchor', () => {
   const topology={camera:{x:30,y:40,scale:0.5},graph:{width:1000,height:600},autoFit:true};
   const elements=new Map();
@@ -151,8 +110,17 @@ test('inspector escapes node/topic text and handles missing mesh values', () => 
   assert.ok(output.innerHTML.includes('<dt>DHT mode</dt><dd>Off</dd>'));
 });
 
-test('rendered graph controls preserve selection and camera while filtering and streaming churn', () => {
+function uiFixture({reducedMotion=false}={}) {
   const ids=new Map();
+  const frames={queue:new Map(),nextID:1,maximumQueued:0};
+  frames.request=(callback)=>{const id=frames.nextID++;frames.queue.set(id,callback);frames.maximumQueued=Math.max(frames.maximumQueued,frames.queue.size);return id;};
+  frames.cancel=(id)=>frames.queue.delete(id);
+  frames.step=(timestamp)=>{const entry=frames.queue.entries().next().value;if(!entry)return false;frames.queue.delete(entry[0]);entry[1](timestamp);return true;};
+  const eventTarget=()=>{
+    const events=new Map();
+    return {addEventListener(name,fn){if(!events.has(name))events.set(name,[]);events.get(name).push(fn);},emit(name,extra={}){for(const fn of events.get(name)||[])fn({type:name,...extra});}};
+  };
+  const preference={...eventTarget(),matches:reducedMotion};
   let document;
   class Element {
     constructor(tag='div') {
@@ -166,6 +134,7 @@ test('rendered graph controls preserve selection and camera while filtering and 
       if(key==='class')for(const name of String(value).split(' '))this.classList.add(name);
       if(key.startsWith('data-'))this.dataset[key.slice(5).replace(/-([a-z])/g,(_,letter)=>letter.toUpperCase())]=String(value);
     }
+    getAttribute(key){return this.attributes[key]??null;}
     append(...children){for(const child of children){child.parent=this;this.children.push(child);}}
     replaceChildren(...children){this.children=[];this.append(...children);}
     get options(){return this.children;}
@@ -182,11 +151,25 @@ test('rendered graph controls preserve selection and camera while filtering and 
   for(const match of html.matchAll(/<([a-z]+)[^>]*\bid="([^"]+)"[^>]*>/g)){
     const element=new Element(match[1]);element.setAttribute('id',match[2]);element.checked=/\bchecked\b/.test(match[0]);
   }
-  document={activeElement:null,querySelector:(selector)=>ids.get(selector.slice(1)),querySelectorAll:(selector)=>ids.get('topology').querySelectorAll(selector),createElement:(tag)=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)};
-  const sandbox={document,Intl,Date,localStorage:{getItem:()=>null,setItem(){}}};
+  document={...eventTarget(),activeElement:null,hidden:false,get visibilityState(){return this.hidden?'hidden':'visible';},querySelector:(selector)=>ids.get(selector.slice(1)),querySelectorAll:(selector)=>ids.get('topology').querySelectorAll(selector),createElement:(tag)=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)};
+  const window={...eventTarget(),matchMedia:()=>preference};
+  const sandbox={document,window,Intl,Date,requestAnimationFrame:frames.request,cancelAnimationFrame:frames.cancel,localStorage:{getItem:()=>null,setItem(){}}};
   vm.createContext(sandbox);
+  vm.runInContext(layoutSource,sandbox);
   vm.runInContext(source.slice(0,source.indexOf('const defaultScenario ='))+functions,sandbox);
   const state=vm.runInContext('state',sandbox);
+  const render=(nodes=[peer('one'),peer('two'),peer('three','b')],edges=[
+    {source:'one',target:'two',protocol:'gossipsub',topic:'alpha'},
+    {source:'two',target:'three',protocol:'kademlia'},
+  ])=>{state.snapshot={nodes,edges,agents:[{id:'a'},{id:'b'}]};sandbox.renderTopology(nodes,edges);};
+  return {ids,document,window,sandbox,state,frames,render,
+    setHidden(value){document.hidden=value;document.emit('visibilitychange');},
+    setReduced(value){preference.matches=value;preference.emit('change');},
+  };
+}
+
+test('rendered graph controls preserve selection and camera while filtering and streaming churn', () => {
+  const {ids,document,sandbox,state,frames}=uiFixture();
   const nodes=[{...peer('one'),peerScores:{a:1,b:3}},peer('two'),peer('three','b'),peer('stopped','a','stopped')];
   const edges=[
     {source:'one',target:'two',protocol:'kademlia',reportedBy:['one']},
@@ -219,7 +202,11 @@ test('rendered graph controls preserve selection and camera while filtering and 
   svg.emit('pointerup');
   const camera=plain(state.topology.camera);
   sandbox.renderTopology([...nodes].reverse(),edges);
+  frames.step(1000);
   assert.deepEqual(plain(state.topology.camera),camera);
+  assert.equal(state.topology.selected,'one');
+  assert.equal(state.topology.filters.gossipsub,false);
+  assert.equal(document.activeElement.dataset.nodeId,'one');
   let prevented=false;
   svg.emit('wheel',{deltaY:20,ctrlKey:false,preventDefault(){prevented=true;}});
   assert.equal(prevented,false);
@@ -231,4 +218,113 @@ test('rendered graph controls preserve selection and camera while filtering and 
   assert.equal(state.topology.selected,null);
   assert.equal(ids.get('topologyEmpty').hidden,false);
   assert.equal(svg.querySelectorAll('.topology-peer').length,0);
+  assert.equal(frames.queue.size,0);
+});
+
+test('animation updates node coordinates and edge paths with at most one queued frame', () => {
+  const {ids,sandbox,state,frames,render}=uiFixture();
+  sandbox.setupTopologyControls();render();
+  const svg=ids.get('topology');
+  const positions=()=>svg.querySelectorAll('.topology-peer').map(element=>element.getAttribute('transform'));
+  const paths=()=>svg.querySelectorAll('.topology-edge').map(element=>element.getAttribute('d'));
+  const before=positions(),beforePaths=paths(),camera=plain(state.topology.camera);
+  assert.equal(frames.queue.size,1);
+  sandbox.startTopologyMotion();sandbox.startTopologyMotion();
+  assert.equal(frames.queue.size,1);
+  frames.step(1000);
+  assert.notDeepEqual(positions(),before);
+  assert.notDeepEqual(paths(),beforePaths);
+  assert.deepEqual(plain(state.topology.camera),camera);
+  for(let i=1;i<=5;i++)frames.step(1000+i*40);
+  assert.equal(frames.maximumQueued,1);
+  assert.equal(frames.queue.size,1);
+});
+
+test('pause and resume cancel and restart motion without losing the graph or camera', () => {
+  const {ids,sandbox,state,frames,render}=uiFixture();
+  sandbox.setupTopologyControls();render();frames.step(1000);
+  const graph=state.topology.graph,camera=plain(state.topology.camera);
+  const points=()=>plain([...graph.positions].map(([id,p])=>[id,p.x,p.y]));
+  ids.get('topologyMotion').emit('click');
+  const paused=points();
+  assert.equal(state.topology.motion.enabled,false);
+  assert.equal(ids.get('topologyMotion').textContent,'Resume motion');
+  assert.equal(ids.get('topologyMotion').getAttribute('aria-pressed'),'true');
+  assert.equal(frames.queue.size,0);
+  assert.equal(frames.step(1040),false);
+  sandbox.startTopologyMotion();assert.equal(frames.queue.size,0);
+  assert.deepEqual(points(),paused);
+  ids.get('topologyMotion').emit('click');
+  assert.equal(ids.get('topologyMotion').textContent,'Pause motion');
+  assert.equal(frames.queue.size,1);frames.step(1080);
+  assert.notDeepEqual(points(),paused);
+  assert.equal(state.topology.graph,graph);
+  assert.deepEqual(plain(state.topology.camera),camera);
+  assert.equal(frames.maximumQueued,1);
+});
+
+test('hidden tabs and page navigation stop queued work and visible tabs resume once', () => {
+  const {sandbox,state,frames,render,setHidden,window}=uiFixture();
+  sandbox.setupTopologyControls();render();frames.step(1000);
+  setHidden(true);
+  assert.equal(frames.queue.size,0);
+  const snapshot=state.snapshot;
+  render(snapshot.nodes,snapshot.edges);
+  sandbox.startTopologyMotion();assert.equal(frames.queue.size,0);
+  setHidden(false);setHidden(false);
+  assert.equal(frames.queue.size,1);frames.step(2000);
+  window.emit('pagehide');
+  assert.equal(frames.queue.size,0);
+  assert.equal(frames.maximumQueued,1);
+});
+
+test('stopped peers leave the force graph and no frames survive an empty snapshot', () => {
+  const {ids,sandbox,state,frames,render,setHidden}=uiFixture();
+  sandbox.setupTopologyControls();render();frames.step(1000);
+  state.topology.selected='one';
+  render(state.snapshot.nodes.map(node=>({...node,state:'stopped'})),state.snapshot.edges);
+  assert.equal(state.topology.selected,null);
+  assert.equal(state.topology.graph.positions.size,0);
+  assert.equal(ids.get('topology').querySelectorAll('.topology-peer').length,0);
+  assert.equal(ids.get('topology').querySelectorAll('.topology-edge').length,0);
+  assert.equal(frames.queue.size,0);
+  setHidden(true);setHidden(false);sandbox.startTopologyMotion();
+  assert.equal(frames.queue.size,0);
+  assert.equal(frames.maximumQueued,1);
+});
+
+test('identical streamed snapshots retain cooling and never reset settled engine alpha', () => {
+  const {sandbox,state,frames,render}=uiFixture();
+  sandbox.setupTopologyControls();render();frames.step(1000);
+  const engine=state.topology.layout.pizza,alpha=engine.alpha,tick=engine.tick;
+  const points=plain([...state.topology.graph.positions].map(([id,p])=>[id,p.x,p.y]));
+  render([...state.snapshot.nodes].reverse(),[...state.snapshot.edges].reverse());
+  assert.equal(state.topology.layout.pizza,engine);
+  assert.equal(engine.alpha,alpha);assert.equal(engine.tick,tick);
+  assert.deepEqual(plain([...state.topology.graph.positions].map(([id,p])=>[id,p.x,p.y])),points);
+  frames.step(1040);assert.ok(engine.alpha<alpha);
+  engine.alpha=0;engine.tick=600;
+  render(state.snapshot.nodes.map(node=>({...node,lastSeen:'2026-09-05T00:00:00Z'})),state.snapshot.edges);
+  assert.equal(engine.alpha,0);assert.equal(engine.tick,600);
+  frames.step(1080);assert.equal(frames.queue.size,0);
+  assert.equal(frames.maximumQueued,1);
+});
+
+test('reduced-motion preference defaults to still layout and preserves explicit user choice', () => {
+  const {ids,sandbox,state,frames,render,setReduced}=uiFixture({reducedMotion:true});
+  sandbox.setupTopologyControls();render();
+  assert.equal(state.topology.motion.enabled,false);
+  assert.equal(frames.queue.size,0);
+  assert.equal(ids.get('topologyMotion').textContent,'Resume motion');
+  setReduced(false);assert.equal(frames.queue.size,1);
+  setReduced(true);assert.equal(frames.queue.size,0);
+  ids.get('topologyMotion').emit('click');
+  assert.equal(state.topology.motion.overridden,true);
+  assert.equal(frames.queue.size,1);
+  setReduced(false);setReduced(true);
+  assert.equal(state.topology.motion.enabled,true);
+  assert.equal(frames.queue.size,1);
+  ids.get('topologyMotion').emit('click');setReduced(false);
+  assert.equal(state.topology.motion.enabled,false);
+  assert.equal(frames.queue.size,0);
 });

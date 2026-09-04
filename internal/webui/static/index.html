@@ -78,6 +78,7 @@
           </fieldset>
           <label class="topology-topic" for="topologyTopic">GossipSub topic<select id="topologyTopic"><option value="">All topics</option></select></label>
           <div class="topology-camera" role="group" aria-label="Topology view controls">
+            <button id="topologyMotion" type="button" aria-pressed="false" title="Pause or resume the layout movement inside each Agent's slice.">Pause motion</button>
             <button id="topologyZoomOut" type="button" aria-label="Zoom out">−</button>
             <output id="topologyZoomLevel" aria-label="Zoom level">100%</output>
             <button id="topologyZoomIn" type="button" aria-label="Zoom in">+</button>
@@ -86,7 +87,7 @@
         </div>
         <p class="topology-report-status" id="topologyReportStatus">Waiting for Peer reports.</p>
         <div class="topology-stage" id="topologyStage">
-          <svg id="topology" role="group" aria-label="Interactive Peer topology, grouped by Agent number"></svg>
+          <svg id="topology" role="group" aria-label="Interactive Peer topology, arranged in Agent slices"></svg>
           <div class="empty-state" id="topologyEmpty">
             <strong>No Peers to display</strong>
             <span>Run an experiment to view active Peers. Stopping and stopped Peers are hidden.</span>
@@ -201,6 +202,7 @@
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/topology-layout.js" defer></script>
   <script src="/app.js" defer></script>
 </body>
 </html>

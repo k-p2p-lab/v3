@@ -25,7 +25,7 @@ Controller ─── scenario state machine / registry / event store / dashboard
 - **Controller**: Agent와 Peer 상태, bootstrap registry, 시나리오 실행, 이벤트 저장, REST API와 웹 대시보드를 제공합니다.
 - **Agent**: 물리/가상 호스트마다 하나씩 실행합니다. 기본적으로 Peer마다 Docker 컨테이너를 생성해 시작·종료·발행을 담당하고 telemetry를 묶어서 Controller로 전달합니다. 로컬 개발용 process 런타임도 제공합니다.
 - **Peer**: 결정적인 `(run ID, seed)` namespace로 ID를 생성하고 선택한 Kademlia와 PubSub 설정으로 실행됩니다. Docker Peer는 별도 network namespace에서 선택적인 네트워크 조건을 적용합니다.
-- **Dashboard**: Agent 용량, Peer 준비 상태, peer score 요약, 실험 단계, 전파 지연과 최근 이벤트를 SSE로 갱신합니다. 전체 폭의 [대화형 토폴로지](docs/topology.kr.md)는 Kademlia 라우팅 테이블, GRAFT 기반 GossipSub mesh, transport 연결을 구분하며 독립적인 레이어 체크박스, topic 필터, 확대·이동과 이웃 강조를 지원합니다.
+- **Dashboard**: Agent 용량, Peer 준비 상태, peer score 요약, 실험 단계, 전파 지연과 최근 이벤트를 SSE로 갱신합니다. 전체 폭의 [대화형 토폴로지](docs/topology.kr.md)는 같은 크기의 Agent별 부채꼴 안에 번호가 있는 Peer를 배치하고 Kademlia 라우팅 테이블, GRAFT 기반 GossipSub mesh, transport 연결을 구분합니다. Peer는 표시된 연결을 기준으로 소속 영역 안에서 자리를 잡으며 레이어·topic 필터, 움직임 일시 정지·재개, 확대·이동과 이웃 강조로 관계를 확인할 수 있습니다.
 - **실험 분석**: 발행 직전 원격 수신 대상을 고정해 churn 도달률, 첫 수신 지연, 평균 중복 수를 집계합니다. Agent 번호로 토폴로지와 상태 표를 연결하고 종료된 Peer는 토폴로지에서 숨깁니다. 웹에서 1~100회 순차 실행, 결과 ZIP 다운로드와 삭제를 지원합니다. [지표 정의와 사용법](docs/experiment-metrics.kr.md)을 참고하십시오.
 
 ## 빠른 실행
