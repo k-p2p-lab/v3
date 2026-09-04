@@ -4,6 +4,8 @@ English | [Korean](linux-deployment.kr.md)
 
 The deployment target is Linux Docker Engine. Windows can serve as a development host, but Peer execution, network control, and shutdown verification run in Linux containers. The supplied Compose configuration targets **one Linux server with rootful Docker, no userns-remap, and an IPv4 user-defined bridge**.
 
+If your servers are already joined to a Swarm, follow the [manager workflow from preparation through experiment downloads and removal](swarm.md) instead. Its `scripts/swarm.sh` commands manage the shared deployment; the Compose commands below are for a single server.
+
 ## Prepare and Start the Server
 
 Install Docker Engine and the Compose plugin, then run the following commands with the same user and Docker context. Docker 28 or later is recommended. Earlier versions have a limitation that can make ports published to localhost accessible from the same L2 network. [Docker port publishing](https://docs.docker.com/engine/network/port-publishing/)

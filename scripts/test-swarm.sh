@@ -24,8 +24,29 @@ stack=${KPL_STACK_NAME:-kpl}
 printf '%s\n' "$*" >> "$s/calls"
 die() { printf 'Unexpected Docker call: %s\n' "$*" >&2; exit 97; }
 event() { printf '%s\n' "$1" >> "$s/events"; }
+if [ -n "${KPL_TEST_EXPECT_CONTEXT:-}" ] && [ "${DOCKER_CONTEXT:-}" != "$KPL_TEST_EXPECT_CONTEXT" ]; then
+    die 'The selected Docker context was changed'
+fi
 for last do :; done
-case "$1 $2" in
+case "$1 ${2:-}" in
+    'build --tag')
+        [ "$#" = 4 ] && [ "$4" = "$KPL_TEST_REPO_ROOT" ] || die "$@"
+        [ "${DOCKER_DEFAULT_PLATFORM+x}" != x ] || die 'DOCKER_DEFAULT_PLATFORM reached build'
+        event image-build
+        if [ "${KPL_TEST_BUILD_FAIL:-0}" = 1 ]; then printf 'mock image build failed\n' >&2; exit 1; fi ;;
+    'push '*)
+        [ "$#" = 2 ] || die "$@"
+        [ "${DOCKER_DEFAULT_PLATFORM+x}" != x ] || die 'DOCKER_DEFAULT_PLATFORM reached push'
+        event image-push
+        if [ "${KPL_TEST_PUSH_FAIL:-0}" = 1 ]; then printf 'mock image push failed\n' >&2; exit 1; fi ;;
+    'buildx build')
+        [ "$#" = 8 ] && [ "$3" = --platform ] && [ "$5" = --tag ] && [ "$7" = --push ] && [ "$8" = "$KPL_TEST_REPO_ROOT" ] || die "$@"
+        [ "${DOCKER_DEFAULT_PLATFORM+x}" != x ] || die 'DOCKER_DEFAULT_PLATFORM reached buildx'
+        event image-buildx
+        if [ "${KPL_TEST_BUILD_FAIL:-0}" = 1 ]; then printf 'mock image buildx failed\n' >&2; exit 1; fi ;;
+    'login '*)
+        [ "$#" -le 2 ] || die "$@"
+        event registry-login ;;
     'pull '*)
         [ "$#" = 2 ] || die "$@"
         # The selected platform must not collapse a multi-platform tag to the
@@ -100,6 +121,10 @@ case "$1 $2" in
                 esac ;;
             *) die "$@" ;;
         esac ;;
+    'service logs')
+        [ "$#" = 6 ] && [ "$3 $4 $5" = '--tail 100 --timestamps' ] || die "$@"
+        case "$6" in "${stack}_controller"|"${stack}_agent"|"${stack}_prometheus"|"${stack}_grafana") ;; *) die "$@" ;; esac
+        printf 'mock service log for %s\n' "$6" ;;
     'inspect --type')
         [ "$3" = task ] || die "$@"
         state=running; pid=42; code=0; issue=ok
@@ -159,6 +184,7 @@ case "$1 $2" in
             case "$format" in
                 '{{.ID}}') printf '%s\n' "$node" ;;
                 '{{.Status.State}}') printf '%s\n' "$state" ;;
+                '{{.Status.Addr}}') printf '%s\n' "${KPL_TEST_CONTROL_ADDR:-10.20.0.7}" ;;
                 '{{.Description.Platform.OS}} {{.Status.State}}') printf '%s %s\n' "$os" "$state" ;;
                 '{{.Description.Platform.OS}} {{.Status.State}} {{.Spec.Availability}}') printf '%s %s %s\n' "$os" "$state" "$availability" ;;
                 '{{.ID}} {{.Description.Platform.OS}} {{.Status.State}} {{.Spec.Availability}}') printf '%s %s %s %s\n' "$node" "$os" "$state" "$availability" ;;
@@ -168,6 +194,7 @@ case "$1 $2" in
         done ;;
     'node ls')
         if [ "${KPL_TEST_NODE_LS_FAIL:-0}" = 1 ]; then printf 'mock node listing failed\n' >&2; exit 2; fi
+        if [ "$#" = 2 ]; then printf 'ID HOSTNAME STATUS AVAILABILITY MANAGER STATUS\ncontrol1 manager-main Ready Active Leader\nworker1 worker-a Ready Active\n'; exit 0; fi
         if [ "$#" = 3 ] && [ "$3" = --quiet ]; then
             printf '%s\n' "${KPL_TEST_NODE_IDS-control1 worker1 worker2}" | tr ' ' '\n'
             exit 0
@@ -216,7 +243,12 @@ case "$1 $2" in
         done ;;
     'network ls')
         [ "${KPL_TEST_NO_NETWORK:-0}" = 1 ] || printf 'network1\n' ;;
-    'network inspect') printf '%s overlay true\n' "$KPL_PEER_NETWORK" ;;
+    'network inspect')
+        case "$4" in
+            '{{.Name}} {{.Driver}} {{.Attachable}}') printf '%s overlay true\n' "$KPL_PEER_NETWORK" ;;
+            '{{range .IPAM.Config}}{{println .Subnet}}{{end}}') printf '%s\n' "${KPL_TEST_NETWORK_SUBNET:-10.60.0.0/24}" ;;
+            *) die "$@" ;;
+        esac ;;
     'network create') event network-create; printf 'network1\n' ;;
     'stack config')
         printf '%s' "${KPL_API_TOKEN:-}" > "$s/config-token"
@@ -247,8 +279,10 @@ reset_case() {
     export KPL_IMAGE=registry.example/kpl@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     export KPL_API_TOKEN=private-test-token GRAFANA_ADMIN_PASSWORD=private-test-password
     export KPL_DOCKER_TIMEOUT=3 KPL_CONTROLLER_STOP_TIMEOUT=3 KPL_AGENT_STOP_TIMEOUT=3
+    export KPL_TEST_REPO_ROOT=$root
     unset KPL_TEST_FOREIGN KPL_TEST_FOREIGN_STACK KPL_TEST_DOWN_NODE KPL_TEST_CONTROLLER_STOP KPL_TEST_AGENT_STOP KPL_TEST_EMPTY_STACK KPL_TEST_NO_NETWORK KPL_MIN_AGENTS KPL_TEST_FINAL_LIST_FAIL KPL_TEST_INSPECT_FAIL KPL_TEST_EMPTY_HISTORY KPL_TEST_OLD_FAILED KPL_TEST_PENDING_STATE KPL_TEST_PENDING_CONTAINER KPL_TEST_PULL_DIGEST KPL_TEST_PULL_FAULT KPL_IMAGE_PULL_TIMEOUT DOCKER_DEFAULT_PLATFORM
     unset KPL_TEST_SELF_ID KPL_TEST_NODE_IDS KPL_TEST_LABEL_NODES KPL_TEST_NODE_LS_FAIL KPL_TEST_NODE_INSPECT_FAIL
+    unset KPL_PEER_SUBNET KPL_IMAGE_BUILD_TIMEOUT KPL_IMAGE_PUSH_TIMEOUT KPL_TEST_BUILD_FAIL KPL_TEST_PUSH_FAIL KPL_TEST_EXPECT_CONTEXT DOCKER_CONTEXT KPL_TEST_NETWORK_SUBNET KPL_TEST_CONTROL_ADDR KPL_HTTP_PORT PROMETHEUS_PORT GRAFANA_PORT
 }
 run() { sh "$root/scripts/swarm.sh" --env-file "$scratch/config.env" "$@" > "$KPL_TEST_STATE/output" 2>&1; }
 reject() {
@@ -654,8 +688,214 @@ for command in init status remove; do
     [ ! -s "$KPL_TEST_STATE/calls" ]
 done
 
+# Operational helpers do not require an existing application stack. Nodes and
+# access inspect the current Manager without consulting service ownership.
 reset_case
-sh "$root/scripts/swarm.sh" --env-file "$scratch/generated.env" init > "$KPL_TEST_STATE/output" 2>&1
+export KPL_TEST_EMPTY_STACK=1
+run nodes
+grep -q 'control1.*manager-main' "$KPL_TEST_STATE/output"
+grep -Fxq 'node ls' "$KPL_TEST_STATE/calls"
+if grep -q '^service ls' "$KPL_TEST_STATE/calls"; then exit 1; fi
+no_mutation
+
+reset_case
+export KPL_TEST_EMPTY_STACK=1 KPL_HTTP_PORT=18080 PROMETHEUS_PORT=19090 GRAFANA_PORT=13000
+run access
+for port in 18080 19090 13000; do grep -Fq "http://10.20.0.7:$port" "$KPL_TEST_STATE/output"; done
+if grep -Fq "$KPL_API_TOKEN" "$KPL_TEST_STATE/output" || grep -Fq "$GRAFANA_ADMIN_PASSWORD" "$KPL_TEST_STATE/output"; then exit 1; fi
+if grep -q '^service ls' "$KPL_TEST_STATE/calls"; then exit 1; fi
+no_mutation
+
+reset_case
+run config
+grep -q 'KPL_API_TOKEN' "$KPL_TEST_STATE/output"
+if grep -Fq "$KPL_API_TOKEN" "$KPL_TEST_STATE/output" || grep -Fq "$GRAFANA_ADMIN_PASSWORD" "$KPL_TEST_STATE/output"; then exit 1; fi
+[ ! -s "$KPL_TEST_STATE/calls" ]
+no_mutation
+
+# The check wrapper must load the requested literal config before delegating.
+reset_case
+printf 'KPL_AGENT_CAPACITY=37\nKPL_MIN_AGENTS=1\n' > "$scratch/check.env"
+(unset KPL_AGENT_CAPACITY KPL_MIN_AGENTS; sh "$root/scripts/swarm.sh" --env-file "$scratch/check.env" check) > "$KPL_TEST_STATE/output" 2>&1
+grep -q 'capacity 37' "$KPL_TEST_STATE/output"
+grep -q 'eligible Agents for stack lab' "$KPL_TEST_STATE/output"
+no_mutation
+
+# Scenario printing is offline and must not load even an explicitly missing
+# config. Paths with spaces are passed intact, and output is the file verbatim.
+reset_case
+sh "$root/scripts/swarm.sh" --env-file "$scratch/absent-scenario.env" scenario > "$KPL_TEST_STATE/output" 2>&1
+cmp "$root/examples/swarm-smoke.yaml" "$KPL_TEST_STATE/output"
+printf 'version: 2\nname: printed-only\n' > "$scratch/custom scenario.yaml"
+run scenario "$scratch/custom scenario.yaml"
+cmp "$scratch/custom scenario.yaml" "$KPL_TEST_STATE/output"
+reject scenario "$scratch/no-such-scenario.yaml"
+[ ! -s "$KPL_TEST_STATE/calls" ]
+no_mutation
+
+reset_case
+run logs
+grep -Fxq 'service logs --tail 100 --timestamps lab_controller' "$KPL_TEST_STATE/calls"
+for component in agent prometheus grafana; do
+    run logs "$component"
+    grep -Fxq "service logs --tail 100 --timestamps lab_$component" "$KPL_TEST_STATE/calls"
+done
+no_mutation
+
+# Login uses only the image's registry authority; Docker Hub retains Docker's
+# default login flow, with no password argv and no short command timeout.
+for login_image in registry.example:5000/team/kpl:v3 team/kpl:v3 docker.io/team/kpl:v3 index.docker.io/team/kpl:v3 registry-1.docker.io/team/kpl:v3; do
+    reset_case
+    export KPL_IMAGE=$login_image
+    run login
+    case "$login_image" in
+        registry.example:5000/*) printf 'login registry.example:5000\n' > "$scratch/expected" ;;
+        *) printf 'login\n' > "$scratch/expected" ;;
+    esac
+    cmp "$scratch/expected" "$KPL_TEST_STATE/calls"
+    [ ! -s "$KPL_TEST_STATE/timeouts" ]
+done
+
+# Native publish always builds the repository root in the caller's Docker
+# context, even when invoked from another directory. Platform defaults do not
+# leak into either stage, and the two operations have independent timeouts.
+reset_case
+export KPL_IMAGE=registry.example:5000/team/kpl:v3
+export DOCKER_CONTEXT=test-remote-context KPL_TEST_EXPECT_CONTEXT=test-remote-context DOCKER_DEFAULT_PLATFORM=linux/arm64
+(cd "$scratch"; sh "$root/scripts/swarm.sh" --env-file "$scratch/config.env" publish) > "$KPL_TEST_STATE/output" 2>&1
+printf 'image-build\nimage-push\n' > "$scratch/expected"
+cmp "$scratch/expected" "$KPL_TEST_STATE/events"
+grep -Fxq -- "-s TERM -k 5 1800 docker build --tag $KPL_IMAGE $root" "$KPL_TEST_STATE/timeouts"
+grep -Fxq -- "-s TERM -k 5 600 docker push $KPL_IMAGE" "$KPL_TEST_STATE/timeouts"
+[ "$(wc -l < "$KPL_TEST_STATE/calls")" = 2 ]
+
+reset_case
+export KPL_IMAGE=registry.example/kpl:v3 KPL_IMAGE_BUILD_TIMEOUT=41 KPL_IMAGE_PUSH_TIMEOUT=43
+run publish
+grep -Fxq -- "-s TERM -k 5 41 docker build --tag $KPL_IMAGE $root" "$KPL_TEST_STATE/timeouts"
+grep -Fxq -- "-s TERM -k 5 43 docker push $KPL_IMAGE" "$KPL_TEST_STATE/timeouts"
+
+reset_case
+export KPL_IMAGE=registry.example/kpl:v3 KPL_TEST_BUILD_FAIL=1
+reject publish
+printf 'image-build\n' > "$scratch/expected"
+cmp "$scratch/expected" "$KPL_TEST_STATE/events"
+if grep -q '^push \|^service \|^network \|^stack ' "$KPL_TEST_STATE/calls"; then exit 1; fi
+
+reset_case
+export KPL_IMAGE=registry.example/kpl:v3 KPL_TEST_PUSH_FAIL=1
+reject publish
+printf 'image-build\nimage-push\n' > "$scratch/expected"
+cmp "$scratch/expected" "$KPL_TEST_STATE/events"
+[ "$(wc -l < "$KPL_TEST_STATE/calls")" = 2 ]
+
+reset_case
+reject publish
+no_mutation
+[ ! -s "$KPL_TEST_STATE/calls" ]
+
+reset_case
+export KPL_IMAGE=registry.example/kpl:v3 DOCKER_CONTEXT=test-remote-context KPL_TEST_EXPECT_CONTEXT=test-remote-context DOCKER_DEFAULT_PLATFORM=linux/arm64
+run publish --platforms linux/amd64,linux/arm64
+printf 'image-buildx\n' > "$scratch/expected"
+cmp "$scratch/expected" "$KPL_TEST_STATE/events"
+grep -Fxq "buildx build --platform linux/amd64,linux/arm64 --tag $KPL_IMAGE --push $root" "$KPL_TEST_STATE/calls"
+[ "$(wc -l < "$KPL_TEST_STATE/calls")" = 1 ]
+
+for platforms in '' linux 'linux/amd64,' ',linux/arm64' 'linux/amd64,,linux/arm64' 'linux/amd64 linux/arm64' 'linux/amd64;echo'; do
+    reset_case
+    export KPL_IMAGE=registry.example/kpl:v3
+    reject publish --platforms "$platforms"
+    no_mutation
+    [ ! -s "$KPL_TEST_STATE/calls" ]
+done
+
+# An arbitrary config within the Docker build context must never be sent to
+# the daemon. Use a scratch repository so readonly source mounts stay intact.
+reset_case
+export KPL_IMAGE=registry.example/kpl:v3
+publish_project=$scratch/leaky-project
+mkdir -p "$publish_project/scripts"
+cp "$root/scripts/swarm.sh" "$root/scripts/swarm-config.sh" "$root/scripts/check-swarm.sh" "$publish_project/scripts/"
+cp "$root/Dockerfile" "$root/.dockerignore" "$publish_project/"
+printf 'KPL_IMAGE=registry.example/kpl:v3\nKPL_API_TOKEN=context-secret\n' > "$publish_project/private.conf"
+export KPL_TEST_REPO_ROOT=$publish_project
+if sh "$publish_project/scripts/swarm.sh" --env-file "$publish_project/private.conf" publish > "$KPL_TEST_STATE/output" 2>&1; then exit 1; fi
+no_mutation
+[ ! -s "$KPL_TEST_STATE/calls" ]
+
+# An external symlink must not disguise an in-context config file. These
+# fixtures contain dummy values only, and no real repository file is changed.
+reset_case
+export KPL_IMAGE=registry.example/kpl:v3 KPL_TEST_REPO_ROOT=$publish_project
+ln -s "$publish_project/private.conf" "$scratch/linked-publish.env"
+if sh "$publish_project/scripts/swarm.sh" --env-file "$scratch/linked-publish.env" publish > "$KPL_TEST_STATE/output" 2>&1; then exit 1; fi
+no_mutation
+[ ! -s "$KPL_TEST_STATE/calls" ]
+
+# Docker trims ignore patterns before applying negations. Leading whitespace
+# must not hide a rule that includes the config again in the build context.
+reset_case
+export KPL_IMAGE=registry.example/kpl:v3 KPL_TEST_REPO_ROOT=$publish_project
+printf 'KPL_IMAGE=registry.example/kpl:v3\nKPL_API_TOKEN=dummy-negated-config\n' > "$publish_project/.env.swarm"
+printf '.env.*\n  !.env.swarm\n' > "$publish_project/.dockerignore"
+if sh "$publish_project/scripts/swarm.sh" --env-file "$publish_project/.env.swarm" publish > "$KPL_TEST_STATE/output" 2>&1; then exit 1; fi
+no_mutation
+[ ! -s "$KPL_TEST_STATE/calls" ]
+cp "$root/.dockerignore" "$publish_project/.dockerignore"
+
+# Dockerfile.dockerignore takes precedence over the root ignore file. A root
+# .env exclusion therefore cannot prove that this build excludes credentials.
+reset_case
+export KPL_IMAGE=registry.example/kpl:v3 KPL_TEST_REPO_ROOT=$publish_project
+printf 'KPL_IMAGE=registry.example/kpl:v3\nKPL_API_TOKEN=dummy-ignored-config\n' > "$publish_project/.env.swarm"
+printf '# This override does not exclude configuration files.\n' > "$publish_project/Dockerfile.dockerignore"
+if sh "$publish_project/scripts/swarm.sh" --env-file "$publish_project/.env.swarm" publish > "$KPL_TEST_STATE/output" 2>&1; then exit 1; fi
+no_mutation
+[ ! -s "$KPL_TEST_STATE/calls" ]
+
+# Explicit subnet creation preserves CIDR argv, and an existing network must
+# match exactly before any placement or stack updates are made.
+reset_case
+export KPL_PEER_SUBNET=10.60.0.0/24 KPL_TEST_NO_NETWORK=1
+run deploy worker-a
+grep -q 'network create .*--subnet 10.60.0.0/24 lab-peers$' "$KPL_TEST_STATE/calls"
+printf 'network-create\nlabel-worker1\nstack-deploy\n' > "$scratch/expected"
+cmp "$scratch/expected" "$KPL_TEST_STATE/events"
+
+reset_case
+export KPL_PEER_SUBNET=10.60.0.0/24 KPL_TEST_NETWORK_SUBNET=10.60.0.0/24
+run deploy worker-a
+grep -Fq 'network inspect --format {{range .IPAM.Config}}{{println .Subnet}}{{end}} lab-peers' "$KPL_TEST_STATE/calls"
+printf 'label-worker1\nstack-deploy\n' > "$scratch/expected"
+cmp "$scratch/expected" "$KPL_TEST_STATE/events"
+
+for actual_subnet in 10.61.0.0/24 '10.60.0.0/24
+10.61.0.0/24'; do
+    reset_case
+    export KPL_PEER_SUBNET=10.60.0.0/24 KPL_TEST_NETWORK_SUBNET=$actual_subnet
+    reject deploy worker-a
+    no_mutation
+done
+for invalid_subnet in 10.60.0.0/99 999.1.1.0/24 not-a-cidr 10.60.0.0; do
+    reset_case
+    export KPL_PEER_SUBNET=$invalid_subnet KPL_TEST_NO_NETWORK=1
+    reject deploy worker-a
+    no_mutation
+    if grep -q '^network create\|^node update\|^stack deploy' "$KPL_TEST_STATE/calls"; then exit 1; fi
+done
+
+# New helper flags and arity are also validated before contacting Docker.
+for arguments in 'nodes --all' 'login unexpected' 'publish --platforms' 'publish --unknown' 'publish --platforms linux/amd64 extra' 'check extra' 'access extra' 'logs unknown' 'logs --follow' 'scenario --unknown'; do
+    reset_case
+    # Intentional splitting of fixed argument fixtures.
+    reject $arguments
+    no_mutation
+    [ ! -s "$KPL_TEST_STATE/calls" ]
+done
+
+reset_case
+(unset KPL_IMAGE KPL_API_TOKEN GRAFANA_ADMIN_PASSWORD; sh "$root/scripts/swarm.sh" --env-file "$scratch/generated.env" init) > "$KPL_TEST_STATE/output" 2>&1
 [ "$(stat -c '%a' "$scratch/generated.env")" = 600 ]
 grep -Eq '^KPL_API_TOKEN=[a-f0-9]{64}$' "$scratch/generated.env"
 grep -Eq '^GRAFANA_ADMIN_PASSWORD=[a-f0-9]{64}$' "$scratch/generated.env"

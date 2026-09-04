@@ -6,13 +6,24 @@ fail() { printf 'KPL Swarm: %s\n' "$*" >&2; exit 1; }
 usage() {
     cat <<'EOF'
 Usage: sh scripts/swarm.sh [--env-file PATH] COMMAND [NODE... | SELECTOR]
-  init                 Create a private .env.swarm with random credentials
+  init [KEY=VALUE...]   Create a private config with random credentials
+  configure KEY=VALUE...  Update configuration while preserving credentials
+  config               Show configuration with secrets redacted
+  credentials          Show configured credentials explicitly
+  nodes                List current Swarm nodes
+  login                Log in to the image registry interactively
+  publish [--platforms CSV]  Build and push the configured image tag
+  check                Check the loaded deployment configuration and cluster
+  access               Show Controller, Prometheus and Grafana URLs
+  logs [COMPONENT]     Show the last 100 timestamped service log lines
+  scenario [FILE]      Print a scenario (default: examples/swarm-smoke.yaml)
   deploy [NODE... | SELECTOR]  Deploy; bare deploy reuses existing Agent labels
   status               Show services, Agent tasks and selected nodes
   add-node NODE... | SELECTOR     Enable one Agent per selected Linux node
   remove-node NODE... | SELECTOR  Stop Agents and wait for their Peer cleanup
   remove               Stop Controller, then Agents, then remove stack services
 Environment overrides the config file. NODE is a Swarm node ID or hostname.
+Init/configure accept literal KEY=VALUE arguments; quote values containing spaces.
 Use one selector without NODE arguments:
   --all                 All nodes, including managers
   --all-excluding-self  All except the current Docker daemon's Swarm node
@@ -22,11 +33,15 @@ Remove selectors target only this stack's labeled Agents; unavailable targets fa
 Selection uses the current cluster snapshot, not nodes that join later.
 KPL_IMAGE accepts an explicit tag or digest; deploy resolves tags without editing the file.
 KPL_IMAGE_PULL_TIMEOUT sets the tag pull timeout in seconds (default: 300).
+KPL_IMAGE_BUILD_TIMEOUT and KPL_IMAGE_PUSH_TIMEOUT default to 1800 and 600 seconds.
+KPL_PEER_SUBNET optionally fixes the Peer network's IPv4 CIDR at creation.
+Publish uses the repository root; --platforms requires a configured Buildx builder.
+Log components: controller (default), agent, prometheus, grafana.
 Removal preserves experiment/monitoring volumes and the external Peer network.
 EOF
 }
 
-root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)
 env_file=$root/.env.swarm
 explicit_env_file=no
 if [ "${1:-}" = --env-file ]; then
@@ -37,14 +52,46 @@ if [ "${1:-}" = --env-file ]; then
 fi
 command_name=${1:-help}
 [ "$#" -eq 0 ] || shift
+. "$root/scripts/swarm-config.sh"
 case "$command_name" in
     help|-h|--help) usage; exit 0 ;;
-    init|deploy|status|add-node|remove-node|remove) ;;
+    init|configure|config|credentials) swarm_config_command "$command_name" "$@"; exit ;;
+    deploy|status|add-node|remove-node|remove|nodes|login|publish|check|access|logs|scenario) ;;
     *) usage >&2; fail "Unknown command: $command_name" ;;
 esac
 case "$command_name" in
-    init|status|remove) [ "$#" -eq 0 ] || fail "$command_name takes no nodes." ;;
+    status|remove|nodes|login|check|access) [ "$#" -eq 0 ] || fail "$command_name takes no arguments." ;;
     add-node|remove-node) [ "$#" -gt 0 ] || fail "$command_name requires at least one node or a selector." ;;
+    scenario)
+        [ "$#" -le 1 ] || fail 'Usage: scenario [FILE]'
+        scenario_file=${1:-$root/examples/swarm-smoke.yaml}
+        case "$scenario_file" in -*) fail 'Usage: scenario [FILE]' ;; esac
+        [ -f "$scenario_file" ] || fail "Scenario file not found: $scenario_file"
+        cat -- "$scenario_file"
+        exit
+        ;;
+    logs)
+        [ "$#" -le 1 ] || fail 'Usage: logs [controller|agent|prometheus|grafana]'
+        log_component=${1:-controller}
+        case "$log_component" in controller|agent|prometheus|grafana) ;; *) fail 'Unknown log component.' ;; esac
+        set --
+        ;;
+    publish)
+        publish_platforms=''
+        if [ "$#" -gt 0 ]; then
+            [ "$#" -eq 2 ] && [ "$1" = --platforms ] || fail 'Usage: publish [--platforms linux/amd64,linux/arm64]'
+            publish_platforms=$2
+            case "$publish_platforms" in ''|,*|*,|*,,*|*[!a-z0-9_/,.-]*) fail 'Invalid platform list.' ;; esac
+            # Accept explicit Linux OS/architecture[/variant] tuples only.
+            printf '%s\n' "$publish_platforms" | awk -F, '
+                { for (i=1; i<=NF; i++) {
+                    n=split($i, part, "/")
+                    if (n < 2 || n > 3 || part[1] != "linux" || part[2] !~ /^[a-z0-9][a-z0-9_]*$/ || (n == 3 && part[3] !~ /^[a-z0-9][a-z0-9_.-]*$/)) exit 1
+                } }
+            ' || fail 'Platforms must be Linux OS/architecture[/variant] tuples.'
+        fi
+        set --
+        ;;
 esac
 # Reject ambiguous selectors and options before contacting Docker or loading config.
 node_selector=''
@@ -65,77 +112,130 @@ for argument do
 done
 [ -z "$node_selector" ] || set --
 
-# Only literal KEY=VALUE entries are accepted. No shell evaluation/expansion.
-if [ "$command_name" != init ] && [ "$explicit_env_file" = yes ] && [ ! -f "$env_file" ]; then
-    fail "Config not found: $env_file"
-fi
-if [ "$command_name" != init ] && [ -f "$env_file" ]; then
-    line_number=0
-    cr=$(printf '\r')
-    while IFS= read -r line || [ -n "$line" ]; do
-        line_number=$((line_number + 1))
-        line=${line%"$cr"}
-        case "$line" in ''|'#'*) continue ;; esac
-        case "$line" in *=*) key=${line%%=*}; value=${line#*=} ;;
-            *) fail "Invalid config entry at line $line_number." ;; esac
-        case "$key" in
-            KPL_STACK_NAME|KPL_CONTROL_NODE_ID|KPL_PEER_NETWORK|KPL_IMAGE|KPL_AGENT_CAPACITY|KPL_API_TOKEN|GRAFANA_ADMIN_PASSWORD|GRAFANA_ADMIN_USER|KPL_HTTP_PORT|PROMETHEUS_PORT|GRAFANA_PORT|KPL_MIN_AGENTS|KPL_DOCKER_TIMEOUT|KPL_IMAGE_PULL_TIMEOUT|KPL_CONTROLLER_STOP_TIMEOUT|KPL_AGENT_STOP_TIMEOUT) ;;
-            *) fail "Unsupported config key at line $line_number." ;;
-        esac
-        case "$value" in \"*\") value=${value#\"}; value=${value%\"} ;;
-            \'*\') value=${value#\'}; value=${value%\'} ;; esac
-        if ! printenv "$key" >/dev/null 2>&1; then export "$key=$value"; fi
-    done < "$env_file"
-fi
+swarm_load_config "$env_file" "$explicit_env_file"
 
 KPL_STACK_NAME=${KPL_STACK_NAME:-kpl}
 case "$KPL_STACK_NAME" in ''|[!a-z0-9]*|*[!a-z0-9_-]*) fail 'Invalid KPL_STACK_NAME; use lowercase letters, digits, hyphens or underscores.' ;; esac
 KPL_PEER_NETWORK=${KPL_PEER_NETWORK:-$KPL_STACK_NAME-peers}
 case "$KPL_PEER_NETWORK" in ''|-*|*[!a-zA-Z0-9_.-]*) fail 'Invalid KPL_PEER_NETWORK.' ;; esac
+KPL_PEER_SUBNET=${KPL_PEER_SUBNET:-}
+swarm_validate_setting KPL_PEER_SUBNET "$KPL_PEER_SUBNET"
 KPL_MIN_AGENTS=${KPL_MIN_AGENTS:-1}
 docker_timeout=${KPL_DOCKER_TIMEOUT:-60}
 image_pull_timeout=${KPL_IMAGE_PULL_TIMEOUT:-300}
+image_build_timeout=${KPL_IMAGE_BUILD_TIMEOUT:-1800}
+image_push_timeout=${KPL_IMAGE_PUSH_TIMEOUT:-600}
 controller_timeout=${KPL_CONTROLLER_STOP_TIMEOUT:-480}
 agent_timeout=${KPL_AGENT_STOP_TIMEOUT:-240}
-for number in "$docker_timeout" "$image_pull_timeout" "$controller_timeout" "$agent_timeout" "$KPL_MIN_AGENTS"; do
+for number in "$docker_timeout" "$image_pull_timeout" "$image_build_timeout" "$image_push_timeout" "$controller_timeout" "$agent_timeout" "$KPL_MIN_AGENTS"; do
     case "$number" in ''|0*|*[!0-9]*) fail 'Timeouts and KPL_MIN_AGENTS must be positive integers without leading zeros.' ;; esac
     [ "$number" -gt 0 ] 2>/dev/null || fail 'Integer is out of range.'
 done
-export KPL_STACK_NAME KPL_PEER_NETWORK KPL_MIN_AGENTS
+export KPL_STACK_NAME KPL_PEER_NETWORK KPL_PEER_SUBNET KPL_MIN_AGENTS
 agent_label=kpl.$KPL_STACK_NAME.agent
 application=kp2plab-v3
 command -v docker >/dev/null 2>&1 || fail 'Docker CLI is required.'
 command -v timeout >/dev/null 2>&1 || fail 'Linux timeout (coreutils) is required.'
 command -v awk >/dev/null 2>&1 || fail 'awk is required.'
 dock() { timeout -s TERM -k 5 "$docker_timeout" docker "$@"; }
-[ "$(dock info --format '{{.Swarm.LocalNodeState}} {{.Swarm.ControlAvailable}}')" = 'active true' ] || fail 'Run against an active Swarm manager.'
+check_publish_config_path() {
+    case "$1" in
+        "$root"/*)
+            config_relative=${1#"$root"/}
+            case "$config_relative" in
+                .env) ignore_rule=.env ;;
+                .env.*) ignore_rule='.env.*' ;;
+                *) fail 'Config is inside the build context and is not protected by the supported .dockerignore rules. Move it outside the repository or use a root .env.* file.' ;;
+            esac
+            # Prove the expected exclusion still exists. Negated rules need a
+            # full Docker pattern evaluator, so reject them conservatively.
+            awk -v rule="$ignore_rule" '
+                { sub(/\r$/, ""); sub(/^[ \t]+/, ""); sub(/[ \t]+$/, "") }
+                $0 == rule { found=1 }
+                /^!/ { negation=1 }
+                END { if (!found || negation) exit 1 }
+            ' "$root/.dockerignore" || fail 'Cannot verify that .dockerignore excludes the config; move the config outside the repository before publishing.'
+            ;;
+    esac
+}
+check_publish_context() {
+    [ -f "$root/Dockerfile" ] || fail 'Dockerfile not found in the repository root.'
+    if [ -e "$root/Dockerfile.dockerignore" ] || [ -L "$root/Dockerfile.dockerignore" ]; then
+        fail 'Dockerfile.dockerignore overrides the verified config exclusions; remove that override before publishing with this command.'
+    fi
+    [ -f "$env_file" ] || return 0
+    command -v readlink >/dev/null 2>&1 || fail 'readlink with -f support is required to verify the config build-context boundary.'
+    config_parent=$(CDPATH='' cd -- "$(dirname -- "$env_file")" && pwd -P) || fail 'Cannot locate the config directory.'
+    config_path=$config_parent/$(basename -- "$env_file")
+    config_real_path=$(readlink -f -- "$env_file") || fail 'Cannot resolve the config file before publishing.'
+    [ -n "$config_real_path" ] || fail 'Cannot resolve the config file before publishing.'
+    # An external symlink may point at an unignored file inside the repository;
+    # inspect both the configured directory entry and the final file target.
+    check_publish_config_path "$config_path"
+    check_publish_config_path "$config_real_path"
+}
+case "$command_name" in
+    login|publish)
+        : "${KPL_IMAGE:?Set KPL_IMAGE in .env.swarm or environment}"
+        swarm_validate_setting KPL_IMAGE "$KPL_IMAGE"
+        if [ "$command_name" = login ]; then
+            registry=''
+            case "$KPL_IMAGE" in
+                */*)
+                    image_first=${KPL_IMAGE%%/*}
+                    case "$image_first" in
+                        docker.io|index.docker.io|registry-1.docker.io) ;;
+                        *.*|*:*|localhost) registry=$image_first ;;
+                    esac
+                    ;;
+            esac
+            # Let Docker handle the interactive prompt and credential store;
+            # do not apply the short daemon-command timeout to user input.
+            if [ -n "$registry" ]; then exec docker login "$registry"; else exec docker login; fi
+        fi
+        case "$KPL_IMAGE" in *@*) fail 'Publish requires a mutable image tag, not a digest.' ;; esac
+        check_publish_context
+        if [ -n "$publish_platforms" ]; then
+            (
+                unset DOCKER_DEFAULT_PLATFORM
+                timeout -s TERM -k 5 "$image_build_timeout" docker buildx build --platform "$publish_platforms" --tag "$KPL_IMAGE" --push "$root"
+            ) || fail 'Multi-platform build/push failed.'
+        else
+            (
+                unset DOCKER_DEFAULT_PLATFORM
+                timeout -s TERM -k 5 "$image_build_timeout" docker build --tag "$KPL_IMAGE" "$root"
+            ) || fail 'Image build failed; push was not started.'
+            (
+                unset DOCKER_DEFAULT_PLATFORM
+                timeout -s TERM -k 5 "$image_push_timeout" docker push "$KPL_IMAGE"
+            ) || fail 'Image push failed.'
+        fi
+        printf 'Published %s. Deploy resolves this tag to its current registry digest.\n' "$KPL_IMAGE"
+        exit 0
+        ;;
+esac
 
-if [ "$command_name" = init ]; then
-    [ ! -e "$env_file" ] || fail "Config already exists: $env_file"
-    control_node=${KPL_CONTROL_NODE_ID:-$(dock info --format '{{.Swarm.NodeID}}')}
-    case "$control_node" in ''|*[!a-zA-Z0-9]*) fail 'Invalid control node ID.' ;; esac
-    token=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
-    password=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
-    [ "${#token}" -eq 64 ] && [ "${#password}" -eq 64 ] || fail 'Could not generate credentials.'
-    (umask 077; set -C; cat > "$env_file" <<EOF
-# Literal KEY=VALUE entries; environment variables take precedence.
-KPL_STACK_NAME=$KPL_STACK_NAME
-KPL_CONTROL_NODE_ID=$control_node
-KPL_PEER_NETWORK=$KPL_PEER_NETWORK
-# Replace with a pushed image tag accessible from every node; digests also work.
-# Each deploy resolves the tag to one digest without changing this file.
-KPL_IMAGE=registry.example.com/kpl-v3:v3
-# Tag pull timeout in seconds, separate from individual Docker command timeouts.
-KPL_IMAGE_PULL_TIMEOUT=$image_pull_timeout
-KPL_AGENT_CAPACITY=20
-KPL_API_TOKEN=$token
-GRAFANA_ADMIN_USER=admin
-GRAFANA_ADMIN_PASSWORD=$password
-EOF
-    ) || fail 'Could not create config (existing files are never overwritten).'
-    printf 'Created %s (mode 0600). Set KPL_IMAGE and verify KPL_CONTROL_NODE_ID before deploy.\n' "$env_file"
-    exit 0
-fi
+[ "$(dock info --format '{{.Swarm.LocalNodeState}} {{.Swarm.ControlAvailable}}')" = 'active true' ] || fail 'Run against an active Swarm manager.'
+case "$command_name" in
+    nodes) dock node ls; exit ;;
+    check) timeout -s TERM -k 5 "$docker_timeout" sh "$root/scripts/check-swarm.sh"; exit ;;
+    access)
+        : "${KPL_CONTROL_NODE_ID:?Set KPL_CONTROL_NODE_ID}"
+        swarm_validate_setting KPL_CONTROL_NODE_ID "$KPL_CONTROL_NODE_ID"
+        http_port=${KPL_HTTP_PORT:-8080}
+        prometheus_port=${PROMETHEUS_PORT:-9090}
+        grafana_port=${GRAFANA_PORT:-3000}
+        swarm_validate_setting KPL_HTTP_PORT "$http_port"
+        swarm_validate_setting PROMETHEUS_PORT "$prometheus_port"
+        swarm_validate_setting GRAFANA_PORT "$grafana_port"
+        access_host=$(dock node inspect --format '{{.Status.Addr}}' "$KPL_CONTROL_NODE_ID") || fail 'Cannot inspect the control node address.'
+        case "$access_host" in ''|*[!0-9a-fA-F:.]*) fail 'Docker returned an invalid control node address.' ;; esac
+        case "$access_host" in *:*) access_host=[$access_host] ;; esac
+        printf 'Controller: http://%s:%s\nPrometheus: http://%s:%s\nGrafana: http://%s:%s\n' "$access_host" "$http_port" "$access_host" "$prometheus_port" "$access_host" "$grafana_port"
+        printf '%s\n' 'These configured URLs use the control node address; reachability and service readiness are not checked.'
+        exit 0
+        ;;
+esac
 
 # Refuse to change an unrelated or unmarked stack with the same name.
 services=$(dock service ls --quiet --filter "label=com.docker.stack.namespace=$KPL_STACK_NAME")
@@ -338,6 +438,9 @@ wait_tasks() {
 }
 
 case "$command_name" in
+    logs)
+        dock service logs --tail 100 --timestamps "${KPL_STACK_NAME}_$log_component"
+        ;;
     status)
         dock stack services "$KPL_STACK_NAME"
         if service_exists "${KPL_STACK_NAME}_agent"; then dock service ps --no-trunc "${KPL_STACK_NAME}_agent"; fi
@@ -359,9 +462,15 @@ case "$command_name" in
         resolve_deployment_image
         networks=$(dock network ls --quiet --filter "name=^$KPL_PEER_NETWORK$")
         if [ -z "$networks" ]; then
-            dock network create --driver overlay --attachable --label "io.kpl.application=$application" --label "io.kpl.stack=$KPL_STACK_NAME" "$KPL_PEER_NETWORK"
+            set -- network create --driver overlay --attachable --label "io.kpl.application=$application" --label "io.kpl.stack=$KPL_STACK_NAME"
+            if [ -n "$KPL_PEER_SUBNET" ]; then set -- "$@" --subnet "$KPL_PEER_SUBNET"; fi
+            dock "$@" "$KPL_PEER_NETWORK"
         else
             [ "$(dock network inspect --format '{{.Name}} {{.Driver}} {{.Attachable}}' "$KPL_PEER_NETWORK")" = "$KPL_PEER_NETWORK overlay true" ] || fail 'Peer network must be an attachable overlay.'
+            if [ -n "$KPL_PEER_SUBNET" ]; then
+                network_subnets=$(dock network inspect --format '{{range .IPAM.Config}}{{println .Subnet}}{{end}}' "$KPL_PEER_NETWORK") || fail 'Cannot inspect Peer network subnets.'
+                [ "$network_subnets" = "$KPL_PEER_SUBNET" ] || fail 'Existing Peer network subnet differs from KPL_PEER_SUBNET; no network or placement changes made.'
+            fi
         fi
         for node in $nodes; do dock node update --label-add "$agent_label=true" "$node"; done
         timeout -s TERM -k 5 "$docker_timeout" sh "$root/scripts/check-swarm.sh"

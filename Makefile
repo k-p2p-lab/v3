@@ -1,4 +1,5 @@
 .PHONY: build test test-linux check-linux check-swarm swarm-init swarm-deploy swarm-status swarm-add-node swarm-remove-node swarm-remove validate run stop
+.PHONY: swarm-nodes swarm-configure swarm-config swarm-credentials swarm-login swarm-publish swarm-check swarm-access swarm-logs swarm-scenario
 
 build:
 	go build -o bin/kpl ./cmd/kpl
@@ -13,10 +14,40 @@ check-linux:
 	sh scripts/check-linux.sh
 
 check-swarm:
-	sh scripts/check-swarm.sh
+	sh scripts/swarm.sh check
+
+swarm-nodes:
+	sh scripts/swarm.sh nodes
 
 swarm-init:
-	sh scripts/swarm.sh init
+	sh scripts/swarm.sh init $(SETTINGS)
+
+swarm-configure:
+	sh scripts/swarm.sh configure $(SETTINGS)
+
+swarm-config:
+	sh scripts/swarm.sh config
+
+swarm-credentials:
+	sh scripts/swarm.sh credentials
+
+swarm-login:
+	sh scripts/swarm.sh login
+
+swarm-publish:
+	sh scripts/swarm.sh publish $(if $(PLATFORMS),--platforms $(PLATFORMS))
+
+swarm-check:
+	sh scripts/swarm.sh check
+
+swarm-access:
+	sh scripts/swarm.sh access
+
+swarm-logs:
+	sh scripts/swarm.sh logs $(COMPONENT)
+
+swarm-scenario:
+	sh scripts/swarm.sh scenario $(SCENARIO)
 
 swarm-deploy:
 	sh scripts/swarm.sh deploy $(NODES)

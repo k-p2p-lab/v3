@@ -70,25 +70,39 @@ The Agent defaults are `--runtime docker`, `--docker-image kpl-v3:local`, `--doc
 
 On restart, an Agent removes previously managed Peer containers with its Agent ID on the same Docker daemon and network. It does not restore or resume previous experiments. Agent IDs must be unique within that daemon/network. Container removal failures are reported; a later stop request retries cleanup after a temporary daemon outage.
 
-The supplied Compose bridge connects containers on one Docker host. For an existing Linux Swarm, run the manager helper from this repository. It deploys [stack.swarm.yaml](stack.swarm.yaml) with one Agent per selected server, task-specific addresses, a shared attachable Peer overlay, and Prometheus discovery of every Agent.
+The supplied Compose bridge connects containers on one Docker host. For servers already joined to a Linux Swarm, place this repository on a manager with the Docker CLI and coreutils `timeout`. You also need an image registry accessible to every node; joining Swarm does not create one. The helper manages [stack.swarm.yaml](stack.swarm.yaml), with one Agent per selected node and a shared attachable Peer overlay.
 
 ```sh
-sh scripts/swarm.sh init
-# Set KPL_IMAGE=registry.example.com/kpl-v3:v3 in .env.swarm and verify the control Node ID.
-sh scripts/swarm.sh deploy --all-excluding-self
+sh scripts/swarm.sh nodes
+sh scripts/swarm.sh init KPL_IMAGE=registry.example.com/kpl-v3:v3 KPL_AGENT_CAPACITY=20 KPL_MIN_AGENTS=2
+sh scripts/swarm.sh config
+# Only if the registry requires authentication:
+sh scripts/swarm.sh login
+sh scripts/swarm.sh publish
+# Assumes at least two workers. For one manager + one worker, use --all.
+sh scripts/swarm.sh deploy --workers
+sh scripts/swarm.sh check
 sh scripts/swarm.sh status
-# Later: add-node --workers, remove-node --all-excluding-self, or remove for the whole stack.
+sh scripts/swarm.sh access
+sh scripts/swarm.sh credentials
+sh scripts/swarm.sh scenario
 ```
 
-`init` creates a private `.env.swarm` and generates separate API and Grafana credentials. The helper reads literal `KEY=VALUE` entries; exported environment variables take precedence. It does not evaluate shell expressions or load Compose's `.env`. `deploy` returns after submission; wait for Agent registration in the Controller before running an experiment. `add-node` and `remove-node` change the stack-specific `kpl.<stack>.agent` label, not Swarm membership. Removing a node stops its Peers and affects any experiment using them.
+Replace the image reference with your existing registry/repository. If Docker needs sudo, consistently use `sudo sh scripts/swarm.sh ...`, including login and configuration. `init` creates a private configuration and separate API/Grafana credentials without overwriting an existing file. Use `configure KEY=VALUE...` for later changes and `config` to inspect effective settings with secrets redacted. Environment values override the literal configuration file; the helper does not load Compose's `.env` or change registry/TLS settings on the daemons.
 
-For `deploy`, `add-node`, or `remove-node`, choose explicit node IDs/hostnames or one selector: `--all` includes managers, `--workers` selects only Swarm worker-role nodes, and `--all-excluding-self` excludes the manager reached through the current Docker context. Here, “self” is neither `KPL_CONTROL_NODE_ID` nor necessarily the machine running the shell. Selectors cannot be combined or mixed with an explicit node list.
+Open the Controller URL from `access` and wait for **at least 2 Online Agents**. In **Agent status**, use only `online` rows and confirm that the remaining slots total at least 6: each **Peers** value is occupied / capacity, so subtract the first number from the second. The summary's **Available slots** can include offline Agents. `status` shows Docker state; it does not establish Controller registration. Choose **Run experiment**, replace **YAML scenario** with the `scenario` output, enter the API token shown by `credentials`, and click **Run**. The web form's initial YAML is a different smoke test. The Swarm example creates six Peers, publishes messages with network conditions, then runs `stop-all`. Grafana uses the separate login shown by `credentials`; select the experiment in **Run**.
 
-Automatic deployment/addition selects Linux, Ready, Active nodes and reports skipped nodes. Automatic removal selects only matching nodes already labeled for this stack and fails on unavailable targets instead of skipping them. An empty selection fails. Deployment/addition preserves existing labels; bare `deploy` reuses them. Selectors are evaluated for each command, so run the command again to select newly joined nodes. See the [node selection rules](docs/swarm.md#add-and-remove-agents-from-the-manager).
+After completion and Peer cleanup, use **Download results** on the experiment or under **Saved results**. ZIP exports include the saved scenario, metadata, event log, and export information; they do not include Grafana/Prometheus time-series storage. Download before taking down the web services:
 
-Keep the same image tag in `.env.swarm`. After building and pushing new code to that tag, run `sh scripts/swarm.sh deploy` again. Each deployment pulls the tag, resolves its current registry digest, and pins that deployment to the digest without rewriting the file. **You do not need to copy a new SHA after each push.** Explicit `repository@sha256:...` references remain supported for a fixed version. Finish active experiments before updating, since replacing Agents stops their Peers. See the [Swarm image update workflow](docs/swarm.md#update-an-image-using-the-same-tag).
+```sh
+sh scripts/swarm.sh remove
+```
 
-`sh scripts/swarm.sh remove` waits for Controller shutdown and Agent cleanup before removing stack services. Unavailable nodes, unverified task exits, or retained historical failed tasks stop automatic removal and require inspection; data volumes and the external Peer network remain. See the [Swarm guide](docs/swarm.md) for prerequisites, commands, and migration of older stacks without the helper's service labels. The documented two-daemon experiment predates this helper and is not an end-to-end validation of its lifecycle commands.
+For `deploy`, `add-node`, and `remove-node`, use explicit node IDs/hostnames or one selector: `--all` includes managers, `--workers` selects worker-role nodes, and `--all-excluding-self` excludes the manager selected by the current Docker context. “Self” is determined by that daemon's Swarm Node ID, not `KPL_CONTROL_NODE_ID` or the shell's machine. Selectors cannot be combined or mixed with explicit nodes. Deployment/addition selects Linux, Ready, Active nodes and reports skipped candidates; removal is limited to this stack's labels and fails on unavailable targets. Empty selections fail. Existing labels are preserved, bare `deploy` reuses them, and selectors are evaluated again for each command, not automatically for future members.
+
+For updates, keep the same image tag and run `publish` then `deploy` after finishing active experiments. Use `configure KPL_IMAGE=...` first only when changing the image reference. Each deployment resolves the latest registry digest and pins that deployment without rewriting the file: **no manual SHA replacement is needed**. For mixed architectures, use `publish --platforms linux/amd64,linux/arm64` with a capable existing Buildx builder; the image must support the manager and all target nodes.
+
+`remove` confirms Controller shutdown, then Agent shutdown and Peer cleanup. Failed/unavailable nodes or unverified task history block automatic removal. Experiment and monitoring volumes and the external Peer network remain. Removing an individual node stops its Peers and affects experiments using them. The [complete Swarm workflow](docs/swarm.md) covers configuration, subnet selection, troubleshooting, retained results, and the separate migration procedure for older stacks.
 
 ### Prometheus and Grafana
 

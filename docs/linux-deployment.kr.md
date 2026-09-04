@@ -4,6 +4,8 @@
 
 최종 실행 환경은 Linux Docker Engine입니다. Windows는 개발 호스트로 사용할 수 있지만 Peer 실행·네트워크 제어·종료 검증은 Linux 컨테이너에서 수행합니다. 제공하는 Compose 구성은 **한 대의 Linux 서버, rootful Docker, userns-remap 미사용, IPv4 user-defined bridge**를 기준으로 합니다.
 
+서버들이 이미 Swarm에 가입되어 있다면 [manager에서 준비부터 실험 결과 다운로드와 철거까지 진행하는 절차](swarm.kr.md)를 따르십시오. `scripts/swarm.sh`가 공통 배포를 관리하며, 아래 Compose 명령은 단일 서버용입니다.
+
 ## 서버 준비와 실행
 
 Docker Engine과 Compose 플러그인을 설치하고, 같은 사용자와 같은 Docker context로 아래 명령을 실행하십시오. Docker 28 이상을 권장합니다. 이전 버전에는 localhost에 게시한 포트가 같은 L2 네트워크에서 접근될 수 있는 제한이 있습니다. [Docker 포트 게시 문서](https://docs.docker.com/engine/network/port-publishing/)

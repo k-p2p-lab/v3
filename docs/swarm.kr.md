@@ -6,47 +6,123 @@
 
 ## 배포 전 준비
 
-Linux rootful Docker 서버들을 같은 Swarm에 가입시켜야 합니다. 서버 간 TCP 2377(manager), TCP/UDP 7946, UDP 4789 통신이 필요합니다. VXLAN 포트는 신뢰하는 클러스터 서버 사이에서만 허용하십시오. VPN·클라우드망에서는 underlay MTU와 VXLAN overhead도 확인해야 합니다. [Docker overlay 요구사항](https://docs.docker.com/engine/network/drivers/overlay/)
+Linux 서버들이 이미 같은 Swarm에 가입되어 있고, rootful Docker와 userns-remap 미사용 구성을 갖춘 상태에서 시작합니다. manager에 이 저장소와 Docker CLI, coreutils의 `timeout`, 일반 POSIX 셸 유틸리티를 준비하십시오. 저장소 디렉터리에서 현재 Docker context가 가리키는 **active Swarm manager**를 대상으로 실행합니다. worker마다 저장소를 복사하거나 Agent를 수동으로 시작할 필요는 없습니다.
 
-이미 Swarm 클러스터가 있다면 manager에 이 저장소와 Docker CLI, coreutils의 `timeout`을 준비하십시오. 명령은 현재 Docker context가 가리키는 **active Swarm manager**에서 실행됩니다. worker마다 저장소를 복사하거나 Agent를 수동 실행할 필요는 없습니다. 모든 서버가 접근할 수 있는 registry에 이미지를 push하십시오. 아키텍처가 혼합되어 있다면 태그가 가리키는 manifest에 pull을 수행하는 manager를 포함한 모든 대상 아키텍처가 있어야 합니다. `stack deploy`는 로컬 소스를 빌드하지 않습니다. [Swarm stack 배포](https://docs.docker.com/engine/swarm/stack-deploy/)
+Swarm 가입은 이미지 registry 생성을 의미하지 않습니다. manager와 모든 대상 노드에서 접근할 수 있는 registry가 필요하며, 필요한 인증과 HTTPS 신뢰 설정은 미리 준비해야 합니다. helper는 registry를 설치하거나 Docker daemon의 전역 TLS/insecure-registry 설정을 변경하지 않습니다. 예를 들어 기존 registry가 있다면 아래 이미지 대신 `172.20.4.171:5000/kpl-v3:v3`를 사용할 수 있습니다. HTTP registry라면 관련 Docker daemon이 이를 사용하도록 사전에 설정되어 있어야 합니다.
+
+서버 간 TCP 2377(manager), TCP/UDP 7946, UDP 4789 통신이 필요합니다. VXLAN은 신뢰하는 클러스터 내부로 제한하고 VPN·클라우드망에서는 underlay MTU와 VXLAN overhead를 확인하십시오. smoke 실험에는 네트워크 조건 적용을 위한 커널 지원도 필요합니다. [Docker overlay 요구사항](https://docs.docker.com/engine/network/drivers/overlay/)
+
+분산 smoke 검증에는 Agent를 실행할 노드가 최소 두 대 필요합니다. manager 한 대와 worker 두 대이면 `--workers`로 manager를 실험에서 제외합니다. manager 한 대와 worker 한 대이면 대신 `--all`을 사용해 두 노드에 Agent를 배치하십시오. 이 경우 manager도 실험과 CPU·메모리를 공유합니다. 전체 과정에서 같은 사용자와 Docker context를 사용하십시오. Docker 접근에 sudo가 필요하다면 `init`, `login`, `publish`, 배포 명령을 포함해 일관되게 `sudo sh scripts/swarm.sh ...`로 실행합니다.
+
+## 첫 배포부터 실험과 다운로드까지
+
+### 1. 설정과 이미지 게시
 
 ```sh
-docker node ls
-sh scripts/swarm.sh init
-# .env.swarm에 KPL_IMAGE=registry.example.com/kpl-v3:v3를 설정합니다.
-# KPL_CONTROL_NODE_ID와 KPL_AGENT_CAPACITY도 확인합니다.
-vi .env.swarm
-sh scripts/swarm.sh deploy --all-excluding-self
-sh scripts/swarm.sh status
+sh scripts/swarm.sh nodes
+sh scripts/swarm.sh init KPL_IMAGE=registry.example.com/kpl-v3:v3 KPL_AGENT_CAPACITY=20 KPL_MIN_AGENTS=2
+sh scripts/swarm.sh config
+# registry가 인증을 요구할 때만 실행합니다.
+sh scripts/swarm.sh login
+sh scripts/swarm.sh publish
 ```
 
-`init`은 저장소 루트에 권한 `0600`의 `.env.swarm`을 만들고, API 토큰과 Grafana 비밀번호를 각각 32바이트 난수의 64자리 hex로 생성합니다. 기존 파일은 덮어쓰지 않습니다. 기본 control Node ID는 현재 manager이며, 데이터 volume을 보관할 노드의 **정확한 Node ID**로 고정해야 Controller·Prometheus·Grafana의 로컬 volume이 빈 다른 서버로 이동하지 않습니다. control 노드에도 Agent를 배치하면 실험과 분석이 같은 CPU·메모리를 사용합니다.
+이미지 참조를 실제 registry와 repository로 바꾸십시오. `init`은 전달한 설정을 검증하고 현재 manager를 기본 control 노드로 선택하며, 기존 파일을 덮어쓰지 않고 비공개 `.env.swarm`을 만듭니다. API와 Grafana 자격 증명을 각각 생성합니다. 이미 설정이 있으면 `configure KEY=VALUE...`로 변경합니다. `config`는 비밀 값을 가린 유효 설정을 표시합니다.
 
-비공개 registry라면 manager에서 `docker login <registry>`를 먼저 실행합니다. helper의 `--with-registry-auth`가 배포에 필요한 registry 자격 증명을 Swarm에 전달합니다. 로그인과 배포에는 같은 계정을 사용하십시오. `sudo sh scripts/swarm.sh deploy`로 배포한다면 `sudo docker login <registry>`로 로그인합니다. `sudo`가 export한 환경변수를 제거할 수 있으므로 의도한 설정은 `.env.swarm`에 두거나 필요한 환경변수를 명시적으로 전달하십시오.
+`login`은 `KPL_IMAGE`에서 registry를 추론해 helper와 같은 계정으로 대화형 로그인을 실행합니다. `publish`는 이 저장소를 빌드하고 설정한 이미지 태그로 push합니다. 해당 이미지가 이미 게시되어 있다면 `publish`는 생략합니다. 기본 빌드는 native 플랫폼을 대상으로 하며, 아키텍처가 혼합되어 있다면 해당 빌드가 가능한 기존 Buildx builder에서 manager를 포함한 모든 대상 아키텍처를 게시하십시오.
 
-helper는 `.env.swarm`의 허용된 `KEY=VALUE` 항목을 **문자 그대로** 읽으며 `source`하거나 셸 명령을 실행하지 않습니다. 바깥쪽 한 쌍의 따옴표는 제거하지만 `$VAR`, `$(command)`, escape는 확장하지 않습니다. `export KEY=...`와 인라인 주석도 사용하지 마십시오. 이미 export된 환경변수가 파일보다 우선합니다. 다른 파일은 `sh scripts/swarm.sh --env-file /path/to/lab.env status`처럼 지정합니다. Compose의 `.env`는 읽지 않으며, Docker 명령을 직접 실행할 때는 이 파일도 자동 적용되지 않습니다.
+```sh
+sh scripts/swarm.sh publish --platforms linux/amd64,linux/arm64
+```
 
-`deploy --all-excluding-self`는 현재 Docker context로 접속한 manager를 제외하고 조건에 맞는 노드를 선택합니다. 이미지를 확정하고 해당 노드에 `kpl.<stack>.agent=true` label을 추가하며, 없으면 attachable Peer overlay를 생성한 뒤 사전 검사와 stack 배포를 수행합니다. `deploy worker-a worker-b`처럼 명시적 목록도 사용할 수 있습니다. 기본 stack은 `kpl`, helper의 기본 Peer network는 `kpl-peers`입니다. 기존 label이 있는 다른 노드는 그대로 유지합니다. 서버/LAN/VPN/기존 Docker 네트워크와 주소가 겹치지 않는지 확인하고, 별도 stack은 고유한 이름과 Peer network를 사용하십시오. `deploy`는 배포 접수 후 반환하므로 `status`와 Controller의 `/api/v1/agents`에서 등록을 확인한 뒤 실험을 시작합니다. 기본 최소 Agent 수는 1이며, 두 서버를 필수로 하려면 `.env.swarm`에 `KPL_MIN_AGENTS=2`를 설정하십시오.
+helper는 builder나 CPU 에뮬레이션을 설치하지 않습니다. native 실행에는 노드의 아키텍처에 맞는 이미지가 필요합니다. [Docker multi-platform 빌드](https://docs.docker.com/build/building/multi-platform/)
 
-Agent는 배치된 노드의 로컬 Docker socket만 사용하며 manager API 접근이 필요 없습니다. `{{.Service.Name}}-{{.Node.ID}}`로 ID를 만들고 자신의 task가 연결된 Peer overlay IPv4를 `advertise-url`과 `self-url`로 사용합니다. 서비스 VIP나 공통 DNSRR 주소를 개별 Agent 주소로 지정하면 다른 서버가 요청을 받을 수 있습니다. Agent 시작 시 자신의 실제 로컬 image ID를 조회해 Peer에 사용하므로 같은 서버의 Agent·Peer 바이너리가 일치합니다. [Swarm global 서비스와 템플릿](https://docs.docker.com/engine/swarm/services/)
+### 2. 배포와 화면 접속
+
+```sh
+# manager 한 대와 worker 한 대인 클러스터에서는 대신 --all을 사용합니다.
+sh scripts/swarm.sh deploy --workers
+sh scripts/swarm.sh check
+sh scripts/swarm.sh status
+sh scripts/swarm.sh access
+sh scripts/swarm.sh credentials
+```
+
+`deploy`는 이미지를 확정하고 선택한 노드에 label을 추가하며, 필요하면 attachable Peer overlay를 생성한 뒤 배포 검사와 stack 배포를 접수합니다. 모든 서비스와 Agent가 준비되기 전에 반환합니다. `check`는 불러온 설정으로 구성·네트워크·배치 사전 검사를 다시 수행하며, 실제 서버 간 통신이나 모든 worker의 커널 규칙 설치를 검증하지 않습니다. `status`는 Docker 서비스·task·노드 상태이며 Controller 등록 상태는 아닙니다.
+
+`access`가 출력한 Controller URL을 여십시오. 포트는 명령을 실행하는 manager와 다를 수 있는 지정된 **control 노드**에 게시됩니다. 해당 주소에 접근할 수 있는 기기에서 Control Room의 **Online Agents가 2 이상**이 될 때까지 기다리십시오. **Agent status**에서는 `online` 행만 확인합니다. **Peers**는 점유량 / 용량이며, 용량에서 점유량을 뺀 여유 슬롯의 합계가 **6 이상**이어야 합니다. 요약의 **Available slots**에는 offline Agent도 포함될 수 있으므로 이 조건은 표로 확인하십시오. Swarm task가 실행 중이라는 사실만으로 등록까지 확인되지는 않습니다. 시작에 문제가 있으면 `sh scripts/swarm.sh logs agent` 또는 `sh scripts/swarm.sh logs controller`를 확인하십시오.
+
+`credentials`는 설정된 API 토큰과 Grafana 로그인 정보를 명시적으로 평문 출력합니다. API 토큰은 Controller에, 별도 Grafana 계정과 비밀번호는 `access`의 Grafana URL에 사용합니다. 기존 Grafana volume은 관리자 비밀번호를 보존하므로 설정 변경만으로 그 비밀번호가 초기화되지는 않습니다.
+
+### 3. 분산 smoke 실험 실행
+
+```sh
+# examples/swarm-smoke.yaml을 출력합니다. FILE을 지정하면 해당 시나리오를 출력합니다.
+sh scripts/swarm.sh scenario
+```
+
+Control Room에서 **Run experiment**를 누르고 **YAML scenario** 전체를 출력된 YAML로 교체한 다음 API 토큰을 입력하고 **Run**을 누르십시오. 웹 폼의 기본 시나리오는 다른 smoke 실험이며 Swarm 예제를 자동으로 불러오지 않습니다.
+
+예제는 boot Peer 한 개와 worker 다섯 개를 만듭니다. worker에는 25ms 지연, 2ms jitter, 0.5% loss를 적용합니다. readiness 확인과 20초 대기 후 `payloadSize: 4096`으로 메시지 50개를 발행하고, 수집을 위해 1분 기다린 뒤 `stop-all`을 실행합니다. 용량이 같고 다른 부하가 없는 Agent들에서는 balanced 배치가 Peer를 분산합니다. 서로 다른 Agent에 Peer가 나타나고 publish/deliver 이벤트가 기록되는지 확인하십시오. readiness는 프로세스 초기화 완료 기준이며 GossipSub mesh 수렴을 보장하지 않습니다. 전달 수는 실제 조건에 따라 달라집니다.
+
+분석하려면 Grafana URL에서 로그인하고 **KP2PLab Experiment Analysis**의 **Run**에 해당 실험을 선택하십시오. **Agent**와 **Topic**으로 서버와 트래픽을 비교합니다. Control Room 요약은 최근 이벤트를 사용하므로 Grafana 누적 counter 및 저장 이벤트 로그와 집계 범위가 다릅니다. [모니터링 가이드](monitoring.kr.md)를 참고하십시오.
+
+### 4. 결과 다운로드 후 철거
+
+실험이 끝나고 해당 Peer들이 종료되었는지 확인하십시오. 다른 실험이 없다면 Agent 점유량은 0으로 돌아와야 합니다. 실행 중인 실험을 취소하려면 해당 실험의 **Stop**을 누르고 정리가 완료될 때까지 기다립니다.
+
+실험 항목이나 **Saved results**에서 **Download results**를 선택합니다. ZIP에는 `scenario.yaml`, `experiment.json`, `events.jsonl`, `export.json`이 들어갑니다. 최근 300개 이벤트 버퍼와 별개로 저장된 전체 이벤트 로그를 포함하지만 Prometheus/Grafana 시계열 데이터베이스는 포함하지 않습니다. 실행 중인 실험의 **Download snapshot**에는 다운로드 경계까지 저장된 기록만 들어갑니다. [다운로드 구성과 한계](monitoring.kr.md#실험-결과-다운로드)
+
+철거하면 웹 화면도 내려가므로 먼저 다운로드한 뒤 실행하십시오.
+
+```sh
+sh scripts/swarm.sh remove
+```
+
+철거는 Controller 종료 후 Agent 종료와 Peer 정리를 확인하고 stack 서비스를 삭제합니다. 실험·Prometheus·Grafana volume과 외부 Peer network는 남습니다. 보존된 volume에 다시 배포할 때는 같은 설정을 재사용하십시오. 이후 **Saved results**에서 기존 기록을 다시 볼 수 있습니다. 이전에 실행 중이던 기록은 `interrupted`로 표시하며 자동 재개하지 않습니다. 이 상태는 Peer 정리 완료를 뜻하지 않습니다. 실패하거나 접근할 수 없는 노드는 자동 철거를 막을 수 있으므로 아래 정리 규칙을 참고하십시오.
+
+## 설정과 네트워크
+
+일반적인 설정 변경은 helper를 사용합니다.
+
+```sh
+sh scripts/swarm.sh configure KPL_AGENT_CAPACITY=20 KPL_MIN_AGENTS=2
+# 선택 사항: Peer overlay를 생성하기 전에 사용하지 않는 subnet을 지정합니다.
+sh scripts/swarm.sh configure KPL_PEER_SUBNET=10.11.0.0/24
+sh scripts/swarm.sh config
+```
+
+`configure`는 변경 사항을 검증하고 설정 파일을 원자적으로 교체하며, 명시적으로 변경하지 않은 기존 자격 증명은 보존합니다. 기존 파일 설정에 요청한 변경만 저장하고 무관한 환경변수의 덮어쓰기 값은 저장하지 않습니다. 변경한 설정은 다음 `deploy`에서 서비스에 적용되며 실행 중인 Peer를 재설정하지 않습니다. 파일 권한은 `0600`입니다. `init`은 자격 증명을 명시적으로 지정하지 않으면 각각 32바이트 난수의 64자리 hex로 생성합니다. `config`는 비밀 값을 가리고 `credentials`만 의도적으로 표시합니다.
+
+기본 stack 이름은 `kpl`, helper의 기본 Peer network는 `kpl-peers`입니다. `KPL_PEER_SUBNET`은 선택 사항이며 생략하면 overlay 생성 시 Docker가 subnet을 할당합니다. 지정한다면 서버·LAN·VPN·다른 Docker 네트워크와 겹치지 않아야 합니다. 기존 네트워크의 subnet이 다르면 배포가 실패하며, 설정을 바꾼다고 기존 네트워크 크기가 바뀌지는 않습니다. `/16` 같은 더 큰 subnet도 입력할 수 있지만 대규모 실험 지원을 보장하지는 않습니다. 아래 용량 한계를 참고하고 별도 배포에는 서로 다른 stack·Peer network 이름을 사용하십시오.
+
+`KPL_CONTROL_NODE_ID`는 **데이터 volume을 보관하는 노드의 정확한 Node ID**로 고정하여 Controller·Prometheus·Grafana가 빈 로컬 volume을 가진 다른 서버로 이동하지 않게 하십시오. `nodes`로 선택할 노드를 조회합니다. helper의 기본 최소 Agent 수는 1이며 위 절차에서는 `KPL_MIN_AGENTS=2`를 명시했습니다. 사전 검사의 최소 수 조건은 UI에서 실제 등록과 여유 슬롯을 확인하는 절차를 대체하지 않습니다.
+
+helper는 `.env.swarm`의 허용된 `KEY=VALUE` 항목을 **문자 그대로** 읽으며 파일을 source하거나 셸 표현식을 실행하지 않습니다. 바깥쪽 한 쌍의 따옴표는 제거하지만 변수·명령 치환·escape를 확장하지 않습니다. export된 환경변수가 파일보다 우선하므로 파일 변경이 적용되지 않은 것 같으면 `config`를 확인하십시오. `sudo`는 환경변수를 제거할 수 있으므로 같은 계정을 사용하고 일상 설정은 helper 파일에 보관합니다. 다른 파일은 `sh scripts/swarm.sh --env-file /path/to/lab.env config`로 선택합니다. Compose의 `.env`는 읽지 않습니다.
+
+Agent는 배치된 노드의 로컬 Docker socket만 사용하며 manager API 접근이 필요 없습니다. `{{.Service.Name}}-{{.Node.ID}}`로 ID를 만들고 자신의 task가 연결된 Peer overlay IPv4를 `advertise-url`과 `self-url`로 사용합니다. 서비스 VIP나 공통 DNSRR 주소는 개별 Agent를 안정적으로 식별할 수 없습니다. Agent는 시작 시 실제 로컬 image ID를 확인하여 Peer 생성에 사용하므로 같은 노드의 Agent·Peer 바이너리가 일치합니다. [Swarm global 서비스와 템플릿](https://docs.docker.com/engine/swarm/services/)
 
 ## 동일 태그로 이미지 업데이트
 
-`.env.swarm`에 `KPL_IMAGE=registry.example.com/kpl-v3:v3`를 한 번 설정하고 그대로 유지하십시오. 기존에 digest를 적었다면 한 번만 태그로 바꾸면 됩니다. export한 `KPL_IMAGE`가 있으면 파일보다 우선하므로 해당 환경변수도 바꾸거나 해제하십시오. 단일 아키텍처 배포에서는 기존 Docker 명령으로 업데이트합니다.
+이 저장소의 소스를 갱신한 뒤 진행 중 실험을 마치고 실행하십시오.
 
 ```sh
-docker build -t registry.example.com/kpl-v3:v3 .
-docker push registry.example.com/kpl-v3:v3
-# 진행 중 실험을 마친 뒤 manager에서 실행합니다.
+sh scripts/swarm.sh publish
 sh scripts/swarm.sh deploy
 sh scripts/swarm.sh status
 ```
 
-태그를 사용하면 `deploy`가 매번 `docker pull`을 실행하고 그 결과의 registry digest를 확인하여 이번 배포만 해당 digest로 고정합니다. `.env.swarm`은 수정하지 않습니다. **push할 때마다 SHA를 수동으로 바꿀 필요가 없습니다.** pull에 실패하면 오래된 로컬 태그를 사용하지 않고 배포를 중단합니다. pull 제한 시간은 `KPL_IMAGE_PULL_TIMEOUT`으로 지정하며 기본값은 `300`초입니다.
+설정에는 같은 태그를 유지합니다. 이전 digest에서 태그로 바꾸거나 다른 태그를 사용하려면 먼저 실행하십시오.
 
-특정 버전을 고정하려면 `KPL_IMAGE=registry.example.com/kpl-v3@sha256:<digest>`도 계속 사용할 수 있습니다. Docker에서 태그는 새 버전으로 갱신될 수 있는 이름이고 digest는 변경되지 않는 이미지 버전을 식별합니다. [Docker pull과 digest 고정](https://docs.docker.com/reference/cli/docker/image/pull/#pull-an-image-by-digest-immutable-identifier)
+```sh
+sh scripts/swarm.sh configure KPL_IMAGE=registry.example.com/kpl-v3:v3
+```
 
-amd64/arm64 서버가 혼합되어 있다면 manager와 모든 대상 아키텍처를 포함하는 multi-platform manifest로 같은 태그를 push해야 합니다. 태그 확인용 pull은 manager 데몬의 기본 플랫폼을 사용하며, 해당 pull에서만 `DOCKER_DEFAULT_PLATFORM`을 무시합니다. Docker가 반환한 최상위 manifest/index digest는 그대로 유지합니다. 위 단일 아키텍처 빌드 예시는 multi-platform manifest를 만들지 않습니다. Agent 교체 시 담당 Peer가 종료될 수 있으므로 진행 중 실험을 마친 뒤 배포하고, 이후 Agent 등록을 확인하십시오.
+이후 동일하게 `publish` → `deploy`를 사용합니다. `publish`에는 digest가 아닌 태그가 필요합니다. 아키텍처가 혼합되어 있다면 native 빌드 대신 `publish --platforms linux/amd64,linux/arm64`로 manager와 모든 대상 아키텍처를 포함하십시오.
+
+매 배포마다 설정된 태그를 pull하고 결과의 registry digest를 확인하여 `.env.swarm`을 바꾸지 않고 **이번 배포만** 해당 digest로 고정합니다. **push할 때마다 SHA를 수동으로 바꿀 필요가 없습니다.** pull에 실패하면 오래된 로컬 태그를 사용하지 않고 배포를 중단합니다. 변경되지 않는 버전으로 배포하려면 기존처럼 `repository@sha256:<digest>`를 사용할 수 있습니다. [Docker pull과 digest 고정](https://docs.docker.com/reference/cli/docker/image/pull/#pull-an-image-by-digest-immutable-identifier)
+
+제한 시간은 초 단위이며 기본값은 `KPL_IMAGE_BUILD_TIMEOUT=1800`, `KPL_IMAGE_PUSH_TIMEOUT=600`, `KPL_IMAGE_PULL_TIMEOUT=300`입니다. 별도 push 제한은 native 게시에 적용하며, Buildx의 통합 빌드·push에는 build 제한이 적용됩니다. 태그 확인용 pull은 manager 데몬의 native 플랫폼을 사용하고 해당 pull에서만 `DOCKER_DEFAULT_PLATFORM`을 무시하며, Docker가 반환한 manifest/index digest를 유지합니다. Agent 교체 시 담당 Peer가 종료될 수 있으므로 배포 후 Agent 등록을 기다린 뒤 다음 실험을 실행하십시오.
 
 ## Manager에서 Agent 추가·철거
 
@@ -76,7 +152,17 @@ Makefile은 `NODES`를 그대로 전달하므로 `make swarm-add-node NODES='--w
 | 명령 | 동작 |
 |---|---|
 | `sh scripts/swarm.sh deploy [NODE...]` | 노드 목록 또는 선택 옵션 하나로 배포·업데이트하며, 둘 다 없으면 기존 label 재사용. 이미지 태그를 pull·확정하거나 명시 digest 사용 |
-| `sh scripts/swarm.sh status` | stack 서비스, Agent task, 선택된 노드 표시 |
+| `sh scripts/swarm.sh status` | Docker stack 서비스·Agent task·선택된 노드 표시. API readiness는 검사하지 않음 |
+| `sh scripts/swarm.sh nodes` | 현재 Swarm 노드 목록 조회 |
+| `sh scripts/swarm.sh init [KEY=VALUE...]` | 검증된 비공개 설정과 자격 증명 생성. 기존 파일은 덮어쓰지 않음 |
+| `sh scripts/swarm.sh configure KEY=VALUE...` | 다른 설정과 자격 증명을 보존하며 검증된 변경을 원자적으로 저장 |
+| `sh scripts/swarm.sh config` / `credentials` | 비밀 값을 가린 유효 설정 조회 / API·Grafana 자격 증명 명시적 표시 |
+| `sh scripts/swarm.sh login` | 설정된 이미지에서 추론한 registry에 대화형 로그인 |
+| `sh scripts/swarm.sh publish [--platforms CSV]` | 설정 태그로 빌드·push. 플랫폼 지정 시 기존 Buildx builder 사용 |
+| `sh scripts/swarm.sh check` | 불러온 설정으로 배포 사전 검사 재실행 |
+| `sh scripts/swarm.sh access` | control 노드 URL 출력. 접근 가능 여부나 서비스 readiness는 검사하지 않음 |
+| `sh scripts/swarm.sh logs [COMPONENT]` | 타임스탬프가 있는 최근 100줄 표시. 기본 controller, 또는 agent·prometheus·grafana |
+| `sh scripts/swarm.sh scenario [FILE]` | 웹 폼에 넣을 YAML 출력. 기본은 분산 smoke 예제이며 실행 요청은 하지 않음 |
 | `sh scripts/swarm.sh add-node worker-c` | 기존 서비스에 Agent 배치 노드 추가. Linux·Ready·Active 상태 필요 |
 | `sh scripts/swarm.sh remove-node worker-b` | 서비스에서 대상 노드를 제외하고 Agent 정상 종료 확인 후 배치 label 정리 |
 | `sh scripts/swarm.sh remove` | Controller 종료 확인 → Agent 종료·Peer 정리 확인 → stack 서비스 제거 |
@@ -91,11 +177,13 @@ Makefile은 `NODES`를 그대로 전달하므로 `make swarm-add-node NODES='--w
 
 `KPL_API_TOKEN`은 실험 실행·중지, Peer 생성·삭제·발행, 등록·heartbeat·telemetry에 사용하는 공통 Bearer 토큰입니다. Swarm join token이나 Docker manager 권한, Grafana 비밀번호와는 별개입니다. Swarm 배포에서는 필수이며 Controller와 모든 Agent에 같은 값을 전달합니다. Agent가 Peer 설정에도 자동으로 넣으므로 Peer별 설정은 필요 없습니다. 사용자·역할별 권한 분리는 없습니다.
 
-Controller 화면의 **Run experiment → API token**에 실제 배포에 적용한 `KPL_API_TOKEN` 값을 입력하십시오. 환경변수로 덮어쓰지 않았다면 `.env.swarm`의 값입니다. **Run** 버튼을 누르면 브라우저의 해당 origin `localStorage`에 저장되어 이후 실행·중지 요청에 사용됩니다. REST 요청에는 `Authorization: Bearer <token>` 헤더를 붙입니다. 토큰은 만료되거나 자동 교체되지 않습니다.
+`sh scripts/swarm.sh credentials`로 유효 `KPL_API_TOKEN`을 확인하고 Controller 화면의 **Run experiment → API token**에 실제 배포에 적용한 값을 입력하십시오. 설정을 변경했다면 다시 배포해야 서비스가 새 토큰을 사용합니다. **Run** 버튼을 누르면 브라우저의 해당 origin `localStorage`에 저장되어 이후 실행·중지 요청에 사용됩니다. REST 요청에는 `Authorization: Bearer <token>` 헤더를 붙입니다. 토큰은 만료되거나 자동 교체되지 않습니다.
 
 토큰을 설정해도 대시보드, 상태·이벤트·SSE·metrics 등 GET 조회는 공개입니다. Controller는 GET/HEAD, Agent와 Peer는 GET을 인증 검사에서 제외합니다. CLI나 Compose에서 토큰을 비우면 변경 요청의 토큰 검사도 비활성화됩니다. 토큰은 Swarm 서비스 환경변수와 Peer의 `0600` 설정 JSON에 저장되며, HTTP 전송 자체를 암호화하지는 않습니다.
 
 ## 이전 v3 stack에서 전환
+
+**Legacy 예외:** 신규 배포라면 이 절차를 건너뛰십시오. 아래 직접 Docker 명령은 표시가 없는 이전 stack을 한 번 전환할 때만 사용하며, 위의 일반 운영 절차는 helper로 진행합니다. helper의 소유권 검사를 우회하지 않습니다.
 
 helper는 기존 서비스가 `${KPL_STACK_NAME}_{controller,agent,prometheus,grafana}`이고 `io.kpl.application=kp2plab-v3` 서비스 label이 있을 때만 관리합니다. 이 표시가 없는 이전 v3 stack은 같은 이름이어도 변경을 거부합니다.
 
@@ -141,7 +229,7 @@ Prometheus는 private monitoring overlay의 `tasks.agent`를 DNS로 조회하여
 - Agent의 `kpl_local_cleanup_pending`, `kpl_local_telemetry_queue_events`
 - 실험의 실제 ready/started 시각, 실패 수 및 서버별 CPU·메모리·네트워크 사용량
 
-Go process 지표는 Controller·Agent 자체만 나타내며 Peer 전체의 자원 사용량이 아닙니다. `docker stats`, 호스트 모니터링 또는 별도 container exporter로 Peer 부하를 확인하십시오. 전체 노드 상태 보고·Controller 저장/집계·중앙 HTTP 수집, Docker CLI의 생성/삭제 비용도 확장 한계입니다. 종료된 노드 기록과 실행별 Prometheus series가 유지되므로 긴 churn 실험은 메모리와 수집 지연을 함께 측정해야 합니다.
+Go process 지표는 Controller·Agent 자체만 나타내며 Peer 전체의 자원 사용량이 아닙니다. 호스트 모니터링 또는 별도 container exporter로 Peer 부하를 확인하십시오. 전체 노드 상태 보고·Controller 저장/집계·중앙 HTTP 수집, Docker CLI의 생성/삭제 비용도 확장 한계입니다. 종료된 노드 기록과 실행별 Prometheus series가 유지되므로 긴 churn 실험은 메모리와 수집 지연을 함께 측정해야 합니다.
 
 Swarm의 published port는 Compose의 `127.0.0.1` 바인딩과 다릅니다. 이 stack은 host mode로 control 노드의 8080·9090·3000을 게시합니다. 관리망 방화벽이나 인증 reverse proxy로 접근을 제한하십시오. `KPL_API_TOKEN`은 변경 API만 보호하고 GET 조회는 보호하지 않습니다. Grafana 익명 접속은 이 stack에서 비활성화했습니다. [Swarm host mode 게시](https://docs.docker.com/engine/swarm/services/#publish-ports)
 
@@ -163,7 +251,7 @@ manager 명령 추가 후 Linux에서 전체 Go 회귀 테스트와 `test-swarm-
 
 별도의 Docker 29.7.2 데몬 하나에서도 SIGTERM 종료용 Controller·Agent 테스트 서비스로 `remove-node` → `add-node` → 전체 `remove`를 실행했습니다. 정상 종료의 `shutdown / PID 0 / exit 0`, 재배치 후 새 task 생성, 최종 stack 서비스 0개를 확인했습니다. 대상이 아닌 노드를 제외하는 배치 조건의 추가·제거에서는 실행 중 task ID가 유지됐습니다. Controller는 replica 수를 유지한 채 배치를 중지하여 종료 이력의 즉시 삭제를 방지하고, 한 번도 노드에 할당되지 않은 대기·취소 task는 종료 확인에서 제외합니다. 이 검증은 관리 명령과 실제 Swarm 상태 전이를 대상으로 하며, 새 이미지의 registry pull이나 실제 Peer 실험 전체를 다시 실행한 결과는 아닙니다.
 
-대상 서버마다 이미지 태그 또는 digest를 `KPL_IMAGE`에 export한 뒤 `docker pull "$KPL_IMAGE"`와 `KPL_DOCKER_IMAGE="$KPL_IMAGE" sh scripts/check-linux.sh`로 커널 기능을 확인하십시오. 배포한 버전 자체를 검사하려면 배포 시 확정한 digest를 사용합니다. Linux 커널 검사 스크립트는 Docker Compose v2, `timeout`, `setsid`도 필요합니다. manager의 `deploy`는 기본 배포 조건을 `check-swarm.sh`로 검사합니다. 사전 검사 스크립트는 태그와 digest를 받지만 직접 pull하거나 태그를 확정하지는 않습니다. 단독 실행하려면 `.env.swarm`의 설정을 환경변수로 따로 전달해야 하며, 단독 실행의 기본 최소 Agent 수는 2입니다. 이 검사들은 cross-host VXLAN 실제 통신이나 처리량을 대신하지 않습니다.
+일반 Swarm 사전 검사는 `sh scripts/swarm.sh check`를 사용하십시오. helper가 설정을 불러와 배포 검사를 실행합니다. [Linux 가이드](linux-deployment.kr.md#서버-준비와-실행)의 별도 호스트 로컬 커널 검사는 선택적 문제 진단이며, 모든 worker에 이 저장소를 복사해야 한다는 뜻은 아닙니다. 추가 로컬 도구가 필요하고 일회용 컨테이너를 검사합니다. 배포 사전 검사나 로컬 커널 검사만으로 분산 smoke 실험·실제 cross-host VXLAN 통신·처리량 측정을 대체할 수는 없습니다.
 
 최소 두 서버에서 [분산 실험 예제](../examples/swarm-smoke.yaml)를 실행해 서로 다른 Agent에 ready Peer가 생기는지, 광고 주소가 Peer overlay에 속하는지, publish/deliver가 양쪽 서버에서 발생하는지 확인하십시오. 예제는 boot 1개와 worker 5개를 생성하므로 총 capacity 6 이상이 필요합니다. 그 뒤 목표 Peer 수를 단계적으로 올려 ready 지연·실패율·분배·자원 사용량을 기록하십시오. 네트워크 단절/Agent 재시작 시 stale 제외·잔존 컨테이너 정리와 Prometheus 대상 교체도 확인해야 합니다.
 

@@ -12,7 +12,11 @@ set -eu
 printf '%s\n' "$*" >> "$KPL_TEST_CALLS"
 case "$1 $2" in
     'info --format') printf '%s\n' "${KPL_TEST_MANAGER:-active true}" ;;
-    'network inspect') printf '%s\n' "${KPL_TEST_NETWORK:-kpl-swarm-peers overlay true}" ;;
+    'network inspect')
+        case "$4" in
+            '{{range .IPAM.Config}}{{println .Subnet}}{{end}}') printf '%s\n' "${KPL_TEST_SUBNET:-10.11.0.0/24}" ;;
+            *) printf '%s\n' "${KPL_TEST_NETWORK:-kpl-swarm-peers overlay true}" ;;
+        esac ;;
     'node ls')
         [ "$3 $4" = '--quiet --filter' ]
         case "$5" in
@@ -51,7 +55,7 @@ export PATH="$scratch/bin:$PATH"
 export KPL_CONTROL_NODE_ID=control1
 export KPL_IMAGE=registry.example/kpl:v3@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 export KPL_API_TOKEN=must-not-appear-in-output
-unset KPL_PEER_NETWORK KPL_AGENT_CAPACITY KPL_STACK_NAME KPL_MIN_AGENTS KPL_IMAGE_PULL_TIMEOUT
+unset KPL_PEER_NETWORK KPL_PEER_SUBNET KPL_AGENT_CAPACITY KPL_STACK_NAME KPL_MIN_AGENTS KPL_IMAGE_PULL_TIMEOUT KPL_IMAGE_BUILD_TIMEOUT KPL_IMAGE_PUSH_TIMEOUT
 
 sh "$root/scripts/check-swarm.sh" > "$scratch/output"
 grep -q '2 eligible Agents' "$scratch/output"
@@ -103,6 +107,14 @@ reject KPL_TEST_CONTROL='control1 windows ready active'
 reject KPL_TEST_MANAGER='active false'
 reject KPL_TEST_NETWORK='kpl-swarm-peers bridge true'
 reject KPL_TEST_NETWORK='kpl-swarm-peers overlay false'
+env KPL_PEER_SUBNET=10.11.0.0/24 sh "$root/scripts/check-swarm.sh" > "$scratch/output"
+reject KPL_PEER_SUBNET=10.11.0.0/16
+grep -q 'subnet differs' "$scratch/output"
+calls_before=$(wc -l < "$KPL_TEST_CALLS")
+reject KPL_PEER_SUBNET=10.11.0.1/24
+reject KPL_IMAGE_BUILD_TIMEOUT=0
+reject KPL_IMAGE_PUSH_TIMEOUT=08
+[ "$(wc -l < "$KPL_TEST_CALLS")" -eq "$calls_before" ]
 reject KPL_TEST_AGENTS='linux ready active
 linux down active
 windows ready active'

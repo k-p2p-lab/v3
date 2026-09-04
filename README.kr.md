@@ -70,25 +70,39 @@ Agent의 기본값은 `--runtime docker`, `--docker-image kpl-v3:local`, `--dock
 
 Agent를 재시작하면 동일 Docker daemon·network에서 같은 Agent ID의 관리 label이 붙은 이전 Peer 컨테이너를 제거합니다. 기존 실험을 복구하거나 재개하지는 않습니다. Agent ID는 같은 daemon·network 내에서 고유해야 합니다. 컨테이너 제거가 일시적으로 실패하면 오류를 보고하며 후속 종료 요청으로 다시 정리할 수 있습니다.
 
-기본 Compose bridge는 같은 Docker 호스트의 컨테이너만 연결합니다. 기존 Linux Swarm에서는 manager에 이 저장소를 준비하고 관리 helper를 실행하십시오. [stack.swarm.yaml](stack.swarm.yaml)을 사용해 선택한 서버마다 Agent 하나, 개별 task 주소, 공통 attachable Peer overlay 및 Prometheus의 전체 Agent 탐색을 구성합니다.
+기본 Compose bridge는 같은 Docker 호스트의 컨테이너만 연결합니다. 이미 Linux Swarm에 가입한 서버들은 manager에 이 저장소와 Docker CLI, coreutils의 `timeout`을 준비하십시오. 모든 노드가 접근할 이미지 registry도 필요하며 Swarm 가입으로 registry가 만들어지지는 않습니다. helper는 [stack.swarm.yaml](stack.swarm.yaml)로 선택한 노드마다 Agent 하나와 공통 attachable Peer overlay를 관리합니다.
 
 ```sh
-sh scripts/swarm.sh init
-# .env.swarm에 KPL_IMAGE=registry.example.com/kpl-v3:v3를 설정하고 control Node ID를 확인합니다.
-sh scripts/swarm.sh deploy --all-excluding-self
+sh scripts/swarm.sh nodes
+sh scripts/swarm.sh init KPL_IMAGE=registry.example.com/kpl-v3:v3 KPL_AGENT_CAPACITY=20 KPL_MIN_AGENTS=2
+sh scripts/swarm.sh config
+# registry가 인증을 요구할 때만 실행합니다.
+sh scripts/swarm.sh login
+sh scripts/swarm.sh publish
+# worker가 최소 두 대인 구성입니다. manager 한 대 + worker 한 대이면 --all을 사용합니다.
+sh scripts/swarm.sh deploy --workers
+sh scripts/swarm.sh check
 sh scripts/swarm.sh status
-# 이후: add-node --workers, remove-node --all-excluding-self, 전체 철거는 remove
+sh scripts/swarm.sh access
+sh scripts/swarm.sh credentials
+sh scripts/swarm.sh scenario
 ```
 
-`init`은 권한 `0600`의 `.env.swarm`과 서로 다른 API 토큰·Grafana 비밀번호를 생성합니다. helper는 `KEY=VALUE`를 문자 그대로 읽으며 이미 export된 환경변수가 우선합니다. 셸 표현식을 실행하거나 Compose의 `.env`를 읽지 않습니다. `deploy`는 배포 접수 후 반환하므로 Controller에서 Agent 등록을 확인한 뒤 실험을 시작하십시오. `add-node`와 `remove-node`는 Swarm 가입 상태가 아닌 stack별 `kpl.<stack>.agent` label을 변경합니다. 노드 철거 시 해당 Peer가 종료되어 진행 중 실험에 영향을 줍니다.
+이미지 참조를 기존 registry/repository로 바꾸십시오. Docker에 sudo가 필요하면 로그인과 설정을 포함해 일관되게 `sudo sh scripts/swarm.sh ...`로 실행합니다. `init`은 기존 파일을 덮어쓰지 않고 비공개 설정과 별도 API/Grafana 자격 증명을 생성합니다. 이후 변경은 `configure KEY=VALUE...`, 비밀 값을 가린 유효 설정 조회는 `config`를 사용합니다. 환경변수가 문자 그대로 읽는 설정 파일보다 우선하며, helper는 Compose의 `.env`를 읽거나 daemon의 registry/TLS 설정을 변경하지 않습니다.
 
-`deploy`, `add-node`, `remove-node`에는 노드 ID/hostname 목록 또는 선택 옵션 하나를 사용합니다. `--all`은 manager도 포함하고, `--workers`는 Swarm worker 역할의 노드만 선택하며, `--all-excluding-self`는 현재 Docker context로 접속한 manager를 제외합니다. 여기서 self는 `KPL_CONTROL_NODE_ID`나 명령을 입력하는 셸의 서버가 아닙니다. 선택 옵션끼리 또는 선택 옵션과 명시적 노드 목록을 섞을 수 없습니다.
+`access`의 Controller URL을 열고 **Online Agents 2 이상**이 될 때까지 기다리십시오. **Agent status**에서 `online` 행만 확인하고 여유 슬롯 합계가 6 이상인지 확인합니다. **Peers**는 점유량 / 용량이므로 뒤의 수에서 앞의 수를 빼면 됩니다. 요약의 **Available slots**에는 offline Agent도 포함될 수 있습니다. `status`는 Docker 상태이며 Controller 등록 확인은 아닙니다. **Run experiment**에서 **YAML scenario** 전체를 `scenario` 출력으로 교체하고, `credentials`의 API 토큰을 입력한 뒤 **Run**을 누릅니다. 웹 폼의 초기 YAML은 다른 smoke 실험입니다. Swarm 예제는 Peer 여섯 개를 생성하고 네트워크 조건에서 메시지를 발행한 뒤 `stop-all`을 실행합니다. Grafana는 `credentials`의 별도 계정으로 로그인하고 **Run**에서 실험을 선택합니다.
 
-자동 배포·추가는 Linux·Ready·Active 노드만 선택하고 제외한 노드를 안내합니다. 자동 철거는 이 stack의 label이 있는 노드와 선택 대상의 교집합만 처리하며, 대상 노드에 접근할 수 없으면 건너뛰지 않고 실패합니다. 선택 결과가 비어도 실패합니다. 배포·추가는 기존 label을 유지하며, 인자 없는 `deploy`는 기존 배치를 재사용합니다. 선택은 명령 실행 시마다 평가하므로 새로 가입한 노드도 다음 명령에서 선택해야 합니다. [노드 선택 규칙](docs/swarm.kr.md#manager에서-agent-추가철거)을 참고하십시오.
+실험 완료와 Peer 정리를 확인한 뒤 실험 항목 또는 **Saved results**의 **Download results**를 사용하십시오. ZIP에는 저장된 시나리오·메타데이터·이벤트 로그·내보내기 정보가 들어가며 Grafana/Prometheus 시계열 저장소는 포함하지 않습니다. 웹 서비스를 내리기 전에 다운로드합니다.
 
-`.env.swarm`의 이미지 태그는 그대로 유지하십시오. 새 코드를 같은 태그로 빌드·push한 뒤 `sh scripts/swarm.sh deploy`를 다시 실행하면 됩니다. 매 배포마다 태그를 pull하여 현재 registry digest를 확인하고, 파일을 수정하지 않은 채 이번 배포만 해당 digest로 고정합니다. **push할 때마다 새 SHA를 복사할 필요가 없습니다.** 특정 버전을 고정하려면 기존처럼 `repository@sha256:...`도 사용할 수 있습니다. Agent 교체 시 담당 Peer가 종료되므로 진행 중 실험을 마친 뒤 업데이트하십시오. [동일 태그로 이미지 업데이트](docs/swarm.kr.md#동일-태그로-이미지-업데이트)를 참고하십시오.
+```sh
+sh scripts/swarm.sh remove
+```
 
-`sh scripts/swarm.sh remove`는 Controller 종료와 Agent의 Peer 정리를 확인한 뒤 stack 서비스를 제거합니다. 노드 접근이나 정상 task 종료를 확인할 수 없거나 과거 실패 task 이력이 남아 있으면 자동 철거를 중단하여 점검이 필요합니다. 데이터 volume과 외부 Peer network는 보존합니다. 준비 조건과 전체 명령, 이전 stack의 서비스 label 전환은 [Swarm 운영 가이드](docs/swarm.kr.md)를 참고하십시오. 문서의 기존 두 데몬 실험은 이 helper 추가 전 검증이며 새 관리 명령의 전체 경로 검증은 아닙니다.
+`deploy`, `add-node`, `remove-node`에는 노드 ID/hostname 목록 또는 선택 옵션 하나를 사용합니다. `--all`은 manager도 포함하고, `--workers`는 worker 역할만 선택하며, `--all-excluding-self`는 현재 Docker context가 가리키는 manager를 제외합니다. self는 해당 daemon의 Swarm Node ID 기준이며 `KPL_CONTROL_NODE_ID`나 셸을 실행하는 서버를 기준으로 정하지 않습니다. 선택 옵션끼리 또는 명시적 노드와 섞을 수 없습니다. 배포·추가는 Linux·Ready·Active 노드를 선택하고 제외한 후보를 안내하며, 철거는 이 stack의 label이 있는 대상만 처리하고 접근 불가 시 실패합니다. 빈 선택도 실패합니다. 기존 label을 보존하고 인자 없는 `deploy`는 이를 재사용하며, 선택은 매 명령마다 평가할 뿐 나중에 가입한 노드에 자동 적용하지 않습니다.
+
+업데이트할 때는 같은 이미지 태그를 유지하고 진행 중 실험을 마친 뒤 `publish`, `deploy` 순서로 실행합니다. 이미지 참조를 변경할 때만 먼저 `configure KPL_IMAGE=...`를 사용하십시오. 매 배포는 최신 registry digest를 확인하고 파일을 바꾸지 않은 채 해당 배포만 고정하므로 **SHA를 수동으로 바꿀 필요가 없습니다**. 아키텍처가 혼합되어 있으면 해당 빌드가 가능한 기존 Buildx builder에서 `publish --platforms linux/amd64,linux/arm64`를 사용하며, 이미지가 manager와 모든 대상 노드를 지원해야 합니다.
+
+`remove`는 Controller 종료 후 Agent 종료와 Peer 정리를 확인합니다. 실패·접근 불가 노드나 확인할 수 없는 task 이력은 자동 철거를 막습니다. 실험·모니터링 volume과 외부 Peer network는 보존합니다. 개별 노드 철거는 담당 Peer를 종료하여 해당 실험에 영향을 줍니다. [전체 Swarm 절차](docs/swarm.kr.md)에서 설정·subnet 선택·문제 확인·보존 결과 및 이전 stack의 별도 마이그레이션 절차를 확인하십시오.
 
 ### Prometheus와 Grafana
 

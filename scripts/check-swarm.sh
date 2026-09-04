@@ -3,6 +3,8 @@
 set -efu
 
 fail() { printf 'Swarm preflight: %s\n' "$*" >&2; exit 1; }
+root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+. "$root/scripts/swarm-config.sh"
 command -v docker >/dev/null 2>&1 || fail 'Docker CLI is required.'
 command -v awk >/dev/null 2>&1 || fail 'awk is required.'
 : "${KPL_CONTROL_NODE_ID:?Set KPL_CONTROL_NODE_ID to the exact control node ID}"
@@ -12,6 +14,9 @@ capacity=${KPL_AGENT_CAPACITY:-20}
 stack_name=${KPL_STACK_NAME:-kpl}
 minimum_agents=${KPL_MIN_AGENTS:-2}
 image_pull_timeout=${KPL_IMAGE_PULL_TIMEOUT:-300}
+swarm_validate_setting KPL_PEER_SUBNET "${KPL_PEER_SUBNET:-}"
+swarm_validate_setting KPL_IMAGE_BUILD_TIMEOUT "${KPL_IMAGE_BUILD_TIMEOUT:-1800}"
+swarm_validate_setting KPL_IMAGE_PUSH_TIMEOUT "${KPL_IMAGE_PUSH_TIMEOUT:-600}"
 
 case "$image_pull_timeout" in
     ''|0*|*[!0-9]*) fail 'KPL_IMAGE_PULL_TIMEOUT must be a positive decimal integer without leading zeros.' ;;
@@ -80,6 +85,10 @@ control=$(docker node inspect --format '{{.ID}} {{.Description.Platform.OS}} {{.
 [ "$control" = "$KPL_CONTROL_NODE_ID linux ready active" ] || fail 'The exact control node must be Linux, Ready and Active.'
 network=$(docker network inspect --format '{{.Name}} {{.Driver}} {{.Attachable}}' "$peer_network")
 [ "$network" = "$peer_network overlay true" ] || fail 'The named Peer network must be an attachable overlay.'
+if [ -n "${KPL_PEER_SUBNET:-}" ]; then
+    network_subnets=$(docker network inspect --format '{{range .IPAM.Config}}{{println .Subnet}}{{end}}' "$peer_network") || fail 'Cannot inspect Peer network subnets.'
+    [ "$network_subnets" = "$KPL_PEER_SUBNET" ] || fail 'The existing Peer network subnet differs from KPL_PEER_SUBNET.'
+fi
 
 agent_ids=$(docker node ls --quiet --filter "node.label=$agent_label=true")
 [ -n "$agent_ids" ] || fail "At least $minimum_agents $agent_label=true Linux, Ready, Active nodes are required."
