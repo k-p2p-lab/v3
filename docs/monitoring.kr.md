@@ -83,6 +83,8 @@ curl --fail --output run-results.zip \
 
 `kpl_network_configured_loss_ratio`는 설정한 패킷 손실률이며 실제 관측 손실률이 아닙니다. 설정 delay도 실제 RTT와 구분합니다. graft/prune/remove_peer 이벤트는 PubSub mesh 변화를 분석하는 자료이며 TCP 연결 그래프나 완전한 mesh snapshot을 뜻하지 않습니다.
 
+현재 관계는 Control Room의 [대화형 토폴로지](topology.kr.md)에서 Peer 상태 snapshot을 통해 transport, Kademlia 라우팅 테이블, GossipSub mesh를 독립적으로 확인하십시오. 이 live snapshot은 최근 이벤트 버퍼와 독립적이며 Prometheus나 결과 ZIP에 전체 그래프 이력을 저장하는 것은 아닙니다.
+
 전체 `deliver` 이벤트에는 로컬 수신이 포함됩니다. 대상 집합 기반 도달률·첫 수신 지연·중복 평균은 로컬과 늦은 join을 제외하며, 대상 Peer가 떠나도 도달률 분모에 유지합니다. TCP 재전송은 패킷 손실을 지연으로 바꿀 수 있습니다. [정의·수식·참고 문헌](experiment-metrics.kr.md)을 확인하십시오. 지연 히스토그램은 늦은 배치로 정정될 수 있어 Grafana는 `rate`/`increase` 대신 누적 버킷을 직접 조회하여 실험 전체 분위수를 계산합니다.
 
 누적 카운터는 최근 300개 웹 이벤트 버퍼와 독립적입니다. Controller 프로세스가 재시작되면 카운터가 초기화되며 과거 `events.jsonl`을 자동 재생하지 않습니다. Prometheus에 이미 저장된 시계열은 유지되고 `rate`/`increase`는 관측된 카운터 재설정을 처리합니다. 단, scrape 전에 사라진 이벤트나 telemetry 전송 실패를 복구하는 기능은 아닙니다. `increase`는 scrape 표본으로 추정한 구간 증가량이므로 누적 정수 이벤트 수와 항상 정확히 일치하지는 않습니다.

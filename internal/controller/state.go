@@ -20,30 +20,32 @@ const (
 )
 
 type state struct {
-	mu             sync.RWMutex
-	persistMu      sync.Mutex
-	agents         map[string]model.Agent
-	nodes          map[string]model.Node
-	reservations   map[string]string
-	agentSnapshots map[string]time.Time
-	experiments    map[string]model.Experiment
-	events         []model.TraceEvent
-	watchers       map[chan struct{}]struct{}
-	dataDir        string
-	metrics        *controllerMetrics
-	runMetrics     map[string]*runMetricAccumulator
+	mu              sync.RWMutex
+	persistMu       sync.Mutex
+	agents          map[string]model.Agent
+	nodes           map[string]model.Node
+	reservations    map[string]string
+	agentSnapshots  map[string]time.Time
+	nodeReportTimes map[string]time.Time
+	experiments     map[string]model.Experiment
+	events          []model.TraceEvent
+	watchers        map[chan struct{}]struct{}
+	dataDir         string
+	metrics         *controllerMetrics
+	runMetrics      map[string]*runMetricAccumulator
 }
 
 func newState(dataDir string) *state {
 	s := &state{
-		agents:         make(map[string]model.Agent),
-		nodes:          make(map[string]model.Node),
-		reservations:   make(map[string]string),
-		agentSnapshots: make(map[string]time.Time),
-		experiments:    make(map[string]model.Experiment),
-		watchers:       make(map[chan struct{}]struct{}),
-		dataDir:        dataDir,
-		runMetrics:     make(map[string]*runMetricAccumulator),
+		agents:          make(map[string]model.Agent),
+		nodes:           make(map[string]model.Node),
+		reservations:    make(map[string]string),
+		agentSnapshots:  make(map[string]time.Time),
+		nodeReportTimes: make(map[string]time.Time),
+		experiments:     make(map[string]model.Experiment),
+		watchers:        make(map[chan struct{}]struct{}),
+		dataDir:         dataDir,
+		runMetrics:      make(map[string]*runMetricAccumulator),
 	}
 	s.metrics = newControllerMetrics(s)
 	return s
@@ -153,6 +155,9 @@ func (s *state) heartbeat(h model.AgentHeartbeat) error {
 	reportedOccupied := max(0, h.Agent.ActiveNodes)
 	observedActive := 0
 	for _, node := range h.Nodes {
+		// Both input timestamps use the Agent's clock. Preserve LastSeen for
+		// status/creation merges, but normalize its age for topology freshness.
+		s.nodeReportTimes[node.ID] = topologyReportTime(now, reportedAt, node.LastSeen)
 		node.AgentID = h.Agent.ID
 		if node.LastSeen.IsZero() {
 			node.LastSeen = now
@@ -370,7 +375,11 @@ func (s *state) snapshot() model.Snapshot {
 	sort.Slice(result.Experiments, func(i, j int) bool {
 		return result.Experiments[i].StartedAt.After(result.Experiments[j].StartedAt)
 	})
-	result.Edges = networkEdges(result.Nodes)
+	topologyNodes := append([]model.Node(nil), result.Nodes...)
+	for i := range topologyNodes {
+		topologyNodes[i].LastSeen = s.nodeReportTimes[topologyNodes[i].ID]
+	}
+	result.Edges = networkEdgesAt(topologyNodes, s.agents, result.GeneratedAt)
 	// Queued iterations have no observations yet and must not replace the
 	// currently running experiment's metrics simply because they were created
 	// a few microseconds later.
@@ -395,39 +404,6 @@ func (s *state) snapshot() model.Snapshot {
 		result.Metrics.RunID = runID
 	}
 	return result
-}
-
-func networkEdges(nodes []model.Node) []model.Edge {
-	peerToNode := make(map[string]string)
-	for _, node := range nodes {
-		if node.PeerID != "" && node.State == model.NodeReady {
-			peerToNode[node.PeerID] = node.ID
-		}
-	}
-	seen := make(map[string]struct{})
-	var edges []model.Edge
-	for _, node := range nodes {
-		if node.State != model.NodeReady {
-			continue
-		}
-		for _, remotePeer := range node.ConnectedPeers {
-			target, ok := peerToNode[remotePeer]
-			if !ok || target == node.ID {
-				continue
-			}
-			a, b := node.ID, target
-			if a > b {
-				a, b = b, a
-			}
-			key := a + "\x00" + b
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			edges = append(edges, model.Edge{Source: a, Target: b})
-		}
-	}
-	return edges
 }
 
 func numberField(fields map[string]any, key string) int {

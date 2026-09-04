@@ -45,6 +45,7 @@ type Server struct {
 	publishSeq atomic.Uint64
 	publishMu  sync.Mutex
 	publishing publicationBridge
+	mesh       meshTracker
 	closeOnce  sync.Once
 }
 
@@ -210,6 +211,7 @@ func (s *Server) startPubSub(ctx context.Context) error {
 		return err
 	}
 	options = append(options, pubsub.WithRawTracer(&messageTracer{server: s}))
+	s.mesh.configure(config.Enabled != nil && *config.Enabled && config.Router == "gossipsub")
 	if config.Score != nil && config.ScoreInspectInterval != "" {
 		interval, parseErr := time.ParseDuration(config.ScoreInspectInterval)
 		if parseErr != nil {
@@ -450,6 +452,7 @@ func (s *Server) reportStatus(ctx context.Context, state, message string) error 
 	for _, address := range s.host.Addrs() {
 		node.Addresses = append(node.Addresses, address.String())
 	}
+	node.ConnectedPeers = nil
 	for _, connection := range s.host.Network().Conns() {
 		node.ConnectedPeers = append(node.ConnectedPeers, connection.RemotePeer().String())
 	}
@@ -469,6 +472,7 @@ func (s *Server) reportStatus(ctx context.Context, state, message string) error 
 		}
 	}
 	s.scoreMu.RUnlock()
+	node.RoutingPeers, node.MeshPeers, node.OverlayObservedAt = s.overlaySnapshot()
 	return s.telemetry.reportNode(ctx, node)
 }
 

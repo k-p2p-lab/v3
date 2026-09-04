@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"math/rand"
 	"net"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -57,6 +59,9 @@ type process struct {
 	containerID string
 	done        chan struct{}
 	cleanupErr  error
+	// Peer source time is distinct from node.LastSeen, which is the Agent's
+	// receipt time. Only timestamps from this process are compared for order.
+	peerStatusObservedAt time.Time
 }
 
 type Server struct {
@@ -276,7 +281,7 @@ func (s *Server) snapshot() model.AgentHeartbeat {
 		Nodes: make([]model.Node, 0, len(s.processes)),
 	}
 	for _, proc := range s.processes {
-		h.Nodes = append(h.Nodes, proc.node)
+		h.Nodes = append(h.Nodes, cloneNodeStatus(proc.node))
 	}
 	s.mu.RUnlock()
 	sort.Slice(h.Nodes, func(i, j int) bool { return h.Nodes[i].ID < h.Nodes[j].ID })
@@ -643,6 +648,15 @@ func (s *Server) updateNode(update model.Node) error {
 	if proc.exited || proc.node.State == model.NodeStopping || proc.node.State == model.NodeStopped || proc.node.State == model.NodeFailed {
 		return nil
 	}
+	// An HTTP retry or crossed status request must not restore older state.
+	// Never compare the Peer clock with the Agent's local receipt timestamp.
+	// Legacy reports without source times work until an ordered report arrives.
+	if !proc.peerStatusObservedAt.IsZero() && (update.LastSeen.IsZero() || !update.LastSeen.After(proc.peerStatusObservedAt)) {
+		return nil
+	}
+	if !update.LastSeen.IsZero() {
+		proc.peerStatusObservedAt = update.LastSeen
+	}
 	proc.node.PeerID = update.PeerID
 	// A Docker peer may report before inspect has resolved its control endpoint.
 	// Keep it starting until Agent can actually route publish requests to it.
@@ -652,10 +666,18 @@ func (s *Server) updateNode(update model.Node) error {
 	if proc.node.State == model.NodeReady && proc.node.Metadata["readyAt"] == "" {
 		setProcessMetadata(proc, "readyAt", time.Now().UTC().Format(time.RFC3339Nano))
 	}
-	proc.node.Addresses = append([]string(nil), update.Addresses...)
-	proc.node.ConnectedPeers = append([]string(nil), update.ConnectedPeers...)
-	proc.node.TopicPeers = update.TopicPeers
-	proc.node.PeerScores = update.PeerScores
+	proc.node.Addresses = slices.Clone(update.Addresses)
+	proc.node.ConnectedPeers = slices.Clone(update.ConnectedPeers)
+	proc.node.TopicPeers = maps.Clone(update.TopicPeers)
+	proc.node.PeerScores = maps.Clone(update.PeerScores)
+	// Observation time makes an empty routing/mesh snapshot authoritative.
+	// Missing legacy fields cannot erase an already observed overlay, and a
+	// stale overlay cannot replace a newer snapshot in an otherwise new report.
+	if !update.OverlayObservedAt.IsZero() && (proc.node.OverlayObservedAt.IsZero() || update.OverlayObservedAt.After(proc.node.OverlayObservedAt)) {
+		proc.node.RoutingPeers = slices.Clone(update.RoutingPeers)
+		proc.node.MeshPeers = cloneMeshPeers(update.MeshPeers)
+		proc.node.OverlayObservedAt = update.OverlayObservedAt
+	}
 	proc.node.LastSeen = time.Now().UTC()
 	proc.node.Error = update.Error
 	return nil
@@ -666,10 +688,34 @@ func (s *Server) nodes() []model.Node {
 	defer s.mu.RUnlock()
 	result := make([]model.Node, 0, len(s.processes))
 	for _, proc := range s.processes {
-		result = append(result, proc.node)
+		result = append(result, cloneNodeStatus(proc.node))
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result
+}
+
+func cloneMeshPeers(peers map[string][]string) map[string][]string {
+	if peers == nil {
+		return nil
+	}
+	cloned := make(map[string][]string, len(peers))
+	for topic, members := range peers {
+		cloned[topic] = slices.Clone(members)
+	}
+	return cloned
+}
+
+// Returned status may be encoded after unlocking; it must own every mutable
+// collection so concurrent peer reports cannot change a captured heartbeat.
+func cloneNodeStatus(node model.Node) model.Node {
+	node.Addresses = slices.Clone(node.Addresses)
+	node.ConnectedPeers = slices.Clone(node.ConnectedPeers)
+	node.RoutingPeers = slices.Clone(node.RoutingPeers)
+	node.MeshPeers = cloneMeshPeers(node.MeshPeers)
+	node.TopicPeers = maps.Clone(node.TopicPeers)
+	node.PeerScores = maps.Clone(node.PeerScores)
+	node.Metadata = maps.Clone(node.Metadata)
+	return node
 }
 
 func activeNodeCount(nodes []model.Node) int {

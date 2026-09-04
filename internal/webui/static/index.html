@@ -34,7 +34,7 @@
       <article class="metric-card accent-green">
         <span>Ready Peers</span>
         <strong id="peerMetric">0</strong>
-        <small id="connectionMetric">Connections: 0</small>
+        <small id="connectionMetric">Transport links: 0</small>
       </article>
       <article class="metric-card accent-amber" title="First eligible remote delivery latency. Raw messages, sender-local deliveries, and late joiners are excluded.">
         <span>Propagation latency P95</span>
@@ -61,6 +61,7 @@
           <div>
             <p class="eyebrow">LIVE TOPOLOGY</p>
             <h2>Network overview</h2>
+            <p class="panel-note" id="topologyLinkCount">0 Peers · 0 visible links</p>
           </div>
           <div class="legend" aria-label="Node state legend">
             <span><i class="legend-dot boot"></i>Boot</span>
@@ -68,13 +69,33 @@
             <span><i class="legend-dot issue"></i>Issue</span>
           </div>
         </header>
+        <div class="topology-toolbar">
+          <fieldset class="topology-layers" aria-label="Visible relationship layers">
+            <legend>Layers</legend>
+            <label title="Reported Kademlia routing table membership; this does not require an active transport connection."><input type="checkbox" id="showkademlia" checked><i class="link-key kademlia" aria-hidden="true"></i>Kademlia</label>
+            <label title="Reported GossipSub GRAFT mesh membership by topic."><input type="checkbox" id="showgossipsub" checked><i class="link-key gossipsub" aria-hidden="true"></i>GossipSub mesh</label>
+            <label title="Reported libp2p transport connections. Older Peers may report only this layer."><input type="checkbox" id="showtransport"><i class="link-key transport" aria-hidden="true"></i>Transport</label>
+          </fieldset>
+          <label class="topology-topic" for="topologyTopic">GossipSub topic<select id="topologyTopic"><option value="">All topics</option></select></label>
+          <div class="topology-camera" role="group" aria-label="Topology view controls">
+            <button id="topologyZoomOut" type="button" aria-label="Zoom out">−</button>
+            <output id="topologyZoomLevel" aria-label="Zoom level">100%</output>
+            <button id="topologyZoomIn" type="button" aria-label="Zoom in">+</button>
+            <button id="topologyFit" type="button">Fit</button>
+          </div>
+        </div>
+        <p class="topology-report-status" id="topologyReportStatus">Waiting for Peer reports.</p>
         <div class="topology-stage" id="topologyStage">
-          <svg id="topology" role="img" aria-label="Peer connection topology"></svg>
+          <svg id="topology" role="group" aria-label="Interactive Peer topology, grouped by Agent number"></svg>
           <div class="empty-state" id="topologyEmpty">
             <strong>No Peers to display</strong>
             <span>Run an experiment to view active Peers. Stopping and stopped Peers are hidden.</span>
           </div>
         </div>
+        <section class="topology-inspector" aria-labelledby="topologyDetailsHeading">
+          <header><h3 id="topologyDetailsHeading">Peer details</h3><button id="clearTopologySelection" type="button" disabled>Clear selection</button></header>
+          <div id="topologyDetails"><p class="topology-detail-hint">Hover over or select a Peer to inspect its relationships.</p></div>
+        </section>
       </article>
 
       <aside class="panel run-panel">

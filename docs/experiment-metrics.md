@@ -73,6 +73,8 @@ New metric summaries carry `definition: "dispatch-cohort-v1"` to identify these 
 
 Agent numbers match the **No.** column in **Agent status**. The browser retains its ID-to-number mapping in local storage; another browser may assign different numbers. Real Agent IDs and hostnames remain in the table and tooltips. Topology circles and incident edges exclude `stopping` and `stopped` Peers. Failed Peers remain visible as issues; inventory/history is retained.
 
+The [topology guide](topology.md) explains independent Kademlia/GossipSub/Transport checkboxes, topic filters, zoom, selection, and status freshness. These display controls do not change protocol behavior or measurement cohorts.
+
 Choose **Delete** in **Saved results**, inspect the run name/ID, and confirm. This permanently removes that run's saved scenario, metadata, and event log plus its live metric index. It does not stop Peers or erase previously scraped Prometheus/Grafana history. Running/queued runs, members of an active batch, and results with an active ZIP download are protected. Deleting an old interrupted result is not a Peer cleanup operation.
 
 The endpoint is `DELETE /api/v1/results/{id}`: 204 deleted, 404 missing, 409 busy, and 401 for a missing/invalid configured token. A small persistent deletion marker rejects late telemetry that would otherwise recreate the result. Keep deletion markers with the Controller data when migrating or backing it up.

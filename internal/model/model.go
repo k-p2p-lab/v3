@@ -28,24 +28,27 @@ type Agent struct {
 }
 
 type Node struct {
-	ID             string             `json:"id"`
-	RunID          string             `json:"runId"`
-	Generation     uint64             `json:"generation,omitempty"`
-	AgentID        string             `json:"agentId"`
-	Group          string             `json:"group"`
-	Role           string             `json:"role"`
-	Type           string             `json:"type"`
-	Profile        string             `json:"profile,omitempty"`
-	PeerID         string             `json:"peerId,omitempty"`
-	State          string             `json:"state"`
-	Addresses      []string           `json:"addresses,omitempty"`
-	ConnectedPeers []string           `json:"connectedPeers,omitempty"`
-	TopicPeers     map[string]int     `json:"topicPeers,omitempty"`
-	PeerScores     map[string]float64 `json:"peerScores,omitempty"`
-	Metadata       map[string]string  `json:"metadata,omitempty"`
-	StartedAt      time.Time          `json:"startedAt"`
-	LastSeen       time.Time          `json:"lastSeen"`
-	Error          string             `json:"error,omitempty"`
+	ID                string              `json:"id"`
+	RunID             string              `json:"runId"`
+	Generation        uint64              `json:"generation,omitempty"`
+	AgentID           string              `json:"agentId"`
+	Group             string              `json:"group"`
+	Role              string              `json:"role"`
+	Type              string              `json:"type"`
+	Profile           string              `json:"profile,omitempty"`
+	PeerID            string              `json:"peerId,omitempty"`
+	State             string              `json:"state"`
+	Addresses         []string            `json:"addresses,omitempty"`
+	ConnectedPeers    []string            `json:"connectedPeers,omitempty"`
+	RoutingPeers      []string            `json:"routingPeers,omitempty"`
+	MeshPeers         map[string][]string `json:"meshPeers,omitempty"`
+	OverlayObservedAt time.Time           `json:"overlayObservedAt,omitempty"`
+	TopicPeers        map[string]int      `json:"topicPeers,omitempty"`
+	PeerScores        map[string]float64  `json:"peerScores,omitempty"`
+	Metadata          map[string]string   `json:"metadata,omitempty"`
+	StartedAt         time.Time           `json:"startedAt"`
+	LastSeen          time.Time           `json:"lastSeen"`
+	Error             string              `json:"error,omitempty"`
 }
 
 type TraceEvent struct {
@@ -124,8 +127,12 @@ type Experiment struct {
 }
 
 type Edge struct {
-	Source string `json:"source"`
-	Target string `json:"target"`
+	Source   string `json:"source"`
+	Target   string `json:"target"`
+	Protocol string `json:"protocol,omitempty"`
+	Topic    string `json:"topic,omitempty"`
+	// An undirected display edge can represent one or both endpoints' reports.
+	ReportedBy []string `json:"reportedBy,omitempty"`
 }
 
 type Metrics struct {

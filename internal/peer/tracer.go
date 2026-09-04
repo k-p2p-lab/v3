@@ -100,11 +100,11 @@ func (t *messageTracer) DuplicateMessage(message *pubsub.Message) {
 }
 
 func (*messageTracer) AddPeer(peer.ID, protocol.ID)          {}
-func (*messageTracer) RemovePeer(peer.ID)                    {}
-func (*messageTracer) Join(string)                           {}
-func (*messageTracer) Leave(string)                          {}
-func (*messageTracer) Graft(peer.ID, string)                 {}
-func (*messageTracer) Prune(peer.ID, string)                 {}
+func (t *messageTracer) RemovePeer(id peer.ID)               { t.server.mesh.removePeer(id) }
+func (t *messageTracer) Join(topic string)                   { t.server.mesh.join(topic) }
+func (t *messageTracer) Leave(topic string)                  { t.server.mesh.leave(topic) }
+func (t *messageTracer) Graft(id peer.ID, topic string)      { t.server.mesh.graft(id, topic) }
+func (t *messageTracer) Prune(id peer.ID, topic string)      { t.server.mesh.prune(id, topic) }
 func (*messageTracer) ValidateMessage(*pubsub.Message)       {}
 func (*messageTracer) DeliverMessage(*pubsub.Message)        {}
 func (*messageTracer) RejectMessage(*pubsub.Message, string) {}

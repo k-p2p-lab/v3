@@ -82,10 +82,10 @@ Raw publications and deliveries are correlated by SHA-256. No timestamp is inser
 ## Observability and remaining differences
 
 - `wait-ready` indicates initialization and API readiness; it does not guarantee mesh convergence. The example includes a separate stabilization wait.
-- The dashboard graph shows TCP connections. `TopicPeers` is not mesh degree either. Analyze meshes using the stored `graft`/`prune`, `add_peer`/`remove_peer`, and `join`/`leave` events together. A complete equivalent of the v2 Parser/RPC analyzer is not included.
+- The [dashboard topology](topology.md) has separate transport, Kademlia routing-table, and topic-specific GossipSub mesh layers from current Peer status. `TopicPeers` is a subscription count, not mesh degree. For historical analysis, use the stored `graft`/`prune`, `add_peer`/`remove_peer`, and `join`/`leave` events together, allowing for telemetry loss. Exports do not contain a complete history of routing/mesh snapshots or an equivalent of the v2 Parser/RPC analyzer.
 - Interval, lifetime, and base delay samples are reproducible from their seeds. Peer IDs derived in part from the run ID, network timing, and kernel packet randomness are not identical across runs. Node metadata records `seed`, `networkRequested`, and the effective `network`; the Agent's Peer configuration files also retain effective settings.
 - The default connection cap of 55 and key Worker DHT/GossipSub parameters match. However, source for v2's custom PubSub fork is absent from the supplied directory, so equivalence inside that fork cannot be verified. v3 uses the official library, and HopWave is outside the supported scope.
-- Dashboard metrics are based on recent events. Use `runs/<run-id>/events.jsonl` to analyze an entire long-running experiment; do not equate dashboard metrics directly with v2's complete offline metrics.
+- Dashboard message metrics accumulate independently of the recent-event buffer, but reset when the Controller restarts and remain subject to telemetry loss. Use `runs/<run-id>/events.jsonl` for offline analysis, and apply the [explicit churn cohort definitions](experiment-metrics.md) instead of equating the values directly with v2's offline metrics.
 
 Key v2 files reviewed: `kpl-controller/internal/handler/event.go`, `internal/docker/docker.go`, `internal/distribution/distribution.go`, `cmd/main.go`, `kpl-peer-app/internal/host/{host,tc}.go`, `internal/dht/dht.go`, and `internal/api/publish.go`.
 

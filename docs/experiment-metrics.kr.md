@@ -73,6 +73,8 @@ envelope의 publish/deliver/duplicate는 동일한 애플리케이션 메시지 
 
 Agent 번호는 **Agent status**의 **No.** 열과 연결됩니다. 브라우저 localStorage에 ID↔번호를 유지하며 다른 브라우저는 다른 번호를 배정할 수 있습니다. 실제 ID와 hostname은 표·툴팁에서 확인합니다. `stopping`·`stopped` Peer와 연결 edge는 토폴로지에서 제외하고 failed Peer는 문제 상태로 표시합니다. inventory와 이력은 유지합니다.
 
+[토폴로지 안내](topology.kr.md)에서 Kademlia/GossipSub/Transport 체크박스, topic 필터, 확대·이동·선택과 상태 신선도를 확인하십시오. 화면 조작은 프로토콜 동작이나 측정 대상 집합을 변경하지 않습니다.
+
 **Saved results → Delete**에서 실험 이름·ID를 확인하고 삭제를 확정하십시오. 해당 run의 시나리오·메타데이터·이벤트 로그와 실시간 집계 인덱스를 영구 삭제합니다. Peer 종료나 이미 수집된 Prometheus/Grafana 기록 삭제는 수행하지 않습니다. 실행·대기 중 run, 진행 중 배치 구성원, ZIP 다운로드 중 결과는 보호합니다. 과거 interrupted 결과를 지우는 것은 Peer 정리가 아닙니다.
 
 API는 `DELETE /api/v1/results/{id}`이며 204는 삭제 완료, 404는 없음, 409는 사용 중, 401은 설정된 token이 없거나 잘못된 경우입니다. 지연 telemetry가 결과를 다시 만들지 않도록 작은 삭제 표식을 데이터 디렉터리에 보존합니다. 마이그레이션·백업 시 이 표식도 함께 보존하십시오.

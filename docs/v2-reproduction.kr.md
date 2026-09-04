@@ -82,10 +82,10 @@ raw 메시지는 SHA-256으로 발행·수신을 연결합니다. 메시지 내�
 ## 관측과 남은 차이
 
 - `wait-ready`는 초기화/API 준비를 뜻하며 mesh 수렴을 보장하지 않습니다. 예제는 별도의 안정화 대기를 둡니다.
-- dashboard 그래프는 TCP 연결입니다. `TopicPeers`도 mesh 차수가 아닙니다. mesh 분석에는 저장된 `graft`/`prune`, `add_peer`/`remove_peer`, `join`/`leave` 이벤트를 함께 사용해야 합니다. 완전한 v2 Parser/RPC 분석기는 포함하지 않습니다.
+- [dashboard 토폴로지](topology.kr.md)는 현재 Peer 상태를 바탕으로 transport, Kademlia 라우팅 테이블, topic별 GossipSub mesh를 별도로 표시합니다. `TopicPeers`는 구독 Peer 수이며 mesh 차수가 아닙니다. 과거 분석에는 저장된 `graft`/`prune`, `add_peer`/`remove_peer`, `join`/`leave` 이벤트를 함께 사용하고 telemetry 누락을 고려해야 합니다. 결과에는 routing·mesh snapshot의 전체 이력이나 완전한 v2 Parser/RPC 분석기는 포함하지 않습니다.
 - interval/lifetime/base delay 샘플은 seed로 재현할 수 있으나 run ID를 포함한 Peer ID, 네트워크 타이밍, 커널 패킷 난수는 동일하지 않습니다. 노드 metadata에 `seed`, `networkRequested`, 실제 `network`를 남기며 Agent의 Peer config 파일에도 실효 설정을 저장합니다.
 - 기본 연결 상한 55와 주요 worker DHT/GossipSub 파라미터는 일치합니다. 그러나 v2 custom PubSub fork 경로의 소스가 제공된 디렉터리에 없어 fork 내부까지 동등성을 검증할 수 없습니다. v3는 공식 라이브러리이며 HopWave는 지원 범위 밖입니다.
-- dashboard 지표는 최근 이벤트 기반입니다. 장시간 전체 실험 분석에는 `runs/<run-id>/events.jsonl`을 사용해야 하며 v2의 전체 오프라인 지표와 직접 동일시하면 안 됩니다.
+- dashboard 메시지 지표는 최근 이벤트 버퍼와 독립적으로 누적되지만 Controller 재시작 시 초기화되며 telemetry 누락의 영향을 받습니다. 오프라인 분석에는 `runs/<run-id>/events.jsonl`을 사용하고, v2 지표와 직접 동일시하지 말고 [명시된 churn 대상 집합 정의](experiment-metrics.kr.md)를 적용하십시오.
 
 검토한 핵심 v2 파일: `kpl-controller/internal/handler/event.go`, `internal/docker/docker.go`, `internal/distribution/distribution.go`, `cmd/main.go`, `kpl-peer-app/internal/host/{host,tc}.go`, `internal/dht/dht.go`, `internal/api/publish.go`.
 
