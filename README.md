@@ -313,6 +313,8 @@ A non-zero scenario seed reproduces sampled delays, distribution samples, and ra
 | `GET` | `/api/v1/events` | Recent trace events |
 | `GET` | `/api/v1/stream` | Real-time snapshot SSE stream, including `peerScores` |
 | `GET` | `/api/v1/experiments` | Experiment state plus `activeJobs`, `completedJobs`, `failedJobs`, and `canceledJobs` counters |
+| `GET` | `/api/v1/results` | Saved experiment results, including runs from previous Controller sessions |
+| `GET` | `/api/v1/experiments/{id}/download` | Download a ZIP of the saved scenario, metadata, and collected events |
 | `POST` | `/api/v1/experiments` | Start a YAML scenario |
 | `POST` | `/api/v1/experiments/{id}/stop` | Cancel a running experiment, then perform bounded job shutdown and generation-fenced Peer cleanup |
 
@@ -327,7 +329,9 @@ curl -X POST http://localhost:8080/api/v1/experiments \
   --data-binary @examples/smoke.yaml
 ```
 
-Raw events are stored at `data/runs/<run-id>/events.jsonl`; the exact input is stored as `scenario.yaml` in the same directory.
+Raw events are stored at `data/runs/<run-id>/events.jsonl`; the exact input is stored as `scenario.yaml` and experiment metadata as `experiment.json` in the same directory. In Compose/Swarm, the persistent `controller-data` volume is mounted at `/var/lib/kpl/data`, and each run's files are under `/var/lib/kpl/data/runs/<run-id>`.
+
+Use **Download results** in the Control Room to export a run as ZIP. **Saved results** also lists files retained from previous Controller sessions; **Refresh** reloads that list. Running experiments offer **Download snapshot**, which contains the records saved when the download starts. These exports include the full saved event log, independently of the 300-event recent buffer. See [result downloads](docs/monitoring.md#download-experiment-results) for archive contents and collection limits.
 
 The Agent exposes this internal operational endpoint for Controller-driven cleanup:
 

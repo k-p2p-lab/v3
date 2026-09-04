@@ -29,6 +29,35 @@ Prometheus and Grafana ports are published only on `127.0.0.1`. Set `PROMETHEUS_
 
 Prometheus scrapes `/metrics` on the Controller and both Agents every 5 seconds. It does not scrape Peers directly or add exporters to individual Peer containers. The Controller aggregates the existing telemetry stream, so telemetry loss under `scope: all` also affects these metrics. Monitoring services use a separate Docker network; Peers receive no additional networks or permissions.
 
+## Download experiment results
+
+In the Control Room, choose **Download results** on an experiment or in **Saved results**. The saved list reads the Controller's data directory, so results remain accessible after a Controller restart. Use **Refresh** after restoring files from a backup. Running experiments offer **Download snapshot**.
+
+Each ZIP contains:
+
+| File | Contents |
+|---|---|
+| `scenario.yaml` | Exact scenario submitted for the run |
+| `experiment.json` | Original saved experiment metadata, state, seed, and job counters |
+| `events.jsonl` | All event records saved at the export boundary; one JSON object per line, or an empty file when no events have been recorded |
+| `export.json` | Export time, run state, active/partial flags, and the captured source file sizes |
+
+The export captures file sizes under the Controller's persistence lock and streams the ZIP after releasing that lock. Events appended later are excluded, so a slow download does not hold up telemetry writes. A completed run can still receive delayed telemetry: download again after collection has settled if you need those later records. `partial: false` indicates a terminal recorded run state, not a guarantee that no telemetry was lost. The archive does not contain message payloads, PCAP files, or the Prometheus/Grafana databases.
+
+After a restart, a saved run that still says `running` is displayed as `interrupted`; its original metadata is preserved in the ZIP. This is a display status, not evidence that its Peers have stopped. Saved results do not restore live experiment state, resume execution, or replay counters. An unreadable metadata file is displayed as `unreadable`; inspect the Controller logs and stored files before retrying.
+
+The existing public GET policy also applies to the saved-result list and downloads. API clients can use:
+
+```bash
+curl --fail http://localhost:8080/api/v1/results
+curl --fail --output run-results.zip \
+  http://localhost:8080/api/v1/experiments/RUN_ID/download
+```
+
+Replace `RUN_ID` with an ID from the saved list. In Swarm, use the control node's address. With `KPL_STACK_NAME=kpl`, original files reside in the `kpl_controller-data` volume on that node. It is mounted at `/var/lib/kpl/data` in the Controller, with run files under `runs/<run-id>`. The manager's `swarm.sh remove` command preserves this volume. There is no automatic raw-event retention limit or cross-node replication; manage disk space and backups separately.
+
+Exports contain collected telemetry. Peer transmission failures, full in-memory queues, and unflushed shutdown data can leave gaps; a download cannot recover missing events. `/api/v1/events` still returns only the latest 300 events, and the web event view displays the newest 40 from that buffer, while the ZIP reads the full saved log.
+
 ## Metric definitions
 
 | Metric | Meaning |

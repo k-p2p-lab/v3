@@ -98,6 +98,7 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 	mux.HandleFunc("/api/v1/events", s.handleEvents)
 	mux.HandleFunc("/api/v1/events/batch", s.handleEventBatch)
 	mux.HandleFunc("/api/v1/experiments", s.handleExperiments(ctx))
+	mux.HandleFunc("/api/v1/results", s.handleResults)
 	mux.HandleFunc("/api/v1/experiments/", s.handleExperimentAction)
 	mux.HandleFunc("/api/v1/stream", s.handleStream)
 	mux.Handle("/", http.FileServer(http.FS(webui.FS())))
@@ -289,14 +290,22 @@ func (s *Server) handleExperiments(ctx context.Context) http.HandlerFunc {
 }
 
 func (s *Server) handleExperimentAction(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w)
-		return
-	}
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/experiments/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
-	if len(parts) != 2 || parts[1] != "stop" || parts[0] == "" {
+	if len(parts) != 2 || parts[0] == "" {
 		http.NotFound(w, r)
+		return
+	}
+	if parts[1] == "download" {
+		s.handleResultDownload(w, r, parts[0])
+		return
+	}
+	if parts[1] != "stop" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
 		return
 	}
 	if err := s.StopScenario(parts[0]); err != nil {

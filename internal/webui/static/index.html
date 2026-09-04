@@ -111,6 +111,24 @@
         </ol>
       </article>
     </section>
+
+    <section class="panel results-panel" aria-labelledby="savedResultsHeading">
+      <header class="panel-header">
+        <div>
+          <p class="eyebrow">RESULT ARCHIVE</p>
+          <h2 id="savedResultsHeading">Saved results</h2>
+        </div>
+        <button class="secondary-button" id="refreshResults" type="button">Refresh</button>
+      </header>
+      <p class="results-help">Results saved on this Controller remain available after a restart. Interrupted runs are not resumed. Downloads from running experiments are snapshots.</p>
+      <p class="results-status" id="savedResultsStatus" role="status" aria-live="polite">Loading saved results…</p>
+      <div class="table-wrap" id="savedResultsTable" hidden>
+        <table aria-label="Saved experiment results">
+          <thead><tr><th>Experiment / ID</th><th>State</th><th>Started (local)</th><th>Finished (local)</th><th>Download</th></tr></thead>
+          <tbody id="savedResultsRows"></tbody>
+        </table>
+      </div>
+    </section>
   </main>
 
   <dialog id="scenarioDialog">

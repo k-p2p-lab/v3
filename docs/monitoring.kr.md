@@ -29,6 +29,35 @@ Prometheus/Grafana 포트는 `127.0.0.1`에만 게시합니다. 기본 포트를
 
 Prometheus는 Controller와 두 Agent의 `/metrics`를 5초마다 수집합니다. Peer를 직접 scrape하거나 각 컨테이너에 exporter를 추가하지 않습니다. Controller는 기존 telemetry를 누적 집계하므로 `scope: all`에서 telemetry가 손실되면 지표도 영향을 받습니다. 모니터링 서비스는 별도 Docker network에 있으며 Peer에는 추가 네트워크·권한을 부여하지 않습니다.
 
+## 실험 결과 다운로드
+
+Control Room의 실험 항목이나 **Saved results**에서 **Download results**를 선택합니다. 저장 목록은 Controller의 데이터 디렉터리를 읽으므로 Controller 재시작 후에도 결과에 접근할 수 있습니다. 백업 파일을 복원한 뒤에는 **Refresh**로 목록을 갱신합니다. 실행 중 실험에는 **Download snapshot**이 표시됩니다.
+
+ZIP에는 다음 파일이 들어 있습니다.
+
+| 파일 | 내용 |
+|---|---|
+| `scenario.yaml` | 실험 실행 시 제출한 시나리오 원문 |
+| `experiment.json` | 저장된 실험 메타데이터·상태·seed·job 카운터 원문 |
+| `events.jsonl` | 내보내기 기준 시점까지 저장된 전체 이벤트. 한 줄에 JSON 하나이며, 기록된 이벤트가 없으면 빈 파일 |
+| `export.json` | 내보내기 시각, 실험 상태, active/partial 여부와 원본 파일의 캡처된 크기 |
+
+Controller의 저장 잠금 안에서 파일 크기를 확보한 뒤 잠금을 해제하고 ZIP을 전송합니다. 이후 추가된 이벤트는 제외되며 느린 다운로드가 telemetry 파일 쓰기를 붙잡지 않습니다. 완료된 실험에도 지연된 telemetry가 도착할 수 있으므로 나중에 추가된 기록까지 필요하면 수집이 안정된 뒤 다시 다운로드하십시오. `partial: false`는 기록된 실험 상태가 종료 상태라는 의미이며 telemetry 무손실을 보장하지 않습니다. 메시지 본문, PCAP, Prometheus/Grafana 데이터베이스는 ZIP에 포함하지 않습니다.
+
+재시작 후 저장 상태가 여전히 `running`인 실험은 `interrupted`로 표시하며, ZIP의 원본 메타데이터는 변경하지 않습니다. 이는 화면의 표시 상태이며 실제 Peer 종료를 증명하지 않습니다. 저장 결과 조회는 실시간 실험 상태 복원, 자동 재개, 카운터 재생을 수행하지 않습니다. 메타데이터를 읽을 수 없는 항목은 `unreadable`로 표시하므로 Controller 로그와 저장 파일을 확인한 뒤 재시도하십시오.
+
+저장 결과 목록과 다운로드에도 기존 공개 GET 정책이 적용됩니다. API에서는 다음과 같이 사용할 수 있습니다.
+
+```bash
+curl --fail http://localhost:8080/api/v1/results
+curl --fail --output run-results.zip \
+  http://localhost:8080/api/v1/experiments/RUN_ID/download
+```
+
+`RUN_ID`를 저장 목록의 실험 ID로 바꾸십시오. Swarm에서는 control 노드 주소를 사용합니다. `KPL_STACK_NAME=kpl`이면 원본은 해당 노드의 `kpl_controller-data` 볼륨에 있습니다. 이 볼륨을 Controller 내부 `/var/lib/kpl/data`에 마운트하며, 실험별 파일은 그 아래 `runs/<run-id>`에 저장됩니다. 매니저의 `swarm.sh remove`는 이 볼륨을 보존합니다. 원시 이벤트의 자동 보존 기한이나 노드 간 복제는 없으므로 디스크 공간과 백업을 별도로 관리하십시오.
+
+내보내는 내용은 수집된 telemetry입니다. Peer 전송 실패, 메모리 큐 초과, 종료 시 미전송 데이터로 누락이 생길 수 있으며 다운로드로 복구할 수는 없습니다. `/api/v1/events`는 여전히 최근 300개만 반환하고 웹 이벤트 화면은 그중 최신 40개를 표시하지만 ZIP은 저장된 전체 로그를 읽습니다.
+
 ## 지표의 의미
 
 | 지표 | 의미 |

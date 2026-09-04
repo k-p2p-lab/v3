@@ -1,5 +1,9 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { snapshot: null, stream: null, reconnectTimer: null };
+const state = {
+  snapshot: null, stream: null, reconnectTimer: null,
+  savedResults: null, resultsLoading: false, resultsError: "",
+  resultsRefreshTimer: null, resultsRefreshPending: false, runStates: null,
+};
 
 const defaultScenario = `version: 1
 name: gossip-smoke
@@ -147,6 +151,12 @@ function render(snapshot) {
 }
 
 function renderRuns(runs) {
+  const runStates = JSON.stringify(runs.map((run) => [run.id, run.state]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
+  if (state.runStates !== null && state.runStates !== runStates) {
+    clearTimeout(state.resultsRefreshTimer);
+    state.resultsRefreshTimer = setTimeout(refreshSavedResults, 250);
+  }
+  state.runStates = runStates;
   $("#runCount").textContent = runs.length;
   if (!runs.length) {
     $("#runList").innerHTML = '<div class="empty-copy">No experiments yet.</div>';
@@ -161,7 +171,83 @@ function renderRuns(runs) {
       <div class="run-meta"><span>Jobs: ${formatNumber(run.activeJobs || 0)} active · ${formatNumber(run.completedJobs || 0)} completed · ${formatNumber(run.failedJobs || 0)} failed · ${formatNumber(run.canceledJobs || 0)} canceled</span></div>
       <div class="progress-track" aria-label="${progress}% complete"><i style="width:${Math.min(100, progress)}%"></i></div>
       ${run.error ? `<div class="run-meta"><span>${escapeHTML(run.error)}</span></div>` : ""}
+      <div class="run-actions">${resultDownloadLink(run)}</div>
     </article>`;
+  }).join("");
+}
+
+function resultDownloadLink(run) {
+  if (run.state === "unreadable") {
+    return '<span class="download-unavailable" title="Saved metadata could not be read.">Unavailable</span>';
+  }
+  const active = run.active || run.state === "running";
+  const label = active ? "Download snapshot" : "Download results";
+  const path = `/api/v1/experiments/${encodeURIComponent(run.id)}/download`;
+  const title = active ? "Download a ZIP snapshot of the scenario, metadata, and events recorded so far."
+    : "Download the saved scenario, metadata, and events as a ZIP file.";
+  return `<a class="download-link" href="${escapeHTML(path)}" download="${escapeHTML(`${run.id}.zip`)}" target="_blank" rel="noopener" title="${title}" aria-label="${escapeHTML(`${label}: ${run.name || run.id}`)}">${label}</a>`;
+}
+
+function formatResultTime(value) {
+  if (!value || String(value).startsWith("0001-")) return "—";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "—";
+  return date.toLocaleString("en-US", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+async function refreshSavedResults() {
+  clearTimeout(state.resultsRefreshTimer);
+  state.resultsRefreshTimer = null;
+  if (state.resultsLoading) {
+    state.resultsRefreshPending = true;
+    return;
+  }
+  state.resultsLoading = true;
+  state.resultsError = "";
+  renderSavedResults();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  try {
+    const results = await api("/api/v1/results", { cache: "no-store", signal: controller.signal });
+    if (!Array.isArray(results)) throw new Error("Unexpected saved results response.");
+    state.savedResults = results;
+  } catch (error) {
+    state.resultsError = error.name === "AbortError" ? "Request timed out." : error.message;
+  } finally {
+    clearTimeout(timeout);
+    state.resultsLoading = false;
+    renderSavedResults();
+    if (state.resultsRefreshPending) {
+      state.resultsRefreshPending = false;
+      refreshSavedResults();
+    }
+  }
+}
+
+function renderSavedResults() {
+  const results = state.savedResults || [];
+  const status = $("#savedResultsStatus");
+  const refresh = $("#refreshResults");
+  refresh.disabled = state.resultsLoading;
+  refresh.textContent = state.resultsLoading ? "Refreshing…" : "Refresh";
+  $("#savedResultsTable").setAttribute("aria-busy", String(state.resultsLoading));
+  status.classList.toggle("error", Boolean(state.resultsError));
+  status.setAttribute("role", state.resultsError ? "alert" : "status");
+  status.textContent = state.resultsLoading ? "Loading saved results…"
+    : state.resultsError ? `Could not load saved results: ${state.resultsError} Use Refresh to try again.${results.length ? " Showing the last loaded list." : ""}`
+    : results.length ? "" : "No saved results yet.";
+  status.hidden = !status.textContent;
+  $("#savedResultsTable").hidden = results.length === 0;
+  $("#savedResultsRows").innerHTML = results.map((run) => {
+    const stateHint = run.state === "interrupted" ? "Saved by a previous Controller; this run was not resumed."
+      : run.state === "unreadable" ? "Saved metadata could not be read." : run.state;
+    return `<tr>
+      <td class="result-name"><strong>${escapeHTML(run.name || run.id)}</strong><span class="result-id">${escapeHTML(run.id)}</span></td>
+      <td><span class="status-pill ${escapeHTML(run.state)}" title="${escapeHTML(stateHint)}">${escapeHTML(run.state)}</span></td>
+      <td>${escapeHTML(formatResultTime(run.startedAt))}</td>
+      <td>${escapeHTML(formatResultTime(run.finishedAt))}</td>
+      <td>${resultDownloadLink(run)}</td>
+    </tr>`;
   }).join("");
 }
 
@@ -265,6 +351,7 @@ function showToast(message) {
 
 $("#scenarioText").value = defaultScenario;
 $("#apiToken").value = token();
+$("#refreshResults").addEventListener("click", refreshSavedResults);
 $("#openScenario").addEventListener("click", () => $("#scenarioDialog").showModal());
 $("#runScenario").addEventListener("click", async () => {
   const button = $("#runScenario");
@@ -295,4 +382,5 @@ document.addEventListener("click", async (event) => {
 });
 
 window.addEventListener("resize", () => state.snapshot && renderTopology(state.snapshot.nodes || [], state.snapshot.edges || []));
+refreshSavedResults();
 connectStream();

@@ -313,6 +313,8 @@ phases:
 | `GET` | `/api/v1/events` | 최근 trace event |
 | `GET` | `/api/v1/stream` | `peerScores`를 포함한 실시간 snapshot SSE |
 | `GET` | `/api/v1/experiments` | 실험 상태와 `activeJobs`, `completedJobs`, `failedJobs`, `canceledJobs` counter |
+| `GET` | `/api/v1/results` | 이전 Controller 실행에서 저장한 실험을 포함하는 결과 목록 |
+| `GET` | `/api/v1/experiments/{id}/download` | 저장된 시나리오·메타데이터·수집 이벤트를 ZIP으로 다운로드 |
 | `POST` | `/api/v1/experiments` | YAML 시나리오 실행 |
 | `POST` | `/api/v1/experiments/{id}/stop` | 실행을 취소한 뒤 제한 시간 내 job 종료와 generation-fenced Peer cleanup 수행 |
 
@@ -327,7 +329,9 @@ curl -X POST http://localhost:8080/api/v1/experiments \
   --data-binary @examples/smoke.yaml
 ```
 
-원시 이벤트는 `data/runs/<run-id>/events.jsonl`, 실행 입력은 같은 디렉터리의 `scenario.yaml`에 저장됩니다.
+원시 이벤트는 `data/runs/<run-id>/events.jsonl`, 실행 입력은 같은 디렉터리의 `scenario.yaml`, 실험 메타데이터는 `experiment.json`에 저장됩니다. Compose/Swarm에서는 영구 `controller-data` 볼륨을 `/var/lib/kpl/data`에 마운트하며, 실험별 파일은 그 아래 `runs/<run-id>`에 저장됩니다.
+
+Control Room의 **Download results**로 실험 결과를 ZIP으로 받을 수 있습니다. **Saved results**에는 이전 Controller 실행에서 보존된 결과도 표시되며, **Refresh**로 목록을 다시 읽습니다. 실행 중 실험의 **Download snapshot**은 다운로드 시작 시점까지 저장된 기록을 담습니다. 최근 300개 이벤트 버퍼와 별개로 저장된 전체 이벤트 로그를 내보냅니다. 파일 구성과 수집 한계는 [실험 결과 다운로드](docs/monitoring.kr.md#실험-결과-다운로드)를 참고하십시오.
 
 Agent는 Controller가 cleanup에 사용하는 다음 내부 운영 endpoint를 제공합니다.
 

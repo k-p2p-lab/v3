@@ -114,7 +114,7 @@ Agent update/rollback은 `stop-first`입니다. `start-first`로 바꾸면 같�
 
 노드 drain은 Swarm 서비스 task에 적용됩니다. v3 Peer는 standalone 컨테이너이므로 Swarm이 직접 이전하지 않습니다. 정상 Agent 종료에서 Peer를 정리하고, 비정상 종료 후에는 동일 Agent ID·Peer network name으로 같은 노드에서 재시작할 때 잔존 컨테이너를 회수합니다. 노드 재가입, stack/service 이름 변경 또는 네트워크 이름 변경 시 이전 소유 범위의 잔존 Peer는 해당 서버에서 label을 확인해 별도로 정리해야 합니다. 전체 호스트 정지·네트워크 단절을 다른 서버의 Peer 재생성으로 숨기지 않습니다.
 
-Controller는 단일 인스턴스이며 공유 DB/leader election을 구현하지 않았습니다. `replicas: 1`을 유지하십시오. control 노드 장애 시 자동으로 빈 로컬 volume을 쓰는 다른 노드로 이동하지 않으며, 백업 복원과 새 Node ID 지정이 필요합니다. Controller는 저장된 실험·counter를 시작 시 메모리에 복원하거나 실행 중 실험을 자동 재개하지 않습니다. 파일은 분석용으로 보존됩니다. Controller crash만으로 Agent의 Peer가 종료되지는 않습니다. 계획된 업데이트 전 시나리오의 `stop-all` 또는 활성 run 취소로 정리하고 잔존 Peer를 확인하십시오. 이미 completed이지만 `stop-all`을 생략한 run의 Peer는 Controller 종료만으로 정리되지 않습니다.
+Controller는 단일 인스턴스이며 공유 DB/leader election을 구현하지 않았습니다. `replicas: 1`을 유지하십시오. control 노드 장애 시 자동으로 빈 로컬 volume을 쓰는 다른 노드로 이동하지 않으며, 백업 복원과 새 Node ID 지정이 필요합니다. Controller는 실시간 실험 상태·counter를 시작 시 메모리에 복원하거나 실행 중 실험을 자동 재개하지 않습니다. 보존된 파일은 재시작 후에도 Control Room의 **Saved results**와 [결과 다운로드 API](monitoring.kr.md#실험-결과-다운로드)에서 받을 수 있습니다. 이전에 실행 중이었던 기록은 `interrupted`로 표시하지만 Peer 정리를 확인한 상태는 아닙니다. Controller crash만으로 Agent의 Peer가 종료되지는 않습니다. 계획된 업데이트 전 시나리오의 `stop-all` 또는 활성 run 취소로 정리하고 잔존 Peer를 확인하십시오. 이미 completed이지만 `stop-all`을 생략한 run의 Peer는 Controller 종료만으로 정리되지 않습니다.
 
 전체 철거에는 `sh scripts/swarm.sh remove`를 사용하십시오. Controller 정지만으로 종료되지 않는 Peer도 이후 Agent 종료 단계에서 정리합니다.
 
