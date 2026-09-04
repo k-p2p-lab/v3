@@ -81,6 +81,8 @@ sh scripts/swarm.sh remove
 
 Removal waits for Controller shutdown, then Agent shutdown and Peer cleanup, before deleting stack services. Experiment, Prometheus, and Grafana volumes and the external Peer network remain. Reuse the same configuration when redeploying retained volumes. **Saved results** then exposes retained runs again; a previously running record appears as `interrupted` and is not resumed. That state does not establish Peer cleanup. Failed or unavailable nodes can block automatic removal; see the cleanup rules below.
 
+For a longer experiment with workers continuously joining and expiring, follow [random publishing during churn](swarm-churn-publish.md). It uses two stable bootstrap Peers, repeated publisher selection, and a final collection/cleanup stage.
+
 ## Configuration and Network
 
 Use helper commands for ordinary configuration changes:

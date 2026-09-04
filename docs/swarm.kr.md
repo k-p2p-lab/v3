@@ -81,6 +81,8 @@ sh scripts/swarm.sh remove
 
 철거는 Controller 종료 후 Agent 종료와 Peer 정리를 확인하고 stack 서비스를 삭제합니다. 실험·Prometheus·Grafana volume과 외부 Peer network는 남습니다. 보존된 volume에 다시 배포할 때는 같은 설정을 재사용하십시오. 이후 **Saved results**에서 기존 기록을 다시 볼 수 있습니다. 이전에 실행 중이던 기록은 `interrupted`로 표시하며 자동 재개하지 않습니다. 이 상태는 Peer 정리 완료를 뜻하지 않습니다. 실패하거나 접근할 수 없는 노드는 자동 철거를 막을 수 있으므로 아래 정리 규칙을 참고하십시오.
 
+worker가 계속 들어오고 수명에 따라 나가는 더 긴 실험은 [churn 중 무작위 반복 발행](swarm-churn-publish.kr.md)을 참고하십시오. 안정적인 bootstrap 두 개와 반복적인 발행 대상 선택, 마지막 수집·정리 단계를 사용합니다.
+
 ## 설정과 네트워크
 
 일반적인 설정 변경은 helper를 사용합니다.

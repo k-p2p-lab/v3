@@ -1,0 +1,155 @@
+version: 2
+name: swarm-churn-random-publish
+seed: 260304
+onExit: cancel
+jobShutdownTimeout: 3m
+
+# Start with at least two online Agents and 40 free Peer slots in total.
+# Adapted from v2 exp-2603_churn-02.sh: smaller population, repeated publishing.
+# The 10,000 joins below are a total request budget, not concurrent Peer count.
+# See docs/swarm-churn-publish.md for scheduling and measurement definitions.
+profiles:
+  stable-boot:
+    type: boot
+  churn-worker:
+    type: full
+    gossipsub:
+      topics: [kpl/swarm-churn]
+      params:
+        d: 9
+        dLow: 7
+        dHigh: 11
+    network:
+      scope: p2p
+      delay: 25ms
+      jitter: 2ms
+      lossPercent: 0.5
+
+phases:
+  - name: start stable bootstrap peers
+    action: join
+    group: boot
+    role: boot
+    profile: stable-boot
+    count: 2
+    placement: balanced
+    parallel: false
+    interval: {model: exponential, mean: 500ms}
+
+  - name: wait for bootstrap readiness
+    action: wait-ready
+    group: boot
+    readyRatio: 1
+    timeout: 2m
+
+  - name: keep workers joining and expiring
+    action: join
+    job: worker-churn
+    group: worker
+    role: worker
+    profile: churn-worker
+    count: 10000
+    placement: balanced
+    parallel: false
+    await: false
+    interval: {model: exponential, mean: 4s}
+    lifetime: {model: pareto, xm: 60s, alpha: 2.5}
+
+  # Warm up while churn runs. Do not require all past churn Peers to be ready.
+  - name: warm up the changing population
+    action: wait
+    duration: 3m
+
+  # Round 1: snapshot and shuffle currently eligible workers without replacement.
+  # Each later alias starts a fresh phase and reselects from the current population.
+  - &publish_round
+    name: publish from up to ten random workers
+    action: publish
+    group: worker
+    type: full
+    count: 10
+    topic: kpl/swarm-churn
+    payloadSize: 32
+    payloadEncoding: envelope
+    parallel: false
+    await: true
+    onError: continue
+    interval: {model: exponential, mean: 1s}
+
+  # Explicit gaps also run when there are zero candidates or only one candidate.
+  # A publish repeat alone would have no inter-round delay in those cases.
+  - &round_gap
+    name: continue churn between publish rounds
+    action: wait
+    duration: 10s
+
+  # Rounds 2-10.
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  # Rounds 11-20.
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  # Rounds 21-30.
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+  - *round_gap
+  - *publish_round
+
+  # Churn continues during the final collection window too.
+  - name: collect trailing deliveries and telemetry
+    action: wait
+    duration: 30s
+
+  # Cancel any remaining joins, then fence and remove this run's Peer containers.
+  - name: stop churn and clean up all peers
+    action: stop-all
+

@@ -104,6 +104,8 @@ For updates, keep the same image tag and run `publish` then `deploy` after finis
 
 `remove` confirms Controller shutdown, then Agent shutdown and Peer cleanup. Failed/unavailable nodes or unverified task history block automatic removal. Experiment and monitoring volumes and the external Peer network remain. Removing an individual node stops its Peers and affects experiments using them. The [complete Swarm workflow](docs/swarm.md) covers configuration, subnet selection, troubleshooting, retained results, and the separate migration procedure for older stacks.
 
+For a Swarm experiment with continuous worker churn and repeated random publishing, use the [churn and publish walkthrough](docs/swarm-churn-publish.md) and [scenario](examples/swarm-churn-publish.yaml).
+
 ### Prometheus and Grafana
 
 Compose also starts Prometheus and Grafana, provisions the data source and experiment dashboard, and scrapes the Controller and Agents every 5 seconds. Open [Grafana experiment analysis](http://localhost:3000/d/kpl-experiments) or [Prometheus](http://localhost:9090). Both store data in named volumes and publish their UI ports on localhost.

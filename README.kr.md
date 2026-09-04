@@ -104,6 +104,8 @@ sh scripts/swarm.sh remove
 
 `remove`는 Controller 종료 후 Agent 종료와 Peer 정리를 확인합니다. 실패·접근 불가 노드나 확인할 수 없는 task 이력은 자동 철거를 막습니다. 실험·모니터링 volume과 외부 Peer network는 보존합니다. 개별 노드 철거는 담당 Peer를 종료하여 해당 실험에 영향을 줍니다. [전체 Swarm 절차](docs/swarm.kr.md)에서 설정·subnet 선택·문제 확인·보존 결과 및 이전 stack의 별도 마이그레이션 절차를 확인하십시오.
 
+Swarm에서 worker churn을 유지하며 무작위로 반복 발행하려면 [churn·발행 실행 안내](docs/swarm-churn-publish.kr.md)와 [시나리오](examples/swarm-churn-publish.yaml)를 사용하십시오.
+
 ### Prometheus와 Grafana
 
 Compose는 Prometheus와 Grafana도 함께 실행하고 데이터 소스와 실험 대시보드를 자동 등록합니다. [Grafana 실험 분석](http://localhost:3000/d/kpl-experiments)에서 실험·Agent·토픽을 선택하고, [Prometheus](http://localhost:9090)에서 직접 쿼리할 수 있습니다. 지표는 5초마다 수집되며 시계열은 named volume에 저장됩니다.
