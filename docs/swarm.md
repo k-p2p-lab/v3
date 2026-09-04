@@ -8,12 +8,12 @@ English | [Korean](swarm.kr.md)
 
 Join your Linux servers running rootful Docker to the same Swarm. The servers need connectivity on TCP 2377 for managers, TCP/UDP 7946, and UDP 4789. Allow the VXLAN port only between trusted cluster servers. On VPNs or cloud networks, also check the underlay MTU and VXLAN overhead. [Docker overlay requirements](https://docs.docker.com/engine/network/drivers/overlay/)
 
-If you already have a Swarm cluster, place this repository on a manager and install the Docker CLI and coreutils `timeout`. Commands run against the **active Swarm manager** selected by the current Docker context. You do not need to copy the repository to each worker or start Agents manually. Push the image to a registry accessible to every server. For a mix of amd64 and arm64 servers, use a manifest digest that includes both architectures. `stack deploy` does not build local source code. [Deploying a Swarm stack](https://docs.docker.com/engine/swarm/stack-deploy/)
+If you already have a Swarm cluster, place this repository on a manager and install the Docker CLI and coreutils `timeout`. Commands run against the **active Swarm manager** selected by the current Docker context. You do not need to copy the repository to each worker or start Agents manually. Push the image to a registry accessible to every server. For mixed architectures, the tag must reference a manifest covering all target architectures, including the manager that pulls it. `stack deploy` does not build local source code. [Deploying a Swarm stack](https://docs.docker.com/engine/swarm/stack-deploy/)
 
 ```sh
 docker node ls
 sh scripts/swarm.sh init
-# Set KPL_IMAGE in .env.swarm to the actual registry/repository@sha256:<digest>.
+# Set KPL_IMAGE=registry.example.com/kpl-v3:v3 in .env.swarm.
 # Also check KPL_CONTROL_NODE_ID and KPL_AGENT_CAPACITY.
 vi .env.swarm
 sh scripts/swarm.sh deploy worker-a worker-b
@@ -22,13 +22,31 @@ sh scripts/swarm.sh status
 
 `init` creates `.env.swarm` in the repository root with permissions `0600`. It generates the API token and Grafana password independently as 64 hexadecimal characters from 32 random bytes each. It never overwrites an existing file. The default control Node ID is the current manager. Pin it to the **exact Node ID** of the node that stores the data volumes, so Controller, Prometheus, and Grafana do not move to another server with empty local volumes. Placing an Agent on the control node makes experiments and analysis share CPU and memory.
 
-Build and push an image containing the new code, then set its digest. For a private registry, run `docker login <registry>` on the manager first. The helper passes `--with-registry-auth` to forward the registry credentials needed by the deployment to Swarm.
+For a private registry, run `docker login <registry>` on the manager first. The helper passes `--with-registry-auth` to forward the registry credentials needed by the deployment to Swarm. Use the same account for login and deployment: if you run `sudo sh scripts/swarm.sh deploy`, use `sudo docker login <registry>`. `sudo` may filter exported variables; keep the intended configuration in `.env.swarm` or explicitly pass the required environment values.
 
 The helper reads allowed `KEY=VALUE` entries in `.env.swarm` **literally**; it never uses `source` or executes shell commands from the file. It removes one matching pair of surrounding quotes, but does not expand `$VAR`, `$(command)`, or escapes. Do not use `export KEY=...` or inline comments in this file. Exported environment variables take precedence over file values. To select another file, use a command such as `sh scripts/swarm.sh --env-file /path/to/lab.env status`. The helper does not read Compose's `.env`, and direct Docker commands do not automatically load `.env.swarm` either.
 
-`deploy worker-a worker-b` sets the `kpl.<stack>.agent=true` label on those two nodes, creates an attachable Peer overlay if needed, then runs the preflight check and deploys the stack. The default stack name is `kpl`; the helper's default Peer network is `kpl-peers`. Existing labels on other nodes are preserved. Check for address conflicts with server, LAN, VPN, and existing Docker networks, and use a unique name and Peer network for each separate stack. `deploy` returns once the deployment is submitted. Check `status` and the Controller's `/api/v1/agents` for registration before starting an experiment. The default minimum Agent count is 1; set `KPL_MIN_AGENTS=2` in `.env.swarm` to require two servers.
+`deploy worker-a worker-b` resolves the image, sets the `kpl.<stack>.agent=true` label on those two nodes, creates an attachable Peer overlay if needed, then runs the preflight check and deploys the stack. The default stack name is `kpl`; the helper's default Peer network is `kpl-peers`. Existing labels on other nodes are preserved. Check for address conflicts with server, LAN, VPN, and existing Docker networks, and use a unique name and Peer network for each separate stack. `deploy` returns once the deployment is submitted. Check `status` and the Controller's `/api/v1/agents` for registration before starting an experiment. The default minimum Agent count is 1; set `KPL_MIN_AGENTS=2` in `.env.swarm` to require two servers.
 
 Agents use only the worker's Docker socket and do not require access to the manager API. Each Agent derives its ID from `{{.Service.Name}}-{{.Node.ID}}` and uses its own task's Peer overlay IPv4 address for `advertise-url` and `self-url`. A service VIP or shared DNSRR address is unsuitable as an individual Agent address because requests may reach another server. At startup, the Agent looks up its actual local image ID and uses it for Peers, keeping Agent and Peer binaries identical on that server. [Swarm global services and templates](https://docs.docker.com/engine/swarm/services/)
+
+## Update an image using the same tag
+
+Set `KPL_IMAGE=registry.example.com/kpl-v3:v3` once in `.env.swarm` and keep it unchanged. If it previously contained a digest, replace that value with the tag once. Also update or unset any exported `KPL_IMAGE`, since environment values override the file. For a single-architecture deployment, update with the usual Docker commands:
+
+```sh
+docker build -t registry.example.com/kpl-v3:v3 .
+docker push registry.example.com/kpl-v3:v3
+# On the manager, after finishing active experiments:
+sh scripts/swarm.sh deploy
+sh scripts/swarm.sh status
+```
+
+For a tag, `deploy` runs `docker pull` every time, resolves the registry digest returned by that pull, and uses the digest for this deployment only. It does not rewrite `.env.swarm`. **No manual SHA replacement is needed after a push.** A failed pull stops deployment instead of using a stale local tag. `KPL_IMAGE_PULL_TIMEOUT` controls the pull timeout in seconds and defaults to `300`.
+
+An explicit `KPL_IMAGE=registry.example.com/kpl-v3@sha256:<digest>` is still supported when you want a fixed version. Docker distinguishes a tag that can receive updates from a digest that identifies an immutable image version. [Docker pull and digest pinning](https://docs.docker.com/reference/cli/docker/image/pull/#pull-an-image-by-digest-immutable-identifier)
+
+For mixed amd64/arm64 servers, publish the same tag as a multi-platform manifest that includes every target architecture and the manager. The resolution pull uses the manager daemon's native platform and ignores `DOCKER_DEFAULT_PLATFORM` for that pull; Docker's reported top-level manifest/index digest is retained. The single-architecture build example above does not produce a multi-platform manifest. Replacing Agents can stop their Peers, so finish active experiments before deploying an update and wait for Agent registration afterward.
 
 ## Add and Remove Agents from the Manager
 
@@ -36,7 +54,7 @@ Use a Swarm node ID or hostname for `NODE`. These commands change Agent placemen
 
 | Command | Behavior |
 |---|---|
-| `sh scripts/swarm.sh deploy [NODE...]` | Check the image, network, and nodes, then deploy or update the stack. Add Agent placement labels to the specified nodes |
+| `sh scripts/swarm.sh deploy [NODE...]` | Pull and resolve an image tag or use an explicit digest, check the network and nodes, then deploy or update the stack. Add Agent placement labels to the specified nodes |
 | `sh scripts/swarm.sh status` | Show stack services, Agent tasks, and selected nodes |
 | `sh scripts/swarm.sh add-node worker-c` | Add an Agent placement node to the existing service. Requires Linux, Ready, and Active status |
 | `sh scripts/swarm.sh remove-node worker-b` | Exclude the target node from the service, confirm clean Agent shutdown, then remove its placement label |
@@ -60,7 +78,7 @@ Even with a token configured, the dashboard and GET endpoints for status, events
 
 The helper manages existing services only when their names match `${KPL_STACK_NAME}_{controller,agent,prometheus,grafana}` and they carry the service label `io.kpl.application=kp2plab-v3`. It refuses to change an older v3 stack without that marker, even if the stack name matches.
 
-First stop existing experiments and confirm Peer cleanup. Export the existing stack name, control Node ID, Peer network name, image digest, and credentials into the shell, preserving their values, then directly redeploy the latest `stack.swarm.yaml` once. Docker does not read `.env.swarm` itself, so explicitly provide the file's actual values through the environment.
+First stop existing experiments and confirm Peer cleanup. Export the existing stack name, control Node ID, Peer network name, image reference, and credentials into the shell, preserving their values, then directly redeploy the latest `stack.swarm.yaml` once. Docker does not read `.env.swarm` itself, so explicitly provide the file's actual values through the environment.
 
 ```sh
 # Run on the manager after exporting the existing deployment values above.
@@ -124,7 +142,7 @@ After the manager commands were added, the full Go regression suite and `test-sw
 
 The `remove-node`, `add-node`, and full `remove` commands were also exercised with Controller and Agent test services that exit on SIGTERM in a separate Docker 29.7.2 daemon. Verification covered clean exits recorded as `shutdown / PID 0 / exit 0`, a new task after placement was restored, and zero stack services after final removal. Adding and removing a placement constraint that excluded another node preserved the running task ID. The Controller retains its replica count while placement is blocked, preventing immediate deletion of its shutdown history. Pending or canceled tasks that were never assigned to a node are excluded from shutdown verification. This validates the management commands and actual Swarm state transitions; it does not represent another full run of registry image pulls or experiments with real Peers.
 
-On each target server, export the actual image digest as `KPL_IMAGE`, then run `docker pull "$KPL_IMAGE"` and `KPL_DOCKER_IMAGE="$KPL_IMAGE" sh scripts/check-linux.sh` to check kernel capabilities. The Linux kernel check also requires Docker Compose v2, `timeout`, and `setsid`. The manager's `deploy` command checks basic deployment conditions using `check-swarm.sh`. To run that script directly, separately pass the settings from `.env.swarm` as environment variables; its standalone default minimum Agent count is 2. These checks do not replace testing actual cross-host VXLAN communication or throughput.
+On each target server, export the image tag or digest as `KPL_IMAGE`, then run `docker pull "$KPL_IMAGE"` and `KPL_DOCKER_IMAGE="$KPL_IMAGE" sh scripts/check-linux.sh` to check kernel capabilities. Use the deployment's resolved digest when you need to check that exact version. The Linux kernel check also requires Docker Compose v2, `timeout`, and `setsid`. The manager's `deploy` command checks basic deployment conditions using `check-swarm.sh`. The preflight script accepts tags and digests but does not pull images or resolve tags itself. To run it directly, separately pass the settings from `.env.swarm` as environment variables; its standalone default minimum Agent count is 2. These checks do not replace testing actual cross-host VXLAN communication or throughput.
 
 Run the [distributed experiment example](../examples/swarm-smoke.yaml) on at least two servers. Check that ready Peers appear on different Agents, advertised addresses belong to the Peer overlay, and publish/deliver events occur on both servers. The example creates one boot Peer and five workers, requiring total capacity of at least 6. Then increase the target Peer count gradually while recording readiness delays, failure rates, distribution, and resource usage. Also verify exclusion of stale Agents, leftover-container cleanup, and Prometheus target replacement after network partitions or Agent restarts.
 

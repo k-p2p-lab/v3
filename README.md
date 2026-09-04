@@ -74,13 +74,15 @@ The supplied Compose bridge connects containers on one Docker host. For an exist
 
 ```sh
 sh scripts/swarm.sh init
-# Edit .env.swarm: set a registry image digest and verify the control Node ID.
+# Set KPL_IMAGE=registry.example.com/kpl-v3:v3 in .env.swarm and verify the control Node ID.
 sh scripts/swarm.sh deploy worker-a worker-b
 sh scripts/swarm.sh status
 # Later: add-node worker-c, remove-node worker-b, or remove for the whole stack.
 ```
 
 `init` creates a private `.env.swarm` and generates separate API and Grafana credentials. The helper reads literal `KEY=VALUE` entries; exported environment variables take precedence. It does not evaluate shell expressions or load Compose's `.env`. `deploy` returns after submission; wait for Agent registration in the Controller before running an experiment. `add-node` and `remove-node` change the stack-specific `kpl.<stack>.agent` label, not Swarm membership. Removing a node stops its Peers and affects any experiment using them.
+
+Keep the same image tag in `.env.swarm`. After building and pushing new code to that tag, run `sh scripts/swarm.sh deploy` again. Each deployment pulls the tag, resolves its current registry digest, and pins that deployment to the digest without rewriting the file. **You do not need to copy a new SHA after each push.** Explicit `repository@sha256:...` references remain supported for a fixed version. Finish active experiments before updating, since replacing Agents stops their Peers. See the [Swarm image update workflow](docs/swarm.md#update-an-image-using-the-same-tag).
 
 `sh scripts/swarm.sh remove` waits for Controller shutdown and Agent cleanup before removing stack services. Unavailable nodes, unverified task exits, or retained historical failed tasks stop automatic removal and require inspection; data volumes and the external Peer network remain. See the [Swarm guide](docs/swarm.md) for prerequisites, commands, and migration of older stacks without the helper's service labels. The documented two-daemon experiment predates this helper and is not an end-to-end validation of its lifecycle commands.
 

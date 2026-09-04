@@ -6,6 +6,15 @@ scratch=$(mktemp -d)
 trap 'result=$?; if [ "$result" -ne 0 ]; then printf "Manager test case %s failed\n" "${case_number:-setup}" >&2; if [ -n "${KPL_TEST_STATE:-}" ]; then cat "$KPL_TEST_STATE/output" "$KPL_TEST_STATE/events" "$KPL_TEST_STATE/calls" >&2; fi; fi; rm -rf "$scratch"; exit "$result"' EXIT
 mkdir "$scratch/bin"
 : > "$scratch/config.env"
+KPL_TEST_REAL_TIMEOUT=$(command -v timeout)
+export KPL_TEST_REAL_TIMEOUT
+cat > "$scratch/bin/timeout" <<'MOCK_TIMEOUT'
+#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$KPL_TEST_STATE/timeouts"
+exec "$KPL_TEST_REAL_TIMEOUT" "$@"
+MOCK_TIMEOUT
+chmod +x "$scratch/bin/timeout"
 
 cat > "$scratch/bin/docker" <<'MOCK_DOCKER'
 #!/bin/sh
@@ -17,6 +26,24 @@ die() { printf 'Unexpected Docker call: %s\n' "$*" >&2; exit 97; }
 event() { printf '%s\n' "$1" >> "$s/events"; }
 for last do :; done
 case "$1 $2" in
+    'pull '*)
+        [ "$#" = 2 ] || die "$@"
+        # The selected platform must not collapse a multi-platform tag to the
+        # Manager's local platform. Do not consult local image IDs/RepoDigests.
+        [ "${DOCKER_DEFAULT_PLATFORM+x}" != x ] || die 'DOCKER_DEFAULT_PLATFORM reached pull'
+        digest=${KPL_TEST_PULL_DIGEST:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+        printf 'Pulling from %s\n' "$2"
+        case "${KPL_TEST_PULL_FAULT:-none}" in
+            missing) printf 'Status: Image is up to date\n' ;;
+            malformed) printf 'Digest: sha256:abcd\n' ;;
+            uppercase) printf 'Digest: sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n' ;;
+            multiple) printf 'Digest: sha256:%s\nDigest: sha256:%s\n' "$digest" "$digest" ;;
+            mixed) printf 'Digest: sha256:%s\nDigest: malformed\n' "$digest" ;;
+            trailing) printf 'Digest: sha256:%s trailing-data\n' "$digest" ;;
+            fail) printf 'Digest: sha256:%s\n' "$digest"; printf 'mock registry unavailable\n' >&2; exit 1 ;;
+            none) printf 'Digest: sha256:%s\n' "$digest" ;;
+            *) die "${KPL_TEST_PULL_FAULT}" ;;
+        esac ;;
     'info --format')
         case "$3" in
             '{{.Swarm.NodeID}}') printf 'control1\n' ;;
@@ -165,8 +192,12 @@ case "$1 $2" in
         [ "${KPL_TEST_NO_NETWORK:-0}" = 1 ] || printf 'network1\n' ;;
     'network inspect') printf '%s overlay true\n' "$KPL_PEER_NETWORK" ;;
     'network create') event network-create; printf 'network1\n' ;;
-    'stack config') printf '%s' "${KPL_API_TOKEN:-}" > "$s/config-token" ;;
-    'stack deploy') event stack-deploy ;;
+    'stack config')
+        printf '%s' "${KPL_API_TOKEN:-}" > "$s/config-token"
+        printf '%s\n' "${KPL_IMAGE:-}" >> "$s/config-images" ;;
+    'stack deploy')
+        printf '%s\n' "${KPL_IMAGE:-}" >> "$s/deploy-images"
+        event stack-deploy ;;
     'stack services') printf 'mock stack services\n' ;;
     'stack rm')
         [ "$3" = "$stack" ] || die "$@"
@@ -185,11 +216,12 @@ reset_case() {
     mkdir "$KPL_TEST_STATE"
     : > "$KPL_TEST_STATE/calls"
     : > "$KPL_TEST_STATE/events"
+    : > "$KPL_TEST_STATE/timeouts"
     export KPL_STACK_NAME=lab KPL_PEER_NETWORK=lab-peers KPL_CONTROL_NODE_ID=control1
     export KPL_IMAGE=registry.example/kpl@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     export KPL_API_TOKEN=private-test-token GRAFANA_ADMIN_PASSWORD=private-test-password
     export KPL_DOCKER_TIMEOUT=3 KPL_CONTROLLER_STOP_TIMEOUT=3 KPL_AGENT_STOP_TIMEOUT=3
-    unset KPL_TEST_FOREIGN KPL_TEST_FOREIGN_STACK KPL_TEST_DOWN_NODE KPL_TEST_CONTROLLER_STOP KPL_TEST_AGENT_STOP KPL_TEST_EMPTY_STACK KPL_TEST_NO_NETWORK KPL_MIN_AGENTS KPL_TEST_FINAL_LIST_FAIL KPL_TEST_INSPECT_FAIL KPL_TEST_EMPTY_HISTORY KPL_TEST_OLD_FAILED KPL_TEST_PENDING_STATE KPL_TEST_PENDING_CONTAINER
+    unset KPL_TEST_FOREIGN KPL_TEST_FOREIGN_STACK KPL_TEST_DOWN_NODE KPL_TEST_CONTROLLER_STOP KPL_TEST_AGENT_STOP KPL_TEST_EMPTY_STACK KPL_TEST_NO_NETWORK KPL_MIN_AGENTS KPL_TEST_FINAL_LIST_FAIL KPL_TEST_INSPECT_FAIL KPL_TEST_EMPTY_HISTORY KPL_TEST_OLD_FAILED KPL_TEST_PENDING_STATE KPL_TEST_PENDING_CONTAINER KPL_TEST_PULL_DIGEST KPL_TEST_PULL_FAULT KPL_IMAGE_PULL_TIMEOUT DOCKER_DEFAULT_PLATFORM
 }
 run() { sh "$root/scripts/swarm.sh" --env-file "$scratch/config.env" "$@" > "$KPL_TEST_STATE/output" 2>&1; }
 reject() {
@@ -358,12 +390,74 @@ reset_case
 run deploy worker-a
 printf 'label-worker1\nstack-deploy\n' > "$scratch/expected"
 cmp "$scratch/expected" "$KPL_TEST_STATE/events"
+[ "$(cat "$KPL_TEST_STATE/deploy-images")" = "$KPL_IMAGE" ]
+if grep -q '^pull ' "$KPL_TEST_STATE/calls"; then exit 1; fi
 
 reset_case
-export KPL_IMAGE=registry.example/kpl:latest KPL_TEST_NO_NETWORK=1
+export KPL_IMAGE=registry.example/kpl@sha256:abcd KPL_TEST_NO_NETWORK=1
 reject deploy worker-a
 no_mutation
 grep -q 'sha256' "$KPL_TEST_STATE/output"
+if grep -q '^pull ' "$KPL_TEST_STATE/calls"; then exit 1; fi
+
+# Explicit digests, including tag@digest references, are already immutable.
+reset_case
+export KPL_IMAGE=registry.example:5000/team/kpl:v3@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+run deploy worker-a
+[ "$(cat "$KPL_TEST_STATE/deploy-images")" = "$KPL_IMAGE" ]
+if grep -q '^pull \|^image inspect\|^inspect --format' "$KPL_TEST_STATE/calls"; then exit 1; fi
+
+# Reusing the same mutable tag must resolve anew on every deploy. Registry
+# ports and nested repository paths survive tag stripping, and config bytes
+# remain unchanged. Deliberately set a platform override that pull must unset.
+reset_case
+unset KPL_IMAGE
+tag=registry.example:5000/team/kpl:v3
+printf 'KPL_IMAGE=%s\n' "$tag" > "$scratch/tag.env"
+cp "$scratch/tag.env" "$scratch/tag-original.env"
+export DOCKER_DEFAULT_PLATFORM=linux/arm64
+export KPL_TEST_PULL_DIGEST=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+sh "$root/scripts/swarm.sh" --env-file "$scratch/tag.env" deploy worker-a > "$KPL_TEST_STATE/output" 2>&1
+grep -Fxq -- "-s TERM -k 5 300 docker pull $tag" "$KPL_TEST_STATE/timeouts"
+export KPL_TEST_PULL_DIGEST=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+sh "$root/scripts/swarm.sh" --env-file "$scratch/tag.env" deploy worker-a > "$KPL_TEST_STATE/output" 2>&1
+printf 'registry.example:5000/team/kpl@sha256:%s\nregistry.example:5000/team/kpl@sha256:%s\n' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb > "$scratch/expected"
+cmp "$scratch/expected" "$KPL_TEST_STATE/deploy-images"
+cmp "$scratch/tag-original.env" "$scratch/tag.env"
+[ "$(grep -Fc "pull $tag" "$KPL_TEST_STATE/calls")" = 2 ]
+if grep -q '^image inspect\|^inspect --format\|--platform' "$KPL_TEST_STATE/calls"; then exit 1; fi
+grep -q 'stack deploy .*--resolve-image always' "$KPL_TEST_STATE/calls"
+
+# A failed or ambiguous pull cannot change placement, create the network, or
+# submit a stack, even when a well-formed digest also appears in its output.
+for fault in fail missing malformed uppercase multiple mixed trailing; do
+    reset_case
+    export KPL_IMAGE=registry.example/kpl:latest KPL_TEST_NO_NETWORK=1 KPL_TEST_PULL_FAULT=$fault
+    reject deploy worker-a
+    no_mutation
+    [ "$(grep -c '^pull ' "$KPL_TEST_STATE/calls")" = 1 ]
+    if grep -q '^network \|^node update \|^stack deploy ' "$KPL_TEST_STATE/calls"; then exit 1; fi
+done
+
+# Pull timeout accepts literal config values and honors environment overrides.
+reset_case
+unset KPL_IMAGE
+printf 'KPL_IMAGE=registry.example/kpl:v3\nKPL_IMAGE_PULL_TIMEOUT=17\n' > "$scratch/pull-timeout.env"
+cp "$scratch/pull-timeout.env" "$scratch/pull-timeout-original.env"
+sh "$root/scripts/swarm.sh" --env-file "$scratch/pull-timeout.env" deploy > "$KPL_TEST_STATE/output" 2>&1
+grep -Fxq -- '-s TERM -k 5 17 docker pull registry.example/kpl:v3' "$KPL_TEST_STATE/timeouts"
+export KPL_IMAGE_PULL_TIMEOUT=23
+sh "$root/scripts/swarm.sh" --env-file "$scratch/pull-timeout.env" deploy > "$KPL_TEST_STATE/output" 2>&1
+grep -Fxq -- '-s TERM -k 5 23 docker pull registry.example/kpl:v3' "$KPL_TEST_STATE/timeouts"
+cmp "$scratch/pull-timeout-original.env" "$scratch/pull-timeout.env"
+
+for invalid_timeout in 0 -1 1.5 08 999999999999999999999999999; do
+    reset_case
+    export KPL_IMAGE_PULL_TIMEOUT=$invalid_timeout KPL_IMAGE=registry.example/kpl:v3
+    reject deploy worker-a
+    no_mutation
+    [ ! -s "$KPL_TEST_STATE/calls" ]
+done
 
 reset_case
 unset KPL_API_TOKEN
@@ -390,9 +484,11 @@ sh "$root/scripts/swarm.sh" --env-file "$scratch/generated.env" init > "$KPL_TES
 [ "$(stat -c '%a' "$scratch/generated.env")" = 600 ]
 grep -Eq '^KPL_API_TOKEN=[a-f0-9]{64}$' "$scratch/generated.env"
 grep -Eq '^GRAFANA_ADMIN_PASSWORD=[a-f0-9]{64}$' "$scratch/generated.env"
+grep -Fxq 'KPL_IMAGE=registry.example.com/kpl-v3:v3' "$scratch/generated.env"
+grep -Fxq 'KPL_IMAGE_PULL_TIMEOUT=300' "$scratch/generated.env"
 cp "$scratch/generated.env" "$scratch/original.env"
 if sh "$root/scripts/swarm.sh" --env-file "$scratch/generated.env" init > "$KPL_TEST_STATE/output" 2>&1; then exit 1; fi
 cmp "$scratch/original.env" "$scratch/generated.env"
 no_mutation
 
-printf '%s\n' 'PASS: Manager commands enforce cleanup order, stack ownership, node readiness, failed-task retry safety, literal private config and pre-mutation digest validation.'
+printf '%s\n' 'PASS: Manager commands enforce cleanup order, stack ownership, failed-task retry safety, literal config, and fresh tag-to-digest resolution before deployment mutations.'

@@ -51,7 +51,7 @@ export PATH="$scratch/bin:$PATH"
 export KPL_CONTROL_NODE_ID=control1
 export KPL_IMAGE=registry.example/kpl:v3@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 export KPL_API_TOKEN=must-not-appear-in-output
-unset KPL_PEER_NETWORK KPL_AGENT_CAPACITY KPL_STACK_NAME KPL_MIN_AGENTS
+unset KPL_PEER_NETWORK KPL_AGENT_CAPACITY KPL_STACK_NAME KPL_MIN_AGENTS KPL_IMAGE_PULL_TIMEOUT
 
 sh "$root/scripts/check-swarm.sh" > "$scratch/output"
 grep -q '2 eligible Agents' "$scratch/output"
@@ -111,6 +111,30 @@ reject KPL_AGENT_CAPACITY=-1
 reject KPL_AGENT_CAPACITY=1.5
 reject KPL_AGENT_CAPACITY=08
 reject KPL_AGENT_CAPACITY=999999999999999999999999999
-reject KPL_IMAGE=registry.example/kpl:latest
-reject KPL_IMAGE=registry.example/kpl@sha256:abcd
-printf '%s\n' 'PASS: read-only Swarm preflight isolates stack labels, supports an explicit minimum Agent count, and rejects legacy global labels and invalid settings.'
+
+# Read-only preflight accepts explicit tags and digests without resolving or
+# pulling anything. A registry port is not a tag on the final path component.
+for valid_image in registry.example/kpl:latest registry.example:5000/team/kpl:v3 registry.example/kpl@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef registry.example:5000/team/kpl:v3@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef; do
+    calls_before=$(wc -l < "$KPL_TEST_CALLS")
+    env "KPL_IMAGE=$valid_image" sh "$root/scripts/check-swarm.sh" --config-only > "$scratch/output"
+    [ "$(wc -l < "$KPL_TEST_CALLS")" -eq "$calls_before" ]
+    env "KPL_IMAGE=$valid_image" sh "$root/scripts/check-swarm.sh" > "$scratch/output"
+    [ "$(wc -l < "$KPL_TEST_CALLS")" -eq "$((calls_before + 5))" ]
+done
+for invalid_image in registry.example/kpl registry.example:5000/team/kpl registry.example/kpl: 'registry.example/kpl:bad tag' registry.example/kpl@sha256:abcd registry.example/kpl:v3@sha256:abcd 'https://registry.example/kpl:v3'; do
+    calls_before=$(wc -l < "$KPL_TEST_CALLS")
+    reject "KPL_IMAGE=$invalid_image"
+    grep -q 'KPL_IMAGE' "$scratch/output"
+    [ "$(wc -l < "$KPL_TEST_CALLS")" -eq "$calls_before" ]
+done
+for invalid_timeout in 0 -1 1.5 08 999999999999999999999999999; do
+    calls_before=$(wc -l < "$KPL_TEST_CALLS")
+    reject "KPL_IMAGE_PULL_TIMEOUT=$invalid_timeout"
+    grep -q 'KPL_IMAGE_PULL_TIMEOUT' "$scratch/output"
+    [ "$(wc -l < "$KPL_TEST_CALLS")" -eq "$calls_before" ]
+done
+calls_before=$(wc -l < "$KPL_TEST_CALLS")
+env KPL_IMAGE_PULL_TIMEOUT=17 sh "$root/scripts/check-swarm.sh" --config-only > "$scratch/output"
+[ "$(wc -l < "$KPL_TEST_CALLS")" -eq "$calls_before" ]
+if grep -q '^pull \|^image inspect' "$KPL_TEST_CALLS"; then exit 1; fi
+printf '%s\n' 'PASS: read-only Swarm preflight isolates stack labels, validates tag/digest references and pull timeouts, and rejects legacy labels and invalid settings without pulling images.'

@@ -1,9 +1,10 @@
 version: "3.8"
 
 # Deploy with docker stack deploy, not docker compose up. See docs/swarm.md.
+# scripts/swarm.sh resolves a configured tag to one digest for this deployment.
 services:
   controller:
-    image: "${KPL_IMAGE:?Set KPL_IMAGE to a registry image digest}"
+    image: "${KPL_IMAGE:?Set KPL_IMAGE to a registry image tag or digest}"
     command: [controller, --listen, ':8080', --data-dir, /var/lib/kpl/data]
     environment:
       KPL_API_TOKEN: "${KPL_API_TOKEN:?Set KPL_API_TOKEN}"
@@ -26,7 +27,7 @@ services:
       restart_policy: {condition: any, delay: 5s}
 
   agent:
-    image: "${KPL_IMAGE:?Set KPL_IMAGE to a registry image digest}"
+    image: "${KPL_IMAGE:?Set KPL_IMAGE to a registry image tag or digest}"
     user: '0:0'
     entrypoint: [sh, /usr/local/bin/kpl-swarm-agent.sh]
     environment:

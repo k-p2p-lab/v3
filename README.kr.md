@@ -74,13 +74,15 @@ Agent를 재시작하면 동일 Docker daemon·network에서 같은 Agent ID의 
 
 ```sh
 sh scripts/swarm.sh init
-# .env.swarm에서 registry 이미지 digest와 control Node ID를 설정·확인합니다.
+# .env.swarm에 KPL_IMAGE=registry.example.com/kpl-v3:v3를 설정하고 control Node ID를 확인합니다.
 sh scripts/swarm.sh deploy worker-a worker-b
 sh scripts/swarm.sh status
 # 이후: add-node worker-c, remove-node worker-b, 전체 철거는 remove
 ```
 
 `init`은 권한 `0600`의 `.env.swarm`과 서로 다른 API 토큰·Grafana 비밀번호를 생성합니다. helper는 `KEY=VALUE`를 문자 그대로 읽으며 이미 export된 환경변수가 우선합니다. 셸 표현식을 실행하거나 Compose의 `.env`를 읽지 않습니다. `deploy`는 배포 접수 후 반환하므로 Controller에서 Agent 등록을 확인한 뒤 실험을 시작하십시오. `add-node`와 `remove-node`는 Swarm 가입 상태가 아닌 stack별 `kpl.<stack>.agent` label을 변경합니다. 노드 철거 시 해당 Peer가 종료되어 진행 중 실험에 영향을 줍니다.
+
+`.env.swarm`의 이미지 태그는 그대로 유지하십시오. 새 코드를 같은 태그로 빌드·push한 뒤 `sh scripts/swarm.sh deploy`를 다시 실행하면 됩니다. 매 배포마다 태그를 pull하여 현재 registry digest를 확인하고, 파일을 수정하지 않은 채 이번 배포만 해당 digest로 고정합니다. **push할 때마다 새 SHA를 복사할 필요가 없습니다.** 특정 버전을 고정하려면 기존처럼 `repository@sha256:...`도 사용할 수 있습니다. Agent 교체 시 담당 Peer가 종료되므로 진행 중 실험을 마친 뒤 업데이트하십시오. [동일 태그로 이미지 업데이트](docs/swarm.kr.md#동일-태그로-이미지-업데이트)를 참고하십시오.
 
 `sh scripts/swarm.sh remove`는 Controller 종료와 Agent의 Peer 정리를 확인한 뒤 stack 서비스를 제거합니다. 노드 접근이나 정상 task 종료를 확인할 수 없거나 과거 실패 task 이력이 남아 있으면 자동 철거를 중단하여 점검이 필요합니다. 데이터 volume과 외부 Peer network는 보존합니다. 준비 조건과 전체 명령, 이전 stack의 서비스 label 전환은 [Swarm 운영 가이드](docs/swarm.kr.md)를 참고하십시오. 문서의 기존 두 데몬 실험은 이 helper 추가 전 검증이며 새 관리 명령의 전체 경로 검증은 아닙니다.
 

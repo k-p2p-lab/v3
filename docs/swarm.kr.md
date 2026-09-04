@@ -8,12 +8,12 @@
 
 Linux rootful Docker 서버들을 같은 Swarm에 가입시켜야 합니다. 서버 간 TCP 2377(manager), TCP/UDP 7946, UDP 4789 통신이 필요합니다. VXLAN 포트는 신뢰하는 클러스터 서버 사이에서만 허용하십시오. VPN·클라우드망에서는 underlay MTU와 VXLAN overhead도 확인해야 합니다. [Docker overlay 요구사항](https://docs.docker.com/engine/network/drivers/overlay/)
 
-이미 Swarm 클러스터가 있다면 manager에 이 저장소와 Docker CLI, coreutils의 `timeout`을 준비하십시오. 명령은 현재 Docker context가 가리키는 **active Swarm manager**에서 실행됩니다. worker마다 저장소를 복사하거나 Agent를 수동 실행할 필요는 없습니다. 모든 서버가 접근할 수 있는 registry에 이미지를 push하고, 혼합 amd64/arm64 서버라면 두 아키텍처를 포함한 manifest digest를 준비합니다. `stack deploy`는 로컬 소스를 빌드하지 않습니다. [Swarm stack 배포](https://docs.docker.com/engine/swarm/stack-deploy/)
+이미 Swarm 클러스터가 있다면 manager에 이 저장소와 Docker CLI, coreutils의 `timeout`을 준비하십시오. 명령은 현재 Docker context가 가리키는 **active Swarm manager**에서 실행됩니다. worker마다 저장소를 복사하거나 Agent를 수동 실행할 필요는 없습니다. 모든 서버가 접근할 수 있는 registry에 이미지를 push하십시오. 아키텍처가 혼합되어 있다면 태그가 가리키는 manifest에 pull을 수행하는 manager를 포함한 모든 대상 아키텍처가 있어야 합니다. `stack deploy`는 로컬 소스를 빌드하지 않습니다. [Swarm stack 배포](https://docs.docker.com/engine/swarm/stack-deploy/)
 
 ```sh
 docker node ls
 sh scripts/swarm.sh init
-# .env.swarm의 KPL_IMAGE를 실제 registry/repository@sha256:<digest>로 수정합니다.
+# .env.swarm에 KPL_IMAGE=registry.example.com/kpl-v3:v3를 설정합니다.
 # KPL_CONTROL_NODE_ID와 KPL_AGENT_CAPACITY도 확인합니다.
 vi .env.swarm
 sh scripts/swarm.sh deploy worker-a worker-b
@@ -22,13 +22,31 @@ sh scripts/swarm.sh status
 
 `init`은 저장소 루트에 권한 `0600`의 `.env.swarm`을 만들고, API 토큰과 Grafana 비밀번호를 각각 32바이트 난수의 64자리 hex로 생성합니다. 기존 파일은 덮어쓰지 않습니다. 기본 control Node ID는 현재 manager이며, 데이터 volume을 보관할 노드의 **정확한 Node ID**로 고정해야 Controller·Prometheus·Grafana의 로컬 volume이 빈 다른 서버로 이동하지 않습니다. control 노드에도 Agent를 배치하면 실험과 분석이 같은 CPU·메모리를 사용합니다.
 
-새 코드를 이미지로 빌드·push한 뒤 해당 digest를 지정하십시오. 비공개 registry라면 manager에서 `docker login <registry>`를 먼저 실행합니다. helper의 `--with-registry-auth`가 배포에 필요한 registry 자격 증명을 Swarm에 전달합니다.
+비공개 registry라면 manager에서 `docker login <registry>`를 먼저 실행합니다. helper의 `--with-registry-auth`가 배포에 필요한 registry 자격 증명을 Swarm에 전달합니다. 로그인과 배포에는 같은 계정을 사용하십시오. `sudo sh scripts/swarm.sh deploy`로 배포한다면 `sudo docker login <registry>`로 로그인합니다. `sudo`가 export한 환경변수를 제거할 수 있으므로 의도한 설정은 `.env.swarm`에 두거나 필요한 환경변수를 명시적으로 전달하십시오.
 
 helper는 `.env.swarm`의 허용된 `KEY=VALUE` 항목을 **문자 그대로** 읽으며 `source`하거나 셸 명령을 실행하지 않습니다. 바깥쪽 한 쌍의 따옴표는 제거하지만 `$VAR`, `$(command)`, escape는 확장하지 않습니다. `export KEY=...`와 인라인 주석도 사용하지 마십시오. 이미 export된 환경변수가 파일보다 우선합니다. 다른 파일은 `sh scripts/swarm.sh --env-file /path/to/lab.env status`처럼 지정합니다. Compose의 `.env`는 읽지 않으며, Docker 명령을 직접 실행할 때는 이 파일도 자동 적용되지 않습니다.
 
-`deploy worker-a worker-b`는 두 노드에 `kpl.<stack>.agent=true` label을 설정하고, 없으면 attachable Peer overlay를 생성한 뒤 사전 검사와 stack 배포를 수행합니다. 기본 stack은 `kpl`, helper의 기본 Peer network는 `kpl-peers`입니다. 기존 label이 있는 다른 노드는 그대로 유지합니다. 서버/LAN/VPN/기존 Docker 네트워크와 주소가 겹치지 않는지 확인하고, 별도 stack은 고유한 이름과 Peer network를 사용하십시오. `deploy`는 배포 접수 후 반환하므로 `status`와 Controller의 `/api/v1/agents`에서 등록을 확인한 뒤 실험을 시작합니다. 기본 최소 Agent 수는 1이며, 두 서버를 필수로 하려면 `.env.swarm`에 `KPL_MIN_AGENTS=2`를 설정하십시오.
+`deploy worker-a worker-b`는 이미지를 확정하고 두 노드에 `kpl.<stack>.agent=true` label을 설정하며, 없으면 attachable Peer overlay를 생성한 뒤 사전 검사와 stack 배포를 수행합니다. 기본 stack은 `kpl`, helper의 기본 Peer network는 `kpl-peers`입니다. 기존 label이 있는 다른 노드는 그대로 유지합니다. 서버/LAN/VPN/기존 Docker 네트워크와 주소가 겹치지 않는지 확인하고, 별도 stack은 고유한 이름과 Peer network를 사용하십시오. `deploy`는 배포 접수 후 반환하므로 `status`와 Controller의 `/api/v1/agents`에서 등록을 확인한 뒤 실험을 시작합니다. 기본 최소 Agent 수는 1이며, 두 서버를 필수로 하려면 `.env.swarm`에 `KPL_MIN_AGENTS=2`를 설정하십시오.
 
 Agent는 worker의 Docker socket만 사용하며 manager API 접근이 필요 없습니다. `{{.Service.Name}}-{{.Node.ID}}`로 ID를 만들고 자신의 task가 연결된 Peer overlay IPv4를 `advertise-url`과 `self-url`로 사용합니다. 서비스 VIP나 공통 DNSRR 주소를 개별 Agent 주소로 지정하면 다른 서버가 요청을 받을 수 있습니다. Agent 시작 시 자신의 실제 로컬 image ID를 조회해 Peer에 사용하므로 같은 서버의 Agent·Peer 바이너리가 일치합니다. [Swarm global 서비스와 템플릿](https://docs.docker.com/engine/swarm/services/)
+
+## 동일 태그로 이미지 업데이트
+
+`.env.swarm`에 `KPL_IMAGE=registry.example.com/kpl-v3:v3`를 한 번 설정하고 그대로 유지하십시오. 기존에 digest를 적었다면 한 번만 태그로 바꾸면 됩니다. export한 `KPL_IMAGE`가 있으면 파일보다 우선하므로 해당 환경변수도 바꾸거나 해제하십시오. 단일 아키텍처 배포에서는 기존 Docker 명령으로 업데이트합니다.
+
+```sh
+docker build -t registry.example.com/kpl-v3:v3 .
+docker push registry.example.com/kpl-v3:v3
+# 진행 중 실험을 마친 뒤 manager에서 실행합니다.
+sh scripts/swarm.sh deploy
+sh scripts/swarm.sh status
+```
+
+태그를 사용하면 `deploy`가 매번 `docker pull`을 실행하고 그 결과의 registry digest를 확인하여 이번 배포만 해당 digest로 고정합니다. `.env.swarm`은 수정하지 않습니다. **push할 때마다 SHA를 수동으로 바꿀 필요가 없습니다.** pull에 실패하면 오래된 로컬 태그를 사용하지 않고 배포를 중단합니다. pull 제한 시간은 `KPL_IMAGE_PULL_TIMEOUT`으로 지정하며 기본값은 `300`초입니다.
+
+특정 버전을 고정하려면 `KPL_IMAGE=registry.example.com/kpl-v3@sha256:<digest>`도 계속 사용할 수 있습니다. Docker에서 태그는 새 버전으로 갱신될 수 있는 이름이고 digest는 변경되지 않는 이미지 버전을 식별합니다. [Docker pull과 digest 고정](https://docs.docker.com/reference/cli/docker/image/pull/#pull-an-image-by-digest-immutable-identifier)
+
+amd64/arm64 서버가 혼합되어 있다면 manager와 모든 대상 아키텍처를 포함하는 multi-platform manifest로 같은 태그를 push해야 합니다. 태그 확인용 pull은 manager 데몬의 기본 플랫폼을 사용하며, 해당 pull에서만 `DOCKER_DEFAULT_PLATFORM`을 무시합니다. Docker가 반환한 최상위 manifest/index digest는 그대로 유지합니다. 위 단일 아키텍처 빌드 예시는 multi-platform manifest를 만들지 않습니다. Agent 교체 시 담당 Peer가 종료될 수 있으므로 진행 중 실험을 마친 뒤 배포하고, 이후 Agent 등록을 확인하십시오.
 
 ## Manager에서 Agent 추가·철거
 
@@ -36,7 +54,7 @@ Agent는 worker의 Docker socket만 사용하며 manager API 접근이 필요 �
 
 | 명령 | 동작 |
 |---|---|
-| `sh scripts/swarm.sh deploy [NODE...]` | 이미지·네트워크·노드를 검사하고 stack을 배포하거나 업데이트. 지정한 노드에 Agent 배치 label 추가 |
+| `sh scripts/swarm.sh deploy [NODE...]` | 이미지 태그를 pull·확정하거나 명시 digest를 사용하고 네트워크·노드를 검사한 뒤 stack 배포·업데이트. 지정한 노드에 Agent 배치 label 추가 |
 | `sh scripts/swarm.sh status` | stack 서비스, Agent task, 선택된 노드 표시 |
 | `sh scripts/swarm.sh add-node worker-c` | 기존 서비스에 Agent 배치 노드 추가. Linux·Ready·Active 상태 필요 |
 | `sh scripts/swarm.sh remove-node worker-b` | 서비스에서 대상 노드를 제외하고 Agent 정상 종료 확인 후 배치 label 정리 |
@@ -60,7 +78,7 @@ Controller 화면의 **Run experiment → API token**에 실제 배포에 적용
 
 helper는 기존 서비스가 `${KPL_STACK_NAME}_{controller,agent,prometheus,grafana}`이고 `io.kpl.application=kp2plab-v3` 서비스 label이 있을 때만 관리합니다. 이 표시가 없는 이전 v3 stack은 같은 이름이어도 변경을 거부합니다.
 
-먼저 기존 실험을 종료하고 Peer 정리를 확인하십시오. 기존 stack 이름, control Node ID, Peer network 이름, 이미지 digest와 자격 증명을 그대로 셸에 export한 뒤, 최신 `stack.swarm.yaml`을 한 번 직접 재배포합니다. `.env.swarm`은 Docker가 직접 읽지 않으므로 파일의 실제 값을 환경에 명시해야 합니다.
+먼저 기존 실험을 종료하고 Peer 정리를 확인하십시오. 기존 stack 이름, control Node ID, Peer network 이름, 이미지 참조와 자격 증명을 그대로 셸에 export한 뒤, 최신 `stack.swarm.yaml`을 한 번 직접 재배포합니다. `.env.swarm`은 Docker가 직접 읽지 않으므로 파일의 실제 값을 환경에 명시해야 합니다.
 
 ```sh
 # 위의 기존 배포 변수가 export된 manager에서 실행합니다.
@@ -124,7 +142,7 @@ manager 명령 추가 후 Linux에서 전체 Go 회귀 테스트와 `test-swarm-
 
 별도의 Docker 29.7.2 데몬 하나에서도 SIGTERM 종료용 Controller·Agent 테스트 서비스로 `remove-node` → `add-node` → 전체 `remove`를 실행했습니다. 정상 종료의 `shutdown / PID 0 / exit 0`, 재배치 후 새 task 생성, 최종 stack 서비스 0개를 확인했습니다. 대상이 아닌 노드를 제외하는 배치 조건의 추가·제거에서는 실행 중 task ID가 유지됐습니다. Controller는 replica 수를 유지한 채 배치를 중지하여 종료 이력의 즉시 삭제를 방지하고, 한 번도 노드에 할당되지 않은 대기·취소 task는 종료 확인에서 제외합니다. 이 검증은 관리 명령과 실제 Swarm 상태 전이를 대상으로 하며, 새 이미지의 registry pull이나 실제 Peer 실험 전체를 다시 실행한 결과는 아닙니다.
 
-대상 서버마다 실제 이미지 digest를 `KPL_IMAGE`에 export한 뒤 `docker pull "$KPL_IMAGE"`와 `KPL_DOCKER_IMAGE="$KPL_IMAGE" sh scripts/check-linux.sh`로 커널 기능을 확인하십시오. Linux 커널 검사 스크립트는 Docker Compose v2, `timeout`, `setsid`도 필요합니다. manager의 `deploy`는 기본 배포 조건을 `check-swarm.sh`로 검사합니다. 이 스크립트를 단독 실행하려면 `.env.swarm`의 설정을 환경변수로 따로 전달해야 하며, 단독 실행의 기본 최소 Agent 수는 2입니다. 이 검사들은 cross-host VXLAN 실제 통신이나 처리량을 대신하지 않습니다.
+대상 서버마다 이미지 태그 또는 digest를 `KPL_IMAGE`에 export한 뒤 `docker pull "$KPL_IMAGE"`와 `KPL_DOCKER_IMAGE="$KPL_IMAGE" sh scripts/check-linux.sh`로 커널 기능을 확인하십시오. 배포한 버전 자체를 검사하려면 배포 시 확정한 digest를 사용합니다. Linux 커널 검사 스크립트는 Docker Compose v2, `timeout`, `setsid`도 필요합니다. manager의 `deploy`는 기본 배포 조건을 `check-swarm.sh`로 검사합니다. 사전 검사 스크립트는 태그와 digest를 받지만 직접 pull하거나 태그를 확정하지는 않습니다. 단독 실행하려면 `.env.swarm`의 설정을 환경변수로 따로 전달해야 하며, 단독 실행의 기본 최소 Agent 수는 2입니다. 이 검사들은 cross-host VXLAN 실제 통신이나 처리량을 대신하지 않습니다.
 
 최소 두 서버에서 [분산 실험 예제](../examples/swarm-smoke.yaml)를 실행해 서로 다른 Agent에 ready Peer가 생기는지, 광고 주소가 Peer overlay에 속하는지, publish/deliver가 양쪽 서버에서 발생하는지 확인하십시오. 예제는 boot 1개와 worker 5개를 생성하므로 총 capacity 6 이상이 필요합니다. 그 뒤 목표 Peer 수를 단계적으로 올려 ready 지연·실패율·분배·자원 사용량을 기록하십시오. 네트워크 단절/Agent 재시작 시 stale 제외·잔존 컨테이너 정리와 Prometheus 대상 교체도 확인해야 합니다.
 

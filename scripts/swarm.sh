@@ -13,6 +13,8 @@ Usage: sh scripts/swarm.sh [--env-file PATH] COMMAND [NODE...]
   remove-node NODE...   Stop Agents and wait for their Peer cleanup
   remove               Stop Controller, then Agents, then remove stack services
 Environment overrides the config file. NODE is a Swarm node ID or hostname.
+KPL_IMAGE accepts an explicit tag or digest; deploy resolves tags without editing the file.
+KPL_IMAGE_PULL_TIMEOUT sets the tag pull timeout in seconds (default: 300).
 Removal preserves experiment/monitoring volumes and the external Peer network.
 EOF
 }
@@ -52,7 +54,7 @@ if [ "$command_name" != init ] && [ -f "$env_file" ]; then
         case "$line" in *=*) key=${line%%=*}; value=${line#*=} ;;
             *) fail "Invalid config entry at line $line_number." ;; esac
         case "$key" in
-            KPL_STACK_NAME|KPL_CONTROL_NODE_ID|KPL_PEER_NETWORK|KPL_IMAGE|KPL_AGENT_CAPACITY|KPL_API_TOKEN|GRAFANA_ADMIN_PASSWORD|GRAFANA_ADMIN_USER|KPL_HTTP_PORT|PROMETHEUS_PORT|GRAFANA_PORT|KPL_MIN_AGENTS|KPL_DOCKER_TIMEOUT|KPL_CONTROLLER_STOP_TIMEOUT|KPL_AGENT_STOP_TIMEOUT) ;;
+            KPL_STACK_NAME|KPL_CONTROL_NODE_ID|KPL_PEER_NETWORK|KPL_IMAGE|KPL_AGENT_CAPACITY|KPL_API_TOKEN|GRAFANA_ADMIN_PASSWORD|GRAFANA_ADMIN_USER|KPL_HTTP_PORT|PROMETHEUS_PORT|GRAFANA_PORT|KPL_MIN_AGENTS|KPL_DOCKER_TIMEOUT|KPL_IMAGE_PULL_TIMEOUT|KPL_CONTROLLER_STOP_TIMEOUT|KPL_AGENT_STOP_TIMEOUT) ;;
             *) fail "Unsupported config key at line $line_number." ;;
         esac
         case "$value" in \"*\") value=${value#\"}; value=${value%\"} ;;
@@ -67,9 +69,10 @@ KPL_PEER_NETWORK=${KPL_PEER_NETWORK:-$KPL_STACK_NAME-peers}
 case "$KPL_PEER_NETWORK" in ''|-*|*[!a-zA-Z0-9_.-]*) fail 'Invalid KPL_PEER_NETWORK.' ;; esac
 KPL_MIN_AGENTS=${KPL_MIN_AGENTS:-1}
 docker_timeout=${KPL_DOCKER_TIMEOUT:-60}
+image_pull_timeout=${KPL_IMAGE_PULL_TIMEOUT:-300}
 controller_timeout=${KPL_CONTROLLER_STOP_TIMEOUT:-480}
 agent_timeout=${KPL_AGENT_STOP_TIMEOUT:-240}
-for number in "$docker_timeout" "$controller_timeout" "$agent_timeout" "$KPL_MIN_AGENTS"; do
+for number in "$docker_timeout" "$image_pull_timeout" "$controller_timeout" "$agent_timeout" "$KPL_MIN_AGENTS"; do
     case "$number" in ''|0*|*[!0-9]*) fail 'Timeouts and KPL_MIN_AGENTS must be positive integers without leading zeros.' ;; esac
     [ "$number" -gt 0 ] 2>/dev/null || fail 'Integer is out of range.'
 done
@@ -78,6 +81,7 @@ agent_label=kpl.$KPL_STACK_NAME.agent
 application=kp2plab-v3
 command -v docker >/dev/null 2>&1 || fail 'Docker CLI is required.'
 command -v timeout >/dev/null 2>&1 || fail 'Linux timeout (coreutils) is required.'
+command -v awk >/dev/null 2>&1 || fail 'awk is required.'
 dock() { timeout -s TERM -k 5 "$docker_timeout" docker "$@"; }
 [ "$(dock info --format '{{.Swarm.LocalNodeState}} {{.Swarm.ControlAvailable}}')" = 'active true' ] || fail 'Run against an active Swarm manager.'
 
@@ -93,8 +97,11 @@ if [ "$command_name" = init ]; then
 KPL_STACK_NAME=$KPL_STACK_NAME
 KPL_CONTROL_NODE_ID=$control_node
 KPL_PEER_NETWORK=$KPL_PEER_NETWORK
-# Replace with a pushed image digest accessible from every node.
-KPL_IMAGE=registry.example.com/kpl-v3@sha256:REPLACE_ME
+# Replace with a pushed image tag accessible from every node; digests also work.
+# Each deploy resolves the tag to one digest without changing this file.
+KPL_IMAGE=registry.example.com/kpl-v3:v3
+# Tag pull timeout in seconds, separate from individual Docker command timeouts.
+KPL_IMAGE_PULL_TIMEOUT=$image_pull_timeout
 KPL_AGENT_CAPACITY=20
 KPL_API_TOKEN=$token
 GRAFANA_ADMIN_USER=admin
@@ -138,6 +145,42 @@ ready_node() {
     [ "$state" = 'linux ready active' ] || fail "Node $1 must be Linux, Ready and Active; got $state."
 }
 selected_nodes() { dock node ls --quiet --filter "node.label=$agent_label=true"; }
+resolve_deployment_image() {
+    case "$KPL_IMAGE" in
+        *@sha256:*) export KPL_IMAGE; return 0 ;;
+    esac
+    requested_image=$KPL_IMAGE
+    printf 'Resolving image tag %s (pull timeout: %ss)...\n' "$requested_image" "$image_pull_timeout"
+    # Pull through the selected daemon to retain its registry TLS/HTTP policy.
+    # Use that daemon's native platform regardless of the caller's default;
+    # Docker still reports the top-level manifest/index digest for this pull.
+    if ! pull_output=$(
+        unset DOCKER_DEFAULT_PLATFORM
+        timeout -s TERM -k 5 "$image_pull_timeout" docker pull "$requested_image"
+    ); then
+        [ -z "$pull_output" ] || printf '%s\n' "$pull_output" >&2
+        fail 'Image pull failed; no deployment changes made.'
+    fi
+    # Do not fall back to local RepoDigests: those can contain stale or multiple
+    # references. A successful pull must identify exactly one registry digest.
+    resolved_digest=$(printf '%s\n' "$pull_output" | awk '
+        { sub(/\r$/, "") }
+        /^Digest:/ {
+            count++
+            if (NF != 2 || $0 != "Digest: " $2 || $2 !~ /^sha256:[a-f0-9]+$/ || length($2) != 71) invalid=1
+            digest=$2
+        }
+        END {
+            if (count != 1 || invalid) exit 1
+            print digest
+        }
+    ') || fail 'Cannot resolve exactly one sha256 digest from the successful pull; no deployment changes made.'
+    # Static validation already required a tag on the final path component.
+    KPL_IMAGE=${requested_image%:*}@$resolved_digest
+    export KPL_IMAGE
+    sh "$root/scripts/check-swarm.sh" --config-only
+    printf 'Deploying resolved image %s\n' "$KPL_IMAGE"
+}
 placement_exclusions() {
     action=$1
     excluded_nodes=$2
@@ -233,6 +276,7 @@ case "$command_name" in
         ready_node "$KPL_CONTROL_NODE_ID"
         nodes=$(resolve_nodes "$@")
         for node in $nodes; do ready_node "$node"; done
+        resolve_deployment_image
         networks=$(dock network ls --quiet --filter "name=^$KPL_PEER_NETWORK$")
         if [ -z "$networks" ]; then
             dock network create --driver overlay --attachable --label "io.kpl.application=$application" --label "io.kpl.stack=$KPL_STACK_NAME" "$KPL_PEER_NETWORK"
@@ -241,7 +285,7 @@ case "$command_name" in
         fi
         for node in $nodes; do dock node update --label-add "$agent_label=true" "$node"; done
         timeout -s TERM -k 5 "$docker_timeout" sh "$root/scripts/check-swarm.sh"
-        dock stack deploy --with-registry-auth --detach=true --compose-file "$root/stack.swarm.yaml" "$KPL_STACK_NAME"
+        dock stack deploy --with-registry-auth --resolve-image always --detach=true --compose-file "$root/stack.swarm.yaml" "$KPL_STACK_NAME"
         printf 'Deployment submitted. Use status, then check registered Agents in the Controller before running an experiment.\n'
         ;;
     add-node)
