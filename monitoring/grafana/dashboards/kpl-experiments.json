@@ -1,0 +1,2303 @@
+{
+  "id": null,
+  "uid": "kpl-experiments",
+  "title": "KP2PLab 실험 분석",
+  "description": "KP2PLab v3의 실험별 Peer 수, 메시지 이벤트, 유효 envelope 전파 지연, 네트워크 설정, Agent 상태를 분석합니다.",
+  "tags": [
+    "KP2PLab",
+    "P2P",
+    "실험"
+  ],
+  "timezone": "browser",
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "실험 개요",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "text",
+      "title": "지표 읽는 방법",
+      "gridPos": {
+        "h": 3,
+        "w": 24,
+        "x": 0,
+        "y": 1
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**실험·Agent·토픽을 선택한 뒤 시간 범위를 조정하십시오.** `누적`은 현재 수집기의 counter 값이며, `선택 기간`은 `increase`로 계산한 추정 증가량입니다. 초당 변화는 scrape 간격에 맞춘 `rate`입니다. **전파 지연은 유효한 envelope 수신만 포함하며 raw 발행에는 제공되지 않습니다.** 관측값이 없으면 0으로 채우지 않습니다."
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "온라인 Agent",
+      "description": "Agent 필터에 해당하는 현재 온라인 호스트 수입니다. run/토픽 필터의 영향을 받지 않습니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(kpl_agent_up{agent_id=~\"${agent:regex}\"})",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "관측 없음",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "준비된 Peer",
+      "description": "선택한 실험과 Agent의 현재 ready Peer 수입니다. ready는 mesh 안정화를 보장하지 않습니다. 선택한 실험/Agent에서 다른 상태의 Peer가 관측된 경우에만 해당 상태의 0을 표시합니다. 선택 집합 자체가 관측되지 않았으면 관측 없음으로 남깁니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(kpl_nodes{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",state=\"ready\"}) or (0 * sum(kpl_nodes{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\"}))",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "관측 없음",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "발행 · 누적",
+      "description": "수집기에 현재 남아 있는 발행 counter 합계입니다. 선택 기간의 증가량과 다르며 수집기 재시작 시 초기화될 수 있습니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(kpl_events_total{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\",event_type=\"publish\"})",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "관측 없음",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "발행 · 선택 기간",
+      "description": "선택한 시간 범위의 발행 추정 증가량입니다. Prometheus increase는 경계 보간 및 counter reset을 반영하므로 정수가 아닐 수 있습니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(kpl_events_total{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\",event_type=\"publish\"}[$__range]))",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "관측 없음",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "작업 실패 · 선택 기간",
+      "description": "onError: continue로 계속 진행한 publish/leave 작업 실패의 선택 기간 추정 증가량입니다. onError: fail로 중단된 실패와 join 실패는 이 counter에 포함되지 않습니다. 실험 이름·상태·현재 단계 패널의 failed 상태도 확인하십시오.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(kpl_operation_failures_total{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\"}[$__range]))",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "관측 없음",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "관측 유실 · 선택 기간",
+      "description": "선택 기간에 수집 경로에서 보고된 이벤트 유실입니다. P2P packet loss와 별개이며 분석 완전성에 영향을 줍니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(kpl_telemetry_dropped_events_total{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\"}[$__range]))",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "관측 없음",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Peer 상태",
+      "description": "수집 시점의 상태별 Peer 수입니다. 종료/실패 개체가 실험 기록에 남아 있으면 해당 상태에도 포함됩니다. 선택한 실험/Agent에서 다른 상태의 Peer가 관측된 경우에만 해당 상태의 0을 표시합니다. 선택 집합 자체가 관측되지 않았으면 관측 없음으로 남깁니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(kpl_nodes{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",state=\"ready\"}) or (0 * sum(kpl_nodes{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\"}))",
+          "legendFormat": "준비",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(kpl_nodes{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",state=\"starting\"}) or (0 * sum(kpl_nodes{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\"}))",
+          "legendFormat": "시작 중",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(kpl_nodes{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",state=\"stopping\"}) or (0 * sum(kpl_nodes{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\"}))",
+          "legendFormat": "종료 중",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        },
+        {
+          "refId": "D",
+          "expr": "sum(kpl_nodes{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",state=\"stopped\"}) or (0 * sum(kpl_nodes{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\"}))",
+          "legendFormat": "종료됨",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        },
+        {
+          "refId": "E",
+          "expr": "sum(kpl_nodes{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",state=\"failed\"}) or (0 * sum(kpl_nodes{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\"}))",
+          "legendFormat": "실패",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "관측 없음",
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "발행·수신·중복 / 초",
+      "description": "유효 수집 이벤트의 초당 변화입니다. 수신은 여러 Peer에서 발생하므로 발행보다 높을 수 있습니다. 이 비율을 도달률로 해석하지 마십시오.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(kpl_events_total{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\",event_type=\"publish\"}[$__rate_interval]))",
+          "legendFormat": "발행",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(kpl_events_total{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\",event_type=\"deliver\"}[$__rate_interval]))",
+          "legendFormat": "수신",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(kpl_events_total{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\",event_type=\"duplicate\"}[$__rate_interval]))",
+          "legendFormat": "중복",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops",
+          "noValue": "관측 없음",
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "row",
+      "title": "메시지 전파와 관측 품질",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "panels": []
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "발행·수신 데이터량 / 초",
+      "description": "계측된 PubSub data 바이트입니다. raw는 payloadSize와 같고 envelope는 JSON 메타데이터와 base64를 포함합니다. TCP/IP 프레이밍·재전송·libp2p 서명까지 합친 인터페이스 전송량은 아닙니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (encoding) (rate(kpl_message_bytes_total{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\",direction=\"publish\"}[$__rate_interval]))",
+          "legendFormat": "발행 · {{encoding}}",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (encoding) (rate(kpl_message_bytes_total{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\",direction=\"deliver\"}[$__rate_interval]))",
+          "legendFormat": "수신 · {{encoding}}",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "Bps",
+          "noValue": "관측 없음",
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "전파 지연 · P50 / P95 / P99",
+      "description": "수신 envelope의 유효한 전파 지연만 포함합니다. raw, 시계 오차로 음수가 된 표본, 관측이 없는 구간은 제외됩니다. histogram bucket으로 계산한 추정 분위수이며 호스트 간 시각 동기화가 필요합니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(kpl_propagation_latency_seconds_bucket{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}[$__rate_interval]))) and on() (sum(rate(kpl_propagation_latency_seconds_count{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}[$__rate_interval])) > 0)",
+          "legendFormat": "P50",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(kpl_propagation_latency_seconds_bucket{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}[$__rate_interval]))) and on() (sum(rate(kpl_propagation_latency_seconds_count{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}[$__rate_interval])) > 0)",
+          "legendFormat": "P95",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(kpl_propagation_latency_seconds_bucket{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}[$__rate_interval]))) and on() (sum(rate(kpl_propagation_latency_seconds_count{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}[$__rate_interval])) > 0)",
+          "legendFormat": "P99",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s",
+          "noValue": "관측 없음",
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Mesh 연결 변화 / 초",
+      "description": "GRAFT/PRUNE은 선택한 토픽에 적용됩니다. remove_peer는 토픽이 없는 Peer 수준 이벤트이므로 토픽 필터와 무관하게 표시합니다. 이 그래프는 이벤트율이며 현재 mesh 차수가 아닙니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 29
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(kpl_events_total{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\",event_type=\"graft\"}[$__rate_interval]))",
+          "legendFormat": "mesh 추가 · GRAFT",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(kpl_events_total{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\",event_type=\"prune\"}[$__rate_interval]))",
+          "legendFormat": "mesh 해제 · PRUNE",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(kpl_events_total{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",event_type=\"remove_peer\"}[$__rate_interval]))",
+          "legendFormat": "PubSub Peer 이탈",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops",
+          "noValue": "관측 없음",
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "작업 실패 / 초",
+      "description": "onError: continue로 계속 진행한 publish/leave 작업 실패의 초당 변화입니다. 실패로 실험이 중단된 경우는 이 counter에 포함되지 않으므로 실험 이름·상태·현재 단계 패널의 failed 상태도 확인하십시오.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 29
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (action) (rate(kpl_operation_failures_total{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\"}[$__rate_interval]))",
+          "legendFormat": "{{action}}",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops",
+          "noValue": "관측 없음",
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "관측 이벤트 유실 / 초",
+      "description": "관측 경로에서 보고된 이벤트 유실입니다. 해당 구간의 메시지율과 mesh 변화에는 누락이 있을 수 있습니다. P2P 네트워크의 손실률이 아닙니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 37
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (agent_id) (rate(kpl_telemetry_dropped_events_total{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\"}[$__rate_interval]))",
+          "legendFormat": "{{agent_id}}",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops",
+          "noValue": "관측 없음",
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 17,
+      "type": "stat",
+      "title": "데이터량 · 선택 기간",
+      "description": "현재 선택한 시간 범위의 PubSub data 추정 증가량입니다. direction/encoding별로 표시하며 인터페이스 프레이밍·재전송까지 합친 값은 아닙니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 37
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (direction, encoding) (increase(kpl_message_bytes_total{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}[$__range]))",
+          "legendFormat": "{{direction}} · {{encoding}}",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes",
+          "noValue": "관측 없음",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 18,
+      "type": "row",
+      "title": "네트워크 설정 · 관측 지연과 구분",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 45
+      },
+      "panels": []
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "설정된 기본 지연 · 평균 / 최소 / 최대",
+      "description": "ready/starting Peer에 적용하도록 설정한 기본 지연의 평균·최소·최대입니다. 실제 패킷 RTT 또는 전파 지연 측정값이 아닙니다. scope는 impairment 적용 범위를 나타냅니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 46
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "kpl_network_configured_delay_seconds{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\"}",
+          "legendFormat": "{{group}} · {{agent_id}} · {{stat}} · {{profile}} · {{scope}} · {{run_id}}",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s",
+          "noValue": "관측 없음",
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "설정된 패킷 손실률 · 평균",
+      "description": "ready/starting Peer의 설정 손실 확률 평균입니다. 실측 손실률 또는 메시지 미도달률이 아닙니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 46
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "kpl_network_configured_loss_ratio{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\"}",
+          "legendFormat": "{{group}} · {{agent_id}} · {{profile}} · {{scope}} · {{run_id}}",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percentunit",
+          "noValue": "관측 없음",
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "설정된 지터 · 평균",
+      "description": "ready/starting Peer의 설정 지터 평균입니다. 설정 분포에 따라 실제 패킷 지연은 달라지며 이 값은 실측 지터가 아닙니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 54
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "kpl_network_configured_jitter_seconds{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\"}",
+          "legendFormat": "{{group}} · {{agent_id}} · {{profile}} · {{scope}} · {{run_id}}",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s",
+          "noValue": "관측 없음",
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "네트워크 설정 대상 Peer",
+      "description": "네트워크 설정 집계에 포함된 ready/starting Peer 수입니다. 종료/실패 Peer는 제외합니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 54
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (group, profile, scope) (kpl_network_configured_peers{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\"})",
+          "legendFormat": "{{group}}/{{profile}} · {{scope}}",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "관측 없음",
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 23,
+      "type": "row",
+      "title": "Agent 자원과 실행 상태",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 62
+      },
+      "panels": []
+    },
+    {
+      "id": 24,
+      "type": "timeseries",
+      "title": "Agent 정원 사용률",
+      "description": "활성 Peer 수 / Agent 정원입니다. CPU·메모리 사용률이 아닙니다. 정원이 0이거나 관측되지 않은 Agent는 값이 표시되지 않습니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 63
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(kpl_agent_active_nodes{agent_id=~\"${agent:regex}\"} / on (agent_id) kpl_agent_capacity{agent_id=~\"${agent:regex}\"}) and on (agent_id) (kpl_agent_capacity{agent_id=~\"${agent:regex}\"} > 0)",
+          "legendFormat": "{{agent_id}}",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percentunit",
+          "noValue": "관측 없음",
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "Agent 마지막 상태 보고 후 경과",
+      "description": "Agent가 마지막으로 상태를 보고한 이후의 경과 시간입니다. Prometheus scrape 경과와 다릅니다. run/토픽 필터의 영향을 받지 않습니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 63
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - kpl_agent_last_seen_timestamp_seconds{agent_id=~\"${agent:regex}\"}",
+          "legendFormat": "{{agent_id}}",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s",
+          "noValue": "관측 없음",
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 26,
+      "type": "table",
+      "title": "실험 이름·상태·현재 단계",
+      "description": "선택한 실험의 현재 상태와 phase 번호입니다. run 필터를 적용하며 Agent/토픽 필터와 무관합니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 71
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(kpl_experiment_info{run_id=~\"${run_id:regex}\"} == 1) * on (run_id) group_left kpl_experiment_phase{run_id=~\"${run_id:regex}\"}",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "table",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "관측 없음",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "instance": true
+            },
+            "indexByName": {
+              "run_id": 0,
+              "name": 1,
+              "state": 2,
+              "Value": 3
+            },
+            "renameByName": {
+              "run_id": "실험 ID",
+              "name": "실험 이름",
+              "state": "실행 상태",
+              "Value": "현재 단계"
+            }
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 27,
+      "type": "timeseries",
+      "title": "실험 Job 상태",
+      "description": "선택한 실험의 Job 상태별 현재 개수입니다. completed/failed/canceled 등 종료 상태를 포함합니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 71
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (state) (kpl_experiment_jobs{run_id=~\"${run_id:regex}\"})",
+          "legendFormat": "{{state}}",
+          "instant": false,
+          "range": true,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "관측 없음",
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "templating": {
+    "list": [
+      {
+        "name": "run_id",
+        "label": "실험",
+        "description": "분석할 실험을 선택하십시오.",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "kpl-prometheus"
+        },
+        "definition": "label_values(kpl_experiment_info, run_id)",
+        "query": {
+          "query": "label_values(kpl_experiment_info, run_id)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": [],
+        "hide": 0,
+        "skipUrlSync": false
+      },
+      {
+        "name": "agent",
+        "label": "Agent",
+        "description": "분석할 Agent를 선택하십시오. 상태·자원 패널에도 적용됩니다.",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "kpl-prometheus"
+        },
+        "definition": "label_values(kpl_agent_up, agent_id)",
+        "query": {
+          "query": "label_values(kpl_agent_up, agent_id)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": [],
+        "hide": 0,
+        "skipUrlSync": false
+      },
+      {
+        "name": "topic",
+        "label": "토픽",
+        "description": "메시지·전파 지연·GRAFT/PRUNE에 적용합니다. Peer 이탈은 토픽이 없는 이벤트입니다.",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "kpl-prometheus"
+        },
+        "definition": "label_values(kpl_events_total{run_id=~\"${run_id:regex}\"}, topic)",
+        "query": {
+          "query": "label_values(kpl_events_total{run_id=~\"${run_id:regex}\"}, topic)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": [],
+        "hide": 0,
+        "skipUrlSync": false
+      }
+    ]
+  },
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m"
+    ],
+    "time_options": [
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "6h",
+      "24h"
+    ]
+  },
+  "version": 1,
+  "weekStart": "monday",
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  }
+}

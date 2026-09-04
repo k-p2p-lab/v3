@@ -1,0 +1,14 @@
+apiVersion: 1
+
+providers:
+  - name: KP2PLab
+    orgId: 1
+    folder: KP2PLab
+    folderUid: kpl
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

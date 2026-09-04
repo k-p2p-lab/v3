@@ -16,6 +16,7 @@ import (
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.Handle("/metrics", s.metricsHandler())
 	mux.HandleFunc("/api/v1/health", s.handleHealth)
 	mux.HandleFunc("/api/v1/status", s.handleStatus)
 	mux.HandleFunc("/api/v1/nodes", s.handleNodes)

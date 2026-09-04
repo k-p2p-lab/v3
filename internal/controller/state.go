@@ -27,10 +27,11 @@ type state struct {
 	events       []model.TraceEvent
 	watchers     map[chan struct{}]struct{}
 	dataDir      string
+	metrics      *controllerMetrics
 }
 
 func newState(dataDir string) *state {
-	return &state{
+	s := &state{
 		agents:       make(map[string]model.Agent),
 		nodes:        make(map[string]model.Node),
 		reservations: make(map[string]string),
@@ -38,6 +39,8 @@ func newState(dataDir string) *state {
 		watchers:     make(map[chan struct{}]struct{}),
 		dataDir:      dataDir,
 	}
+	s.metrics = newControllerMetrics(s)
+	return s
 }
 
 func (s *state) registerAgent(agent model.Agent) (model.Agent, error) {
@@ -141,6 +144,10 @@ func (s *state) heartbeat(h model.AgentHeartbeat) error {
 	}
 	s.agents[h.Agent.ID] = h.Agent
 	s.mu.Unlock()
+	for _, node := range h.Nodes {
+		node.AgentID = h.Agent.ID
+		s.metrics.initNode(node)
+	}
 	s.notify()
 	return nil
 }
@@ -184,6 +191,7 @@ func (s *state) appendEvents(batch model.EventBatch) error {
 
 	byRun := make(map[string][]model.TraceEvent)
 	for _, event := range batch.Events {
+		s.metrics.observeEvent(event)
 		if event.RunID != "" {
 			byRun[event.RunID] = append(byRun[event.RunID], event)
 		}

@@ -66,6 +66,12 @@ On restart, an Agent removes previously managed Peer containers with its Agent I
 
 The supplied Compose bridge connects containers on a single Docker host. For multiple hosts, join the Docker hosts to a Swarm and use a shared attachable overlay network, for example `docker network create --driver overlay --attachable kpl-v3-peers` on a Swarm manager. Configure each Agent's `--docker-network` to use that network, attach the Controller and Agents to it, and provide unique Agent IDs and reachable `--advertise-url`, `--self-url`, and `--controller-url` values. If reusing Compose with a pre-created overlay, replace its `networks.peers` definition with `name: kpl-v3-peers` and `external: true`; a host-local bridge cannot provide cross-host Peer connectivity. See the [Docker overlay network requirements](https://docs.docker.com/engine/network/drivers/overlay/).
 
+### Prometheus and Grafana
+
+Compose also starts Prometheus and Grafana, provisions the data source and experiment dashboard, and scrapes the Controller and Agents every 5 seconds. Open [Grafana experiment analysis](http://localhost:3000/d/kpl-experiments) or [Prometheus](http://localhost:9090). Both store data in named volumes and publish their UI ports on localhost.
+
+The dashboard covers peer states, publish/delivery/duplicate traffic, propagation latency, churn failures, and configured network conditions. Grafana allows local read-only viewing by default; administrator settings belong in `.env`. See the [monitoring guide (Korean)](docs/monitoring.md) and [example experiment](examples/monitoring.yaml).
+
 ## Module path
 
 The canonical Go module path is `github.com/k-p2p-lab/v3`. Source imports and commands should use that path.

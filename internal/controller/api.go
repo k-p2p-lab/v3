@@ -12,6 +12,7 @@ import (
 
 	"github.com/k-p2p-lab/v3/internal/model"
 	"github.com/k-p2p-lab/v3/internal/webui"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func (s *Server) Run(ctx context.Context) error {
@@ -51,6 +52,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 func (s *Server) Handler(ctx context.Context) http.Handler {
 	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.HandlerFor(s.state.metrics.registry, promhttp.HandlerOpts{}))
 	mux.HandleFunc("/api/v1/health", s.handleHealth)
 	mux.HandleFunc("/api/v1/snapshot", s.handleSnapshot)
 	mux.HandleFunc("/api/v1/agents", s.handleAgents)

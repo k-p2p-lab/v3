@@ -7,6 +7,7 @@ require (
 	github.com/libp2p/go-libp2p-kad-dht v0.31.0
 	github.com/libp2p/go-libp2p-pubsub v0.13.1
 	github.com/multiformats/go-multiaddr v0.15.0
+	github.com/prometheus/client_golang v1.21.1
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -98,7 +99,6 @@ require (
 	github.com/pion/webrtc/v4 v4.0.10 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/polydawn/refmt v0.89.0 // indirect
-	github.com/prometheus/client_golang v1.21.1 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.62.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect

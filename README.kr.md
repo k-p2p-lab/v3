@@ -66,6 +66,12 @@ Agent를 재시작하면 동일 Docker daemon·network에서 같은 Agent ID의 
 
 기본 Compose bridge는 같은 Docker 호스트의 컨테이너만 연결합니다. 여러 호스트에서는 Docker 호스트를 같은 Swarm에 참여시키고 공통 attachable overlay 네트워크를 사용하십시오. 예를 들어 Swarm manager에서 `docker network create --driver overlay --attachable kpl-v3-peers`를 실행합니다. 각 Agent의 `--docker-network`를 해당 네트워크로 지정하고 Controller와 Agent도 여기에 연결하며, 고유한 Agent ID와 접근 가능한 `--advertise-url`, `--self-url`, `--controller-url`을 설정해야 합니다. 미리 생성한 overlay에 Compose를 연결할 경우 `networks.peers` 정의를 `name: kpl-v3-peers`, `external: true`로 바꾸십시오. 호스트별 bridge만으로는 호스트 간 Peer 연결이 되지 않습니다. 세부 조건은 [Docker overlay 네트워크 문서](https://docs.docker.com/engine/network/drivers/overlay/)를 참고하십시오.
 
+### Prometheus와 Grafana
+
+Compose는 Prometheus와 Grafana도 함께 실행하고 데이터 소스와 실험 대시보드를 자동 등록합니다. [Grafana 실험 분석](http://localhost:3000/d/kpl-experiments)에서 실험·Agent·토픽을 선택하고, [Prometheus](http://localhost:9090)에서 직접 쿼리할 수 있습니다. 지표는 5초마다 수집되며 시계열은 named volume에 저장됩니다.
+
+피어 상태, 발행·수신·중복, 전파 지연, churn 실패, 네트워크 설정을 제공합니다. Grafana는 기본적으로 로컬 읽기 전용 열람을 허용하고 관리자 설정은 `.env`에서 지정합니다. [사용법과 지표 해석](docs/monitoring.md), [검증용 실험](examples/monitoring.yaml)을 참고하십시오.
+
 ## 모듈 경로
 
 정식 Go 모듈 경로는 `github.com/k-p2p-lab/v3`입니다. 소스 import와 관련 명령에서는 이 경로를 사용해야 합니다.

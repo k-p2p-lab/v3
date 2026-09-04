@@ -1,0 +1,44 @@
+version: 2
+name: prometheus-grafana-smoke
+seed: 9090
+profiles:
+  monitoring-boot:
+    type: boot
+    gossipsub:
+      enabled: true
+      topics: [kpl/monitoring]
+  monitoring-worker:
+    type: full
+    gossipsub:
+      topics: [kpl/monitoring]
+    network:
+      delay: 50ms
+      jitter: 5ms
+      lossPercent: 1
+phases:
+  - {action: join, group: boot, role: boot, profile: monitoring-boot, count: 1}
+  - {action: wait-ready, group: boot, readyRatio: 1, timeout: 1m}
+  - {action: join, group: worker, role: worker, profile: monitoring-worker, count: 3}
+  - {action: wait-ready, group: worker, readyRatio: 1, timeout: 2m}
+  - {action: wait, duration: 10s}
+  # 60 publishes and up to 240 deliveries, plus mesh/duplicate events.
+  # Prometheus counters retain events after the web UI's 300-event ring rolls.
+  - name: envelope traffic with propagation timing
+    action: publish
+    group: worker
+    topic: kpl/monitoring
+    count: 3
+    repeat: 20
+    payloadSize: 1024
+    interval: {model: fixed, value: 200ms}
+  - {action: wait, duration: 15s}
+  - name: exact raw traffic without latency samples
+    action: publish
+    group: worker
+    topic: kpl/monitoring
+    count: 3
+    repeat: 2
+    payloadSize: 32
+    payloadEncoding: raw
+  - {action: wait, duration: 10s}
+  - {action: stop-all}

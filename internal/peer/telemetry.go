@@ -67,7 +67,7 @@ func (t *telemetry) run(ctx context.Context) {
 		case <-ticker.C:
 			dropped := t.dropped.Swap(0)
 			if dropped > 0 {
-				batch = append(batch, model.TraceEvent{Type: "telemetry_drop", Timestamp: time.Now().UTC(), Fields: map[string]any{"count": dropped}})
+				batch = append(batch, model.TraceEvent{RunID: t.node.RunID, NodeID: t.node.ID, Type: "telemetry_drop", Timestamp: time.Now().UTC(), Fields: map[string]any{"count": dropped}})
 			}
 			if len(batch) > 0 {
 				t.flush(ctx, batch)

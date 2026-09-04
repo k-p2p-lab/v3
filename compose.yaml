@@ -9,7 +9,7 @@ services:
       - "8080:8080"
     volumes:
       - controller-data:/var/lib/kpl/data
-    networks: [peers]
+    networks: [peers, monitoring]
     restart: unless-stopped
 
   agent-a:
@@ -45,7 +45,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on: [controller]
-    networks: [peers]
+    networks: [peers, monitoring]
     stop_grace_period: 3m
     restart: unless-stopped
 
@@ -82,14 +82,74 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on: [controller]
-    networks: [peers]
+    networks: [peers, monitoring]
     stop_grace_period: 3m
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.13.2
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=5GB
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks: [monitoring]
+    depends_on: [controller, agent-a, agent-b]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9090/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.2.1
+    environment:
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+      GF_AUTH_ANONYMOUS_ENABLED: "${GRAFANA_ANONYMOUS_ENABLED:-true}"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_DATABASE_WAL: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/kpl-experiments.json
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks: [monitoring]
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/api/health"]
+      start_period: 10m
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     restart: unless-stopped
 
 networks:
   peers:
     name: kpl-v3-peers
     driver: bridge
+  monitoring:
+    driver: bridge
 
 volumes:
   controller-data:
+  prometheus-data:
+  grafana-data:
