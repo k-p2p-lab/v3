@@ -26,6 +26,7 @@ Controller ─── scenario state machine / registry / event store / dashboard
 - **Agent**: 물리/가상 호스트마다 하나씩 실행합니다. 기본적으로 Peer마다 Docker 컨테이너를 생성해 시작·종료·발행을 담당하고 telemetry를 묶어서 Controller로 전달합니다. 로컬 개발용 process 런타임도 제공합니다.
 - **Peer**: 결정적인 `(run ID, seed)` namespace로 ID를 생성하고 선택한 Kademlia와 PubSub 설정으로 실행됩니다. Docker Peer는 별도 network namespace에서 선택적인 네트워크 조건을 적용합니다.
 - **Dashboard**: Agent 용량, Peer 준비 상태, 연결 토폴로지, peer score 요약, 실험 단계, 전파 지연과 최근 이벤트를 SSE로 갱신합니다.
+- **실험 분석**: 발행 직전 원격 수신 대상을 고정해 churn 도달률, 첫 수신 지연, 평균 중복 수를 집계합니다. Agent 번호로 토폴로지와 상태 표를 연결하고 종료된 Peer는 토폴로지에서 숨깁니다. 웹에서 1~100회 순차 실행, 결과 ZIP 다운로드와 삭제를 지원합니다. [지표 정의와 사용법](docs/experiment-metrics.kr.md)을 참고하십시오.
 
 ## 빠른 실행
 
@@ -336,8 +337,9 @@ phases:
 | `GET` | `/api/v1/stream` | `peerScores`를 포함한 실시간 snapshot SSE |
 | `GET` | `/api/v1/experiments` | 실험 상태와 `activeJobs`, `completedJobs`, `failedJobs`, `canceledJobs` counter |
 | `GET` | `/api/v1/results` | 이전 Controller 실행에서 저장한 실험을 포함하는 결과 목록 |
+| `DELETE` | `/api/v1/results/{id}` | 비활성 저장 결과 삭제. 진행 중 배치·다운로드 보호 |
 | `GET` | `/api/v1/experiments/{id}/download` | 저장된 시나리오·메타데이터·수집 이벤트를 ZIP으로 다운로드 |
-| `POST` | `/api/v1/experiments` | YAML 시나리오 실행 |
+| `POST` | `/api/v1/experiments` | YAML 1회 실행 또는 JSON `{scenario, repetitions}`로 1~100회 순차 실행 |
 | `POST` | `/api/v1/experiments/{id}/stop` | 실행을 취소한 뒤 제한 시간 내 job 종료와 generation-fenced Peer cleanup 수행 |
 
 `/api/v1/bootstrap`의 `runId` query parameter는 필수입니다. registry는 해당 run에서 준비 상태이고 유효한 identity와 address 정보가 있는 `boot` 노드만 반환하므로 동시에 실행되는 실험끼리 bootstrap peer를 발견하지 않습니다.

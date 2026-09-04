@@ -1,10 +1,9 @@
 package controller
 
 import (
-	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -32,6 +31,7 @@ type state struct {
 	watchers       map[chan struct{}]struct{}
 	dataDir        string
 	metrics        *controllerMetrics
+	runMetrics     map[string]*runMetricAccumulator
 }
 
 func newState(dataDir string) *state {
@@ -43,6 +43,7 @@ func newState(dataDir string) *state {
 		experiments:    make(map[string]model.Experiment),
 		watchers:       make(map[chan struct{}]struct{}),
 		dataDir:        dataDir,
+		runMetrics:     make(map[string]*runMetricAccumulator),
 	}
 	s.metrics = newControllerMetrics(s)
 	return s
@@ -241,22 +242,12 @@ func (s *state) appendEvents(batch model.EventBatch) error {
 			batch.Events[i].Timestamp = now
 		}
 	}
-	s.mu.Lock()
-	s.events = append(s.events, batch.Events...)
-	if len(s.events) > recentEventLimit {
-		s.events = append([]model.TraceEvent(nil), s.events[len(s.events)-recentEventLimit:]...)
-	}
-	s.mu.Unlock()
-
 	byRun := make(map[string][]model.TraceEvent)
 	for _, event := range batch.Events {
-		s.metrics.observeEvent(event)
-		if event.RunID != "" {
-			byRun[event.RunID] = append(byRun[event.RunID], event)
-		}
+		byRun[event.RunID] = append(byRun[event.RunID], event)
 	}
 	for runID, events := range byRun {
-		if err := s.persistEvents(runID, events); err != nil {
+		if err := s.appendRunEvents(runID, events); err != nil {
 			return err
 		}
 	}
@@ -264,9 +255,77 @@ func (s *state) appendEvents(batch model.EventBatch) error {
 	return nil
 }
 
+func (s *state) appendRunEvents(runID string, events []model.TraceEvent) error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+	if runID != "" {
+		if deleted, err := s.resultDeletedLocked(runID); err != nil || deleted {
+			return err
+		}
+	}
+	s.mu.RLock()
+	accumulator := s.runMetrics[runID]
+	if accumulator == nil {
+		accumulator = newRunMetricAccumulator()
+	}
+	pending := make(map[string]struct{})
+	accepted := make([]model.TraceEvent, 0, len(events))
+	for _, event := range events {
+		if accumulator.hasEvent(event) {
+			continue
+		}
+		if id := eventIdentity(event); id != "" {
+			if _, exists := pending[id]; exists {
+				continue
+			}
+			pending[id] = struct{}{}
+		}
+		accepted = append(accepted, event)
+	}
+	s.mu.RUnlock()
+	if len(accepted) == 0 {
+		return nil
+	}
+	// Persist before counting. A retry after another run in the same batch
+	// fails will skip these already committed event IDs.
+	if runID != "" {
+		if err := s.persistEventsLocked(runID, accepted); err != nil {
+			return err
+		}
+	}
+	s.mu.Lock()
+	s.runMetrics[runID] = accumulator
+	for _, event := range accepted {
+		accumulator.observe(event)
+	}
+	s.events = append(s.events, accepted...)
+	if len(s.events) > recentEventLimit {
+		s.events = append([]model.TraceEvent(nil), s.events[len(s.events)-recentEventLimit:]...)
+	}
+	s.mu.Unlock()
+	for _, event := range accepted {
+		s.metrics.observeEvent(event)
+	}
+	return nil
+}
+
 func (s *state) persistEvents(runID string, events []model.TraceEvent) error {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
+	if deleted, err := s.resultDeletedLocked(runID); err != nil || deleted {
+		return err
+	}
+	return s.persistEventsLocked(runID, events)
+}
+
+func (s *state) persistEventsLocked(runID string, events []model.TraceEvent) error {
+	var data bytes.Buffer
+	encoder := json.NewEncoder(&data)
+	for _, event := range events {
+		if err := encoder.Encode(event); err != nil {
+			return fmt.Errorf("encode event: %w", err)
+		}
+	}
 	runID = safeName(runID)
 	dir := filepath.Join(s.dataDir, "runs", runID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -276,18 +335,20 @@ func (s *state) persistEvents(runID string, events []model.TraceEvent) error {
 	if err != nil {
 		return fmt.Errorf("open event log: %w", err)
 	}
-	defer f.Close()
-	w := bufio.NewWriterSize(f, 64*1024)
-	for _, event := range events {
-		data, err := json.Marshal(event)
-		if err != nil {
-			return fmt.Errorf("encode event: %w", err)
-		}
-		if _, err := w.Write(append(data, '\n')); err != nil {
-			return fmt.Errorf("write event: %w", err)
-		}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return err
 	}
-	return w.Flush()
+	if _, err := f.Write(data.Bytes()); err != nil {
+		rollbackErr := f.Truncate(info.Size())
+		f.Close()
+		if rollbackErr != nil {
+			return fmt.Errorf("write event: %w; rollback: %v", err, rollbackErr)
+		}
+		return fmt.Errorf("write event: %w", err)
+	}
+	return f.Close()
 }
 
 func (s *state) snapshot() model.Snapshot {
@@ -310,7 +371,29 @@ func (s *state) snapshot() model.Snapshot {
 		return result.Experiments[i].StartedAt.After(result.Experiments[j].StartedAt)
 	})
 	result.Edges = networkEdges(result.Nodes)
-	result.Metrics = calculateMetrics(result.Nodes, result.Experiments, result.Events)
+	// Queued iterations have no observations yet and must not replace the
+	// currently running experiment's metrics simply because they were created
+	// a few microseconds later.
+	runID := ""
+	for _, experiment := range result.Experiments {
+		if experiment.State == "running" {
+			runID = experiment.ID
+			break
+		}
+	}
+	if runID == "" {
+		for _, experiment := range result.Experiments {
+			if !experiment.StartedAt.IsZero() && experiment.State != "queued" {
+				runID = experiment.ID
+				break
+			}
+		}
+	}
+	if accumulator := s.runMetrics[runID]; accumulator != nil {
+		result.Metrics, _ = accumulator.summarize(runID)
+	} else {
+		result.Metrics.RunID = runID
+	}
 	return result
 }
 
@@ -345,81 +428,6 @@ func networkEdges(nodes []model.Node) []model.Edge {
 		}
 	}
 	return edges
-}
-
-func calculateMetrics(nodes []model.Node, experiments []model.Experiment, events []model.TraceEvent) model.Metrics {
-	var result model.Metrics
-	events = append([]model.TraceEvent(nil), events...)
-	sort.SliceStable(events, func(i, j int) bool { return events[i].Timestamp.Before(events[j].Timestamp) })
-	activeRun := ""
-	if len(experiments) > 0 {
-		activeRun = experiments[0].ID
-	}
-	participantNodes := 0
-	for _, node := range nodes {
-		if node.RunID == activeRun && node.State != model.NodeFailed {
-			participantNodes++
-		}
-	}
-	latencies := make([]float64, 0)
-	reached := make(map[string]map[string]struct{})
-	targets := make(map[string]int)
-	published := make(map[string]struct{})
-	for _, event := range events {
-		if activeRun != "" && event.RunID != activeRun {
-			continue
-		}
-		switch event.Type {
-		case "publish":
-			result.Published++
-			if event.MessageID != "" {
-				if reached[event.MessageID] == nil {
-					reached[event.MessageID] = make(map[string]struct{})
-				}
-				reached[event.MessageID][event.NodeID] = struct{}{}
-				published[event.MessageID] = struct{}{}
-				if count := numberField(event.Fields, "targetNodes"); count > 0 {
-					targets[event.MessageID] = count
-				}
-			}
-		case "deliver":
-			result.Delivered++
-			if event.LatencyMS >= 0 {
-				latencies = append(latencies, event.LatencyMS)
-			}
-			if event.MessageID != "" {
-				if reached[event.MessageID] == nil {
-					reached[event.MessageID] = make(map[string]struct{})
-				}
-				reached[event.MessageID][event.NodeID] = struct{}{}
-			}
-		case "duplicate":
-			result.Duplicates++
-		}
-	}
-	if len(latencies) > 0 {
-		sort.Float64s(latencies)
-		for _, value := range latencies {
-			result.AverageLatencyMS += value
-		}
-		result.AverageLatencyMS /= float64(len(latencies))
-		index := int(math.Ceil(float64(len(latencies))*0.95)) - 1
-		if index < 0 {
-			index = 0
-		}
-		result.P95LatencyMS = latencies[index]
-	}
-	if participantNodes > 0 && len(published) > 0 {
-		for messageID := range published {
-			denominator := targets[messageID]
-			if denominator == 0 {
-				denominator = participantNodes
-			}
-			result.Reachability += math.Min(1, float64(len(reached[messageID]))/float64(denominator))
-		}
-		result.Reachability /= float64(len(published))
-	}
-	return result
 }
 
 func numberField(fields map[string]any, key string) int {

@@ -49,6 +49,7 @@ type Node struct {
 }
 
 type TraceEvent struct {
+	EventID      string         `json:"eventId,omitempty"`
 	RunID        string         `json:"runId"`
 	AgentID      string         `json:"agentId,omitempty"`
 	NodeID       string         `json:"nodeId"`
@@ -94,10 +95,18 @@ type PublishRequest struct {
 	PayloadEncoding    string         `json:"payloadEncoding,omitempty"`
 	TargetNodes        int            `json:"targetNodes,omitempty"`
 	TargetNodesByTopic map[string]int `json:"targetNodesByTopic,omitempty"`
+	// The Controller freezes remote subscribers immediately before dispatch.
+	// Nil means unknown (legacy publication); an empty array means no targets.
+	TargetNodeIDs        []string            `json:"targetNodeIds"`
+	TargetNodeIDsByTopic map[string][]string `json:"targetNodeIdsByTopic,omitempty"`
+	CohortCapturedAt     time.Time           `json:"cohortCapturedAt,omitempty"`
 }
 
 type Experiment struct {
 	ID            string    `json:"id"`
+	BatchID       string    `json:"batchId,omitempty"`
+	Iteration     int       `json:"iteration,omitempty"`
+	Repetitions   int       `json:"repetitions,omitempty"`
 	Name          string    `json:"name"`
 	State         string    `json:"state"`
 	Seed          int64     `json:"seed"`
@@ -120,12 +129,23 @@ type Edge struct {
 }
 
 type Metrics struct {
-	Published        int     `json:"published"`
-	Delivered        int     `json:"delivered"`
-	Duplicates       int     `json:"duplicates"`
-	AverageLatencyMS float64 `json:"averageLatencyMs"`
-	P95LatencyMS     float64 `json:"p95LatencyMs"`
-	Reachability     float64 `json:"reachability"`
+	Definition             string  `json:"definition"`
+	RunID                  string  `json:"runId,omitempty"`
+	Published              int     `json:"published"`
+	Delivered              int     `json:"delivered"`
+	Duplicates             int     `json:"duplicates"`
+	AverageLatencyMS       float64 `json:"averageLatencyMs"`
+	P95LatencyMS           float64 `json:"p95LatencyMs"`
+	Reachability           float64 `json:"reachability"`
+	EligibleDeliveries     int     `json:"eligibleDeliveries"`
+	ExpectedDeliveries     int     `json:"expectedDeliveries"`
+	DeliveryRatioAvailable bool    `json:"deliveryRatioAvailable"`
+	LatencySamples         int     `json:"latencySamples"`
+	InvalidLatencySamples  int     `json:"invalidLatencySamples"`
+	AverageDuplicates      float64 `json:"averageDuplicates"`
+	EligibleDuplicates     int     `json:"eligibleDuplicates"`
+	DuplicateSamples       int     `json:"duplicateSamples"`
+	UnscopedPublications   int     `json:"unscopedPublications"`
 }
 
 type Snapshot struct {

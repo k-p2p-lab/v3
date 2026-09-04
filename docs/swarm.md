@@ -71,7 +71,7 @@ For analysis, open the Grafana URL, sign in, and select this experiment in **Run
 
 Wait for the run to finish and check that its Peers are stopped. With no other experiments running, Agent occupancy should return to zero. To cancel an active run, use its **Stop** button and wait for cleanup.
 
-Choose **Download results** on the run or in **Saved results**. The ZIP contains `scenario.yaml`, `experiment.json`, `events.jsonl`, and `export.json`. It includes the full saved event log, independently of the 300-event recent buffer, but not the Prometheus/Grafana time-series database. **Download snapshot** on a running experiment contains only records saved at the download boundary. [Download contents and limits](monitoring.md#download-experiment-results)
+Choose **Download results** on the run or in **Saved results**. The ZIP contains `scenario.yaml`, `experiment.json`, `events.jsonl`, `metrics.json`, and `export.json`. It includes the full saved event log and metrics rebuilt from that prefix, independently of the 300-event recent buffer, but not the Prometheus/Grafana time-series database. **Download snapshot** on a running experiment contains only records saved at the download boundary. **Delete** removes an inactive saved result after confirmation. [Download contents and limits](monitoring.md#download-experiment-results)
 
 Download before removing the services, since removal also takes the web pages offline:
 

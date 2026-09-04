@@ -24,6 +24,7 @@ Prometheus and Grafana ports are published only on `127.0.0.1`. Set `PROMETHEUS_
 ## Run and analyze an experiment
 
 1. Use **Run experiment** in the Control Room to run [`examples/monitoring.yaml`](../examples/monitoring.yaml). This small experiment includes both envelope and raw publications.
+   Set **Runs** beside **Run** to 1–100 for sequential iterations. Each gets a separate result; failure or **Stop batch** cancels the remainder. See [repetition and metric definitions](experiment-metrics.md).
 2. Select **Run** (`run_id`), **Agent**, and **Topic** in Grafana. Selecting multiple runs aggregates their traffic and latency samples; network configuration time series identify each run in their legends.
 3. After an experiment finishes, set the time range to its execution window to view the recorded series. The default refresh interval is 5 seconds.
 
@@ -40,11 +41,14 @@ Each ZIP contains:
 | `scenario.yaml` | Exact scenario submitted for the run |
 | `experiment.json` | Original saved experiment metadata, state, seed, and job counters |
 | `events.jsonl` | All event records saved at the export boundary; one JSON object per line, or an empty file when no events have been recorded |
+| `metrics.json` | Whole-run cohort delivery ratio, first remote latency, and average duplicates rebuilt from the same event-log prefix |
 | `export.json` | Export time, run state, active/partial flags, and the captured source file sizes |
 
 The export captures file sizes under the Controller's persistence lock and streams the ZIP after releasing that lock. Events appended later are excluded, so a slow download does not hold up telemetry writes. A completed run can still receive delayed telemetry: download again after collection has settled if you need those later records. `partial: false` indicates a terminal recorded run state, not a guarantee that no telemetry was lost. The archive does not contain message payloads, PCAP files, or the Prometheus/Grafana databases.
 
-After a restart, a saved run that still says `running` is displayed as `interrupted`; its original metadata is preserved in the ZIP. This is a display status, not evidence that its Peers have stopped. Saved results do not restore live experiment state, resume execution, or replay counters. An unreadable metadata file is displayed as `unreadable`; inspect the Controller logs and stored files before retrying.
+After a restart, a saved run that still says `running` or `queued` is displayed as `interrupted`; its original metadata is preserved in the ZIP. This is a display status, not evidence that its Peers have stopped. Saved results do not restore live experiment state, resume execution, or replay live counters. ZIP metrics are rebuilt from the retained log. An unreadable metadata file is displayed as `unreadable`; inspect the Controller logs and stored files before retrying.
+
+**Saved results → Delete** permanently deletes the selected run's scenario, metadata, and events after confirmation. Running/queued experiments, members of an active batch, and results being downloaded are protected. The deletion API is `DELETE /api/v1/results/{id}` with the configured bearer token. Previously scraped Prometheus/Grafana history remains. Deletion markers prevent late telemetry from recreating a deleted result. Reconstructing ZIP metrics uses memory proportional to distinct event IDs and message/receiver pairs; the raw file copy itself is streamed.
 
 The existing public GET policy also applies to the saved-result list and downloads. API clients can use:
 
@@ -64,7 +68,9 @@ Exports contain collected telemetry. Peer transmission failures, full in-memory 
 |---|---|
 | `kpl_events_total` | Cumulative events received by the Controller, labeled by `run_id`, `agent_id`, `event_type`, and `topic` |
 | `kpl_message_bytes_total` | Published/delivered PubSub data bytes, excluding libp2p framing and TCP/IP headers |
-| `kpl_propagation_latency_seconds` | Histogram of valid envelope delivery latency; excludes raw messages, negative values, and unmeasured values |
+| `kpl_propagation_latency_seconds` | Whole-run first remote cohort delivery histogram; excludes local/late-join/raw/unknown-cohort/negative/unmeasured samples |
+| `kpl_delivery_expected_pairs`, `kpl_delivery_reached_pairs`, `kpl_delivery_ratio` | Frozen dispatch-time remote target pairs, successful pairs, and their ratio, grouped by run |
+| `kpl_delivery_duplicate_copies`, `kpl_delivery_duplicates_per_reached_pair` | Extra PubSub copies at successful remote cohort pairs, and copies per successful pair |
 | `kpl_operation_failures_total` | Publish/leave failures recorded under `onError: continue` |
 | `kpl_telemetry_dropped_events_total` | Events that Peers report dropping because their telemetry queues were full |
 | `kpl_nodes` | Peer counts by experiment, Agent, group, role, type, and state |
@@ -76,13 +82,15 @@ Exports contain collected telemetry. Peer transmission failures, full in-memory 
 
 `kpl_network_configured_loss_ratio` is the configured packet loss ratio, not an observed loss rate. Configured delay is also distinct from measured RTT. The `graft`/`prune`/`remove_peer` events help analyze PubSub mesh changes; they are neither a TCP connection graph nor a complete mesh snapshot.
 
-Deliveries (`deliver`) include the publishing Peer's own local delivery. The delivery-to-publication ratio therefore cannot be interpreted as packet loss, and the latency histogram includes local delivery samples. TCP retransmissions can also turn packet loss into increased latency rather than message loss.
+Overall `deliver` event counts include the publisher's local delivery. The cohort delivery ratio, first-delivery latency, and duplicate average exclude it and late joiners; a cohort member leaving remains in the delivery denominator. TCP retransmissions can turn packet loss into delay rather than message loss. See the [precise definitions, equations, and sources](experiment-metrics.md). The latency histogram can be corrected by late batches: Grafana queries cumulative buckets directly for whole-run quantiles, rather than applying `rate`/`increase` to it.
 
 Cumulative counters are independent of the web interface's 300-event recent buffer. They reset when the Controller process restarts, and historical `events.jsonl` files are not replayed automatically. Time series already stored in Prometheus remain available, and `rate`/`increase` handle observed counter resets. They cannot recover events that disappeared before a scrape or telemetry that failed to arrive. Because `increase` estimates interval growth from scrape samples, it does not always exactly match integer cumulative event counts.
 
 Raw deliveries contribute to delivery counts and bytes but not to the latency histogram. Do not interpret intervals without latency samples as 0 ms. Clock synchronization affects propagation latency measurements when Peers run on different hosts.
 
 ## Execution validation
+
+The historical runs below predate frozen recipient cohorts and included local latency samples. They validate the previous event-count implementation, not the new cohort latency distribution. The updated Controller and Peer tests cover churn departures/late joins, first delivery, retry deduplication, raw IDs, and archive reconstruction.
 
 On 2026-09-04, `examples/monitoring.yaml` was executed and the following results were compared with the original `events.jsonl`. The run ID was `run-20260904T024349Z-345a`. All test Peer containers were removed after the experiment finished.
 

@@ -1,20 +1,24 @@
 package peer
 
 import (
+	"context"
 	crand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/k-p2p-lab/v3/internal/model"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 )
 
 type publication struct {
 	wire     []byte
 	id       string
+	pubsubID string
 	encoding string
 	sentAt   time.Time
 }
@@ -56,7 +60,7 @@ func (s *Server) preparePublication(request model.PublishRequest, now time.Time)
 	if encoding == "raw" {
 		// No application header or base64 expansion: exactly payloadSize bytes
 		// are passed to Topic.Publish. Libp2p still adds its own framing/signature.
-		return publication{wire: payload, id: rawMessageID(payload), encoding: encoding, sentAt: now}, nil
+		return publication{wire: payload, encoding: encoding, sentAt: now}, nil
 	}
 	sequence := s.publishSeq.Add(1)
 	digest := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%d", s.config.Node.ID, now.UnixNano(), sequence)))
@@ -68,13 +72,92 @@ func (s *Server) preparePublication(request model.PublishRequest, now time.Time)
 	return publication{wire: wire, id: message.ID, encoding: encoding, sentAt: now}, nil
 }
 
-func rawMessageID(data []byte) string {
-	digest := sha256.Sum256(data)
-	return "raw-" + hex.EncodeToString(digest[:])
+// publicationBridge observes the ID assigned by PubSub without replacing its
+// message ID function or changing the bytes sent on the network. PublishMessage
+// is called synchronously by Topic.Publish, before validation finishes.
+type publicationBridge struct {
+	mu    sync.Mutex
+	topic string
+	id    string
 }
 
-func (s *Server) deliveryEvent(data []byte, topic, receivedFrom string, now time.Time) (model.TraceEvent, bool) {
-	event := model.TraceEvent{PeerID: s.host.ID().String(), Type: "deliver", Topic: topic, RemotePeerID: receivedFrom, Timestamp: now}
+func (b *publicationBridge) begin(topic string) {
+	b.mu.Lock()
+	b.topic, b.id = topic, ""
+	b.mu.Unlock()
+}
+
+func (b *publicationBridge) record(topic string, id []byte) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.topic == topic && b.id == "" {
+		b.id = hex.EncodeToString(id)
+	}
+}
+
+func (b *publicationBridge) finish() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	id := b.id
+	b.topic, b.id = "", ""
+	return id
+}
+
+func (s *Server) publishMessage(ctx context.Context, topic string, message publication) (publication, error) {
+	// All local publications share this gate: an envelope published concurrently
+	// with raw data must not supply the pending raw publication's wire ID.
+	s.publishMu.Lock()
+	defer s.publishMu.Unlock()
+	return s.publishPreparedMessage(ctx, topic, message)
+}
+
+// publishPreparedMessage requires publishMu. The HTTP path prepares its payload
+// under the same gate, so envelope timestamps exclude time waiting for another
+// publication. Tests can also pass prepared wire bytes through publishMessage.
+func (s *Server) publishPreparedMessage(ctx context.Context, topic string, message publication) (publication, error) {
+	if err := ctx.Err(); err != nil {
+		return publication{}, err
+	}
+	s.publishing.begin(topic)
+	err := s.topics[topic].Publish(ctx, message.wire)
+	id := s.publishing.finish()
+	if err != nil {
+		return publication{}, err
+	}
+	if id == "" {
+		return publication{}, fmt.Errorf("PubSub publication did not provide a message ID")
+	}
+	message.pubsubID = id
+	if message.encoding == "raw" {
+		message.id = "pubsub-" + id
+	}
+	return message, nil
+}
+
+func (s *Server) messageIdentity(message *pubsub.Message) (string, bool) {
+	if message == nil || message.Message == nil {
+		return "", false
+	}
+	id := message.ID
+	if id == "" {
+		// PubSub normally caches this before delivery. The configured routers all
+		// use the default origin+sequence algorithm; do not mutate the message.
+		id = pubsub.DefaultMsgIdFn(message.Message)
+	}
+	local := message.ReceivedFrom == s.host.ID() || message.GetFrom() == s.host.ID()
+	return hex.EncodeToString([]byte(id)), local
+}
+
+func (s *Server) deliveryEvent(message *pubsub.Message, topic string, now time.Time) (model.TraceEvent, bool) {
+	if message == nil || message.Message == nil {
+		return model.TraceEvent{}, false
+	}
+	data := message.Data
+	wireID, local := s.messageIdentity(message)
+	event := model.TraceEvent{PeerID: s.host.ID().String(), Type: "deliver", Topic: topic, RemotePeerID: message.ReceivedFrom.String(), Timestamp: now}
 	var payload envelope
 	if json.Unmarshal(data, &payload) == nil && payload.ID != "" && payload.RunID != "" && payload.Publisher != "" && payload.SentAt > 0 {
 		if payload.RunID != s.config.Node.RunID {
@@ -82,17 +165,54 @@ func (s *Server) deliveryEvent(data []byte, topic, receivedFrom string, now time
 		}
 		event.MessageID = payload.ID
 		event.LatencyMS = float64(now.UnixNano()-payload.SentAt) / float64(time.Millisecond)
-		event.Fields = map[string]any{"publisher": payload.Publisher, "payloadBytes": len(payload.Payload), "wireBytes": len(data), "payloadEncoding": "envelope", "latencyAvailable": true}
+		event.Fields = map[string]any{"publisher": payload.Publisher, "payloadBytes": len(payload.Payload), "wireBytes": len(data), "payloadEncoding": "envelope", "latencyAvailable": true, "localDelivery": local || payload.Publisher == s.config.Node.ID, "pubsubMessageId": wireID}
 		if event.LatencyMS < 0 {
 			event.Fields["clockSkewDetected"] = true
 		}
 		return event, true
 	}
 	// Raw bytes intentionally contain no publisher, run ID, or sent timestamp.
-	// Hashing the data correlates received content with publish events without
-	// pretending that one-way latency or embedded run isolation is available.
-	event.MessageID = rawMessageID(data)
+	// The existing PubSub ID distinguishes even identical raw payloads. It does
+	// not provide application timestamps or embedded run isolation.
+	if wireID == "" {
+		return model.TraceEvent{}, false
+	}
+	event.MessageID = "pubsub-" + wireID
 	event.LatencyMS = -1
-	event.Fields = map[string]any{"payloadBytes": len(data), "wireBytes": len(data), "payloadEncoding": "raw", "latencyAvailable": false}
+	event.Fields = map[string]any{"payloadBytes": len(data), "wireBytes": len(data), "payloadEncoding": "raw", "latencyAvailable": false, "localDelivery": local, "pubsubMessageId": wireID}
+	return event, true
+}
+
+func (s *Server) duplicateEvent(message *pubsub.Message, now time.Time) (model.TraceEvent, bool) {
+	if message == nil || message.Message == nil {
+		return model.TraceEvent{}, false
+	}
+	wireID, local := s.messageIdentity(message)
+	event := model.TraceEvent{PeerID: s.host.ID().String(), Type: "duplicate", Topic: message.GetTopic(), RemotePeerID: message.ReceivedFrom.String(), Timestamp: now}
+	event.Fields = map[string]any{"wireBytes": len(message.Data), "localDelivery": local, "pubsubMessageId": wireID}
+	// Raw tracers run synchronously in PubSub. Read only correlation metadata;
+	// decoding the base64 Payload here would allocate the full payload for every
+	// duplicate, adding avoidable work to the propagation being measured.
+	var header struct {
+		ID        string `json:"id"`
+		RunID     string `json:"runId"`
+		Publisher string `json:"publisher"`
+		SentAt    int64  `json:"sentAt"`
+	}
+	if json.Unmarshal(message.Data, &header) == nil && header.ID != "" && header.RunID != "" && header.Publisher != "" && header.SentAt > 0 {
+		if header.RunID != s.config.Node.RunID {
+			return model.TraceEvent{}, false
+		}
+		event.MessageID = header.ID
+		event.Fields["publisher"] = header.Publisher
+		event.Fields["payloadEncoding"] = "envelope"
+		event.Fields["localDelivery"] = local || header.Publisher == s.config.Node.ID
+		return event, true
+	}
+	if wireID == "" {
+		return model.TraceEvent{}, false
+	}
+	event.MessageID = "pubsub-" + wireID
+	event.Fields["payloadEncoding"] = "raw"
 	return event, true
 }

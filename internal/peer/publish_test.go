@@ -3,16 +3,20 @@ package peer
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/k-p2p-lab/v3/internal/model"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	pubsubpb "github.com/libp2p/go-libp2p-pubsub/pb"
+	corepeer "github.com/libp2p/go-libp2p/core/peer"
 )
 
 func publicationTestServer(t *testing.T) (*Server, context.Context) {
@@ -30,7 +34,7 @@ func publicationTestServer(t *testing.T) (*Server, context.Context) {
 }
 
 func TestRawPublicationHasExactDataLengthAndUnavailableLatency(t *testing.T) {
-	server, _ := publicationTestServer(t)
+	server, ctx := publicationTestServer(t)
 	for _, size := range []int{1, 32, 1024, 4096} {
 		message, err := server.preparePublication(model.PublishRequest{PayloadSize: size, PayloadEncoding: "raw"}, time.Now().UTC())
 		if err != nil {
@@ -39,8 +43,17 @@ func TestRawPublicationHasExactDataLengthAndUnavailableLatency(t *testing.T) {
 		if len(message.wire) != size || message.encoding != "raw" {
 			t.Fatalf("requested=%d data=%d encoding=%s", size, len(message.wire), message.encoding)
 		}
-		event, ok := server.deliveryEvent(message.wire, "topic-a", "previous-hop", time.Now().UTC())
-		if !ok || event.MessageID != message.id || event.LatencyMS != -1 || event.Fields["latencyAvailable"] != false || event.RemotePeerID != "previous-hop" {
+		message, err = server.publishMessage(ctx, "topic-a", message)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wireID, err := hex.DecodeString(message.pubsubID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		remote := corepeer.ID("previous-hop")
+		event, ok := server.deliveryEvent(publicationTestMessage(message.wire, string(wireID), remote), "topic-a", time.Now().UTC())
+		if !ok || event.MessageID != message.id || event.LatencyMS != -1 || event.Fields["latencyAvailable"] != false || event.RemotePeerID != remote.String() || event.Fields["localDelivery"] != false || event.Fields["pubsubMessageId"] != message.pubsubID {
 			t.Fatalf("raw delivery metadata=%+v", event)
 		}
 		if _, exists := event.Fields["publisher"]; exists {
@@ -62,7 +75,7 @@ func TestDefaultEnvelopeRetainsCorrelationAndLatency(t *testing.T) {
 	if message.encoding != "envelope" || len(message.wire) <= 32 {
 		t.Fatalf("default encoding changed: %+v", message)
 	}
-	event, ok := server.deliveryEvent(message.wire, "topic-a", "previous-hop", now.Add(40*time.Millisecond))
+	event, ok := server.deliveryEvent(publicationTestMessage(message.wire, "envelope-wire-id", corepeer.ID("previous-hop")), "topic-a", now.Add(40*time.Millisecond))
 	if !ok || event.MessageID != message.id || event.LatencyMS != 40 || event.Fields["publisher"] != "node" || event.Fields["payloadBytes"] != 32 {
 		t.Fatalf("envelope metadata=%+v", event)
 	}
@@ -75,7 +88,7 @@ func TestDefaultEnvelopeRetainsCorrelationAndLatency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := server.deliveryEvent(foreign, "topic-a", "previous-hop", now); ok {
+	if _, ok := server.deliveryEvent(publicationTestMessage(foreign, "foreign-wire-id", corepeer.ID("previous-hop")), "topic-a", now); ok {
 		t.Fatal("foreign envelope passed run isolation")
 	}
 }
@@ -118,7 +131,7 @@ func TestAllTopicsRawPublishUsesExactBytesAndDistinctMessages(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(message.Data) != 1024 || expected.WireBytes != 1024 || rawMessageID(message.Data) != expected.MessageID {
+		if len(message.Data) != 1024 || expected.WireBytes != 1024 || "pubsub-"+hex.EncodeToString([]byte(message.ID)) != expected.MessageID {
 			t.Fatalf("incorrect raw PubSub data for %s: bytes=%d result=%+v", expected.Topic, len(message.Data), expected)
 		}
 		if previous != nil && bytes.Equal(previous, message.Data) {
@@ -135,6 +148,214 @@ func TestAllTopicsRawPublishUsesExactBytesAndDistinctMessages(t *testing.T) {
 	}
 	if !reflect.DeepEqual(counts, map[string]int{"topic-a": 4, "topic-b": 7}) {
 		t.Fatalf("wildcard publication lost per-topic reachability targets: %v", counts)
+	}
+}
+
+func publicationTestMessage(data []byte, id string, receivedFrom corepeer.ID) *pubsub.Message {
+	topic := "topic-a"
+	return &pubsub.Message{Message: &pubsubpb.Message{Data: data, Topic: &topic}, ID: id, ReceivedFrom: receivedFrom}
+}
+
+func TestConcurrentRawAndEnvelopePublicationKeepsNativeMessageIDs(t *testing.T) {
+	server, parent := publicationTestServer(t)
+	sub, err := server.topics["topic-a"].Subscribe(pubsub.WithBufferSize(128))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(sub.Cancel)
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	const count = 32
+	results := make(chan publication, count)
+	errors := make(chan error, count)
+	var wg sync.WaitGroup
+	for i := 0; i < count; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			message := publication{wire: []byte{0x42}, encoding: "raw", sentAt: time.Now().UTC()}
+			if i%2 != 0 {
+				var err error
+				message, err = server.preparePublication(model.PublishRequest{PayloadSize: 1}, message.sentAt)
+				if err != nil {
+					errors <- err
+					return
+				}
+			}
+			message, err := server.publishMessage(ctx, "topic-a", message)
+			if err != nil {
+				errors <- err
+				return
+			}
+			results <- message
+		}(i)
+	}
+	wg.Wait()
+	close(errors)
+	for err := range errors {
+		t.Fatal(err)
+	}
+	byWireID := make(map[string]publication, count)
+	for i := 0; i < count; i++ {
+		message := <-results
+		if _, exists := byWireID[message.pubsubID]; exists {
+			t.Fatal("distinct publications reused a native PubSub ID")
+		}
+		byWireID[message.pubsubID] = message
+	}
+	for i := 0; i < count; i++ {
+		message, err := sub.Next(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if message.ID != pubsub.DefaultMsgIdFn(message.Message) {
+			t.Fatal("publication replaced PubSub's default message ID function")
+		}
+		wireID := hex.EncodeToString([]byte(message.ID))
+		expected, exists := byWireID[wireID]
+		if !exists || !bytes.Equal(expected.wire, message.Data) {
+			t.Fatalf("concurrent publication got another message's ID: %q", wireID)
+		}
+		event, ok := server.deliveryEvent(message, "topic-a", time.Now().UTC())
+		if !ok || event.MessageID != expected.id || event.Fields["localDelivery"] != true || event.Fields["pubsubMessageId"] != expected.pubsubID {
+			t.Fatalf("local delivery correlation=%+v expected=%+v", event, expected)
+		}
+		if expected.encoding == "raw" && (len(message.Data) != 1 || expected.id != "pubsub-"+wireID) {
+			t.Fatalf("raw wire contract changed: %+v", expected)
+		}
+		delete(byWireID, wireID)
+	}
+}
+
+func TestPublishBridgeClearsFailedPublication(t *testing.T) {
+	server, ctx := publicationTestServer(t)
+	closed, err := server.pubsub.Join("closed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := closed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	server.topics["closed"] = closed
+	message := publication{wire: []byte{1}, encoding: "raw", sentAt: time.Now().UTC()}
+	if _, err := server.publishMessage(ctx, "closed", message); err == nil {
+		t.Fatal("closed topic accepted a publication")
+	}
+	if server.publishing.topic != "" || server.publishing.id != "" {
+		t.Fatal("failed publication left a pending correlation")
+	}
+	if message, err := server.publishMessage(ctx, "topic-a", message); err != nil || !strings.HasPrefix(message.id, "pubsub-") {
+		t.Fatalf("publication after failure=%+v error=%v", message, err)
+	}
+}
+
+func TestHTTPPublishTimestampExcludesWaitingForPublicationGate(t *testing.T) {
+	server, parent := publicationTestServer(t)
+	sub, err := server.topics["topic-a"].Subscribe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(sub.Cancel)
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	request := httptest.NewRequest(http.MethodPost, "/publish", strings.NewReader(`{"topic":"topic-a","payloadSize":32}`)).WithContext(ctx)
+	response := httptest.NewRecorder()
+	started, done := make(chan struct{}), make(chan struct{})
+	server.publishMu.Lock()
+	go func() {
+		close(started)
+		server.handler().ServeHTTP(response, request)
+		close(done)
+	}()
+	<-started
+	// Hold the gate while the request reaches it. The assertion is against the
+	// actual release timestamp, not a tolerance on total test execution time.
+	select {
+	case <-done:
+		server.publishMu.Unlock()
+		t.Fatal("HTTP publication bypassed the publication gate")
+	case <-time.After(25 * time.Millisecond):
+	}
+	releasedAt := time.Now().UTC()
+	server.publishMu.Unlock()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal("HTTP publication did not finish after the gate was released")
+	}
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("publish status=%d body=%s", response.Code, response.Body.String())
+	}
+	message, err := sub.Next(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload envelope
+	if err := json.Unmarshal(message.Data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.SentAt < releasedAt.UnixNano() {
+		t.Fatalf("wire timestamp included gate waiting: sent=%s released=%s", time.Unix(0, payload.SentAt), releasedAt)
+	}
+	for len(server.telemetry.events) > 0 {
+		event := <-server.telemetry.events
+		if event.Type == "publish" {
+			if event.Timestamp.UnixNano() != payload.SentAt {
+				t.Fatalf("publish event and wire timestamps differ: %+v %+v", event, payload)
+			}
+			return
+		}
+	}
+	t.Fatal("missing publish event")
+}
+
+func TestPublishCohortPreservesUnknownAndExplicitEmpty(t *testing.T) {
+	server, _ := publicationTestServer(t)
+	for _, test := range []struct {
+		name, body string
+		known      bool
+		cohort     []string
+	}{
+		{"legacy", `{"topic":"topic-a"}`, false, nil},
+		{"null", `{"topic":"topic-a","targetNodeIds":null}`, false, nil},
+		{"empty", `{"topic":"topic-a","targetNodeIds":[]}`, true, []string{}},
+		{"explicit", `{"topic":"topic-a","targetNodeIds":["receiver"],"cohortCapturedAt":"2026-09-05T01:02:03.000000004Z"}`, true, []string{"receiver"}},
+		{"topic-empty-override", `{"topic":"topic-a","targetNodeIds":["receiver"],"targetNodeIdsByTopic":{"topic-a":[]}}`, true, []string{}},
+		{"topic-null-override", `{"topic":"topic-a","targetNodeIds":["receiver"],"targetNodeIdsByTopic":{"topic-a":null}}`, true, []string{}},
+		{"topic-populated-override", `{"topic":"topic-a","targetNodeIds":["default"],"targetNodeIdsByTopic":{"topic-a":["topic-receiver"]}}`, true, []string{"topic-receiver"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			server.handler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/publish", strings.NewReader(test.body)))
+			if response.Code != http.StatusAccepted {
+				t.Fatalf("publish status=%d body=%s", response.Code, response.Body.String())
+			}
+			var event model.TraceEvent
+			for {
+				select {
+				case next := <-server.telemetry.events:
+					if next.Type == "publish" {
+						event = next
+					}
+				default:
+					if event.Type == "" {
+						t.Fatal("missing publish event")
+					}
+					goto collected
+				}
+			}
+		collected:
+			cohort, exists := event.Fields["targetNodeIds"]
+			if exists != test.known || exists && !reflect.DeepEqual(cohort, test.cohort) {
+				t.Fatalf("cohort=%#v exists=%v; want %#v known=%v", cohort, exists, test.cohort, test.known)
+			}
+			if event.EventID == "" || event.Fields["publisher"] != "node" || event.Fields["pubsubMessageId"] == "" {
+				t.Fatalf("missing publication identity: %+v", event)
+			}
+			if test.name == "explicit" && event.Fields["cohortCapturedAt"] != "2026-09-05T01:02:03.000000004Z" {
+				t.Fatalf("cohort capture timestamp changed: %+v", event.Fields)
+			}
+		})
 	}
 }
 

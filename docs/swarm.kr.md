@@ -71,7 +71,7 @@ Control Room에서 **Run experiment**를 누르고 **YAML scenario** 전체를 �
 
 실험이 끝나고 해당 Peer들이 종료되었는지 확인하십시오. 다른 실험이 없다면 Agent 점유량은 0으로 돌아와야 합니다. 실행 중인 실험을 취소하려면 해당 실험의 **Stop**을 누르고 정리가 완료될 때까지 기다립니다.
 
-실험 항목이나 **Saved results**에서 **Download results**를 선택합니다. ZIP에는 `scenario.yaml`, `experiment.json`, `events.jsonl`, `export.json`이 들어갑니다. 최근 300개 이벤트 버퍼와 별개로 저장된 전체 이벤트 로그를 포함하지만 Prometheus/Grafana 시계열 데이터베이스는 포함하지 않습니다. 실행 중인 실험의 **Download snapshot**에는 다운로드 경계까지 저장된 기록만 들어갑니다. [다운로드 구성과 한계](monitoring.kr.md#실험-결과-다운로드)
+실험 항목이나 **Saved results**에서 **Download results**를 선택합니다. ZIP에는 `scenario.yaml`, `experiment.json`, `events.jsonl`, `metrics.json`, `export.json`이 들어갑니다. 최근 300개 버퍼와 별개로 전체 저장 로그와 같은 경계에서 재계산한 지표를 포함하며 Prometheus/Grafana DB는 포함하지 않습니다. 실행 중 **Download snapshot**은 다운로드 경계까지의 기록입니다. **Delete**는 확인 후 비활성 결과를 삭제합니다. [다운로드 구성과 한계](monitoring.kr.md#실험-결과-다운로드)
 
 철거하면 웹 화면도 내려가므로 먼저 다운로드한 뒤 실행하십시오.
 

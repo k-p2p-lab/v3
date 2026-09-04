@@ -19,6 +19,8 @@ sudo sh scripts/swarm.sh scenario examples/swarm-churn-publish.yaml
 
 Open the Controller URL from `access`. Choose **Run experiment**, replace the entire **YAML scenario** field with the scenario output, enter the deployed API token from `credentials`, and click **Run**. `scenario` only prints YAML; the web action starts the experiment. The default web form and the helper's default `scenario` output are different examples.
 
+Set **Runs** beside **Run** to repeat the entire scenario 1–100 times. Iterations run sequentially and get separate results; **Stop batch** or a failed iteration cancels the remainder. The explicit seed is reused. See [repetition and metric definitions](experiment-metrics.md).
+
 Workers use Linux `NET_ADMIN` and the host kernel's netem support. Synchronize clocks between hosts before comparing one-way propagation latency. The example's network settings apply to outbound P2P TCP traffic; control and telemetry HTTP traffic are outside that configured scope.
 
 ## What Happens
@@ -59,11 +61,12 @@ In the Control Room, watch ready Peers, Agent occupancy, experiment/job state, a
 |---|---|
 | Changing population and occupied capacity | Live node inventory, `kpl_nodes`, `kpl_agent_active_nodes` |
 | Publication, delivery, and duplicate event counts | `kpl_events_total`; use `graft`/`prune` events to observe mesh changes |
+| Delivery ratio and average extra copies per successful remote delivery | `kpl_delivery_ratio`, `kpl_delivery_duplicates_per_reached_pair`; Grafana applies only the Run filter to these panels |
 | Envelope latency and PubSub data volume | `kpl_propagation_latency_seconds`, `kpl_message_bytes_total` |
 | Configured network conditions | `kpl_network_configured_*`: settings, not observed loss or RTT |
 | Failed requests and reported telemetry drops | `kpl_operation_failures_total`, `kpl_telemetry_dropped_events_total` |
 
-PubSub `join`/`leave` events describe topic membership, **not Peer creation and departure**. Node lifecycle is observed through inventory updates and sampled gauges; `events.jsonl` does not guarantee every lifecycle transition. A publication's `targetNodes` is a count before the request, without recipient identities or survival history, so the export cannot reconstruct an exact delivery ratio for the changing population. See the [metric definitions and collection limits](monitoring.md#metric-definitions).
+PubSub `join`/`leave` events describe topic membership, **not Peer creation and departure**. Node lifecycle is observed through inventory updates and sampled gauges; `events.jsonl` does not guarantee every lifecycle transition. New publications retain dispatch-time `targetNodeIds` and `cohortCapturedAt`: subsequent departures stay in the denominator and subsequent joins are excluded. ZIP `metrics.json` reconstructs delivery ratio, first remote latency, and average duplicates from the same saved log boundary. Legacy `targetNodes` counts alone cannot reconstruct recipient cohorts. See the [definitions and collection limits](experiment-metrics.md).
 
 After the run ends, confirm Peer cleanup and, when no other runs are active, zero Agent occupancy. A `completed` run can have `canceledJobs: 1`: `stop-all` intentionally cancels the unfinished join job. That counter alone is not a failure.
 

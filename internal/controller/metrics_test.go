@@ -199,7 +199,9 @@ func TestMetricsBytesLatencyFailuresAndDrops(t *testing.T) {
 	}
 	for i := range events {
 		events[i].RunID, events[i].Topic = "run", "topic"
+		events[i].NodeID, events[i].MessageID = fmt.Sprintf("receiver-%d", i), "message"
 	}
+	events = append(events, model.TraceEvent{RunID: "run", NodeID: "publisher", Type: "publish", Topic: "topic", MessageID: "message", Fields: map[string]any{"targetNodeIds": []string{"receiver-0", "receiver-1", "receiver-2", "receiver-3", "receiver-4", "receiver-5"}}})
 	if err := s.appendEvents(model.EventBatch{AgentID: "agent", Events: events}); err != nil {
 		t.Fatal(err)
 	}

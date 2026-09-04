@@ -26,6 +26,7 @@ Controller ─── scenario state machine / registry / event store / dashboard
 - **Agent** runs once per physical or virtual host. It starts and stops one Docker container per Peer by default, forwards publish requests, and batches telemetry for the Controller. A process runtime is also available for local development.
 - **Peer** derives its identity from a deterministic `(run ID, seed)` namespace and runs a selected Kademlia and PubSub configuration. Each Docker Peer has its own network namespace for optional traffic conditions.
 - **Dashboard** uses SSE to update Agent capacity, Peer readiness, connection topology, peer-score summaries, experiment phases, propagation latency, and recent events.
+- **Experiment analysis** freezes remote recipients at publish dispatch for churn delivery ratio, first-delivery latency, and average duplicate copies. Agent numbers link topology to the status table; stopped Peers disappear from topology. The web form supports 1–100 sequential runs, and Saved results supports ZIP download and deletion. See [definitions and usage](docs/experiment-metrics.md).
 
 ## Quick start
 
@@ -336,8 +337,9 @@ A non-zero scenario seed reproduces sampled delays, distribution samples, and ra
 | `GET` | `/api/v1/stream` | Real-time snapshot SSE stream, including `peerScores` |
 | `GET` | `/api/v1/experiments` | Experiment state plus `activeJobs`, `completedJobs`, `failedJobs`, and `canceledJobs` counters |
 | `GET` | `/api/v1/results` | Saved experiment results, including runs from previous Controller sessions |
+| `DELETE` | `/api/v1/results/{id}` | Delete an inactive saved result; active batches and downloads are protected |
 | `GET` | `/api/v1/experiments/{id}/download` | Download a ZIP of the saved scenario, metadata, and collected events |
-| `POST` | `/api/v1/experiments` | Start a YAML scenario |
+| `POST` | `/api/v1/experiments` | Run YAML once, or JSON `{scenario, repetitions}` for 1–100 sequential runs |
 | `POST` | `/api/v1/experiments/{id}/stop` | Cancel a running experiment, then perform bounded job shutdown and generation-fenced Peer cleanup |
 
 The `runId` query parameter on `/api/v1/bootstrap` is required. The registry returns only ready `boot` nodes with usable identity and address data from that run, so concurrent experiments cannot discover one another's bootstrap peers.

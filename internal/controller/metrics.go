@@ -18,7 +18,6 @@ type controllerMetrics struct {
 	registry          *prometheus.Registry
 	events            *prometheus.CounterVec
 	messageBytes      *prometheus.CounterVec
-	propagation       *prometheus.HistogramVec
 	operationFailures *prometheus.CounterVec
 	droppedEvents     *prometheus.CounterVec
 	initializedAgents sync.Map
@@ -34,10 +33,6 @@ func newControllerMetrics(s *state) *controllerMetrics {
 		messageBytes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "kpl_message_bytes_total", Help: "PubSub data bytes reported by publish and deliver events; excludes libp2p transport framing.",
 		}, []string{"run_id", "agent_id", "topic", "direction", "encoding"}),
-		propagation: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "kpl_propagation_latency_seconds", Help: "Nonnegative envelope delivery latency in seconds; excludes raw payloads and unavailable timestamps.",
-			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60},
-		}, []string{"run_id", "agent_id", "topic"}),
 		operationFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "kpl_operation_failures_total", Help: "Phase operation failures recorded by the continue policy.",
 		}, []string{"run_id", "agent_id", "action"}),
@@ -45,7 +40,7 @@ func newControllerMetrics(s *state) *controllerMetrics {
 			Name: "kpl_telemetry_dropped_events_total", Help: "Peer telemetry queue drops reported to the Controller.",
 		}, []string{"run_id", "agent_id"}),
 	}
-	m.registry.MustRegister(m.events, m.messageBytes, m.propagation, m.operationFailures, m.droppedEvents,
+	m.registry.MustRegister(m.events, m.messageBytes, m.operationFailures, m.droppedEvents, newRunMetricsCollector(s),
 		newControllerStateCollector(s), newNetworkCollector(s), collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	return m
 }
@@ -85,7 +80,6 @@ func (m *controllerMetrics) initNode(node model.Node) {
 				m.messageBytes.WithLabelValues(node.RunID, node.AgentID, topic, direction, encoding)
 			}
 		}
-		m.propagation.WithLabelValues(node.RunID, node.AgentID, topic)
 		for _, action := range []string{"publish", "leave"} {
 			m.operationFailures.WithLabelValues(node.RunID, node.AgentID, action)
 		}
@@ -103,10 +97,6 @@ func (m *controllerMetrics) observeEvent(event model.TraceEvent) {
 		}
 		if wireBytes, ok := nonnegativeMetricNumber(event.Fields["wireBytes"]); ok {
 			m.messageBytes.WithLabelValues(event.RunID, event.AgentID, event.Topic, event.Type, encoding).Add(wireBytes)
-		}
-		available, _ := event.Fields["latencyAvailable"].(bool)
-		if event.Type == "deliver" && encoding == "envelope" && available && event.LatencyMS >= 0 && !math.IsNaN(event.LatencyMS) && !math.IsInf(event.LatencyMS, 0) {
-			m.propagation.WithLabelValues(event.RunID, event.AgentID, event.Topic).Observe(event.LatencyMS / 1000)
 		}
 	case "phase-operation-failed":
 		action, _ := event.Fields["action"].(string)

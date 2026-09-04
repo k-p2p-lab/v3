@@ -22,8 +22,8 @@ func TestCalculateMetrics(t *testing.T) {
 	experiments := []model.Experiment{{ID: "run-1", StartedAt: time.Now()}}
 	nodes := []model.Node{{ID: "a", RunID: "run-1", State: model.NodeReady}, {ID: "b", RunID: "run-1", State: model.NodeReady}}
 	events := []model.TraceEvent{
-		{RunID: "run-1", NodeID: "b", Type: "deliver", MessageID: "m1", LatencyMS: 10, Timestamp: time.Unix(2, 0)},
-		{RunID: "run-1", NodeID: "a", Type: "publish", MessageID: "m1", Timestamp: time.Unix(1, 0)},
+		{RunID: "run-1", NodeID: "b", Type: "deliver", MessageID: "m1", LatencyMS: 10, Timestamp: time.Unix(2, 0), Fields: map[string]any{"payloadEncoding": "envelope", "latencyAvailable": true}},
+		{RunID: "run-1", NodeID: "a", Type: "publish", MessageID: "m1", Timestamp: time.Unix(1, 0), Fields: map[string]any{"targetNodeIds": []string{"b"}}},
 		{RunID: "run-1", NodeID: "b", Type: "duplicate", MessageID: "m1", Timestamp: time.Unix(3, 0)},
 	}
 	metrics := calculateMetrics(nodes, experiments, events)
@@ -39,7 +39,7 @@ func TestRawDeliveryBeforePublisherClockPreservesReachWithoutLatency(t *testing.
 	nodes := []model.Node{{ID: "a", RunID: "run"}, {ID: "b", RunID: "run"}}
 	events := []model.TraceEvent{
 		{RunID: "run", NodeID: "b", Type: "deliver", MessageID: "raw-hash", LatencyMS: -1, Timestamp: time.Unix(1, 0)},
-		{RunID: "run", NodeID: "a", Type: "publish", MessageID: "raw-hash", Timestamp: time.Unix(2, 0)},
+		{RunID: "run", NodeID: "a", Type: "publish", MessageID: "raw-hash", Timestamp: time.Unix(2, 0), Fields: map[string]any{"targetNodeIds": []string{"b"}}},
 	}
 	metrics := calculateMetrics(nodes, []model.Experiment{{ID: "run"}}, events)
 	if metrics.Reachability != 1 || metrics.Delivered != 1 || metrics.AverageLatencyMS != 0 || metrics.P95LatencyMS != 0 {

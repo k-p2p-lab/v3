@@ -1,11 +1,13 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"strings"
@@ -99,6 +101,7 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 	mux.HandleFunc("/api/v1/events/batch", s.handleEventBatch)
 	mux.HandleFunc("/api/v1/experiments", s.handleExperiments(ctx))
 	mux.HandleFunc("/api/v1/results", s.handleResults)
+	mux.HandleFunc("/api/v1/results/", s.handleResultAction)
 	mux.HandleFunc("/api/v1/experiments/", s.handleExperimentAction)
 	mux.HandleFunc("/api/v1/stream", s.handleStream)
 	mux.Handle("/", http.FileServer(http.FS(webui.FS())))
@@ -277,7 +280,30 @@ func (s *Server) handleExperiments(ctx context.Context) http.HandlerFunc {
 				writeError(w, http.StatusBadRequest, "cannot read scenario")
 				return
 			}
-			experiment, err := s.StartScenario(ctx, raw)
+			repetitions := 1
+			mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+			if mediaType == "application/json" {
+				var submission struct {
+					Scenario    string `json:"scenario"`
+					Repetitions *int   `json:"repetitions"`
+				}
+				decoder := json.NewDecoder(bytes.NewReader(raw))
+				decoder.DisallowUnknownFields()
+				if err := decoder.Decode(&submission); err != nil {
+					writeError(w, http.StatusBadRequest, "invalid experiment submission: "+err.Error())
+					return
+				}
+				var trailing any
+				if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+					writeError(w, http.StatusBadRequest, "experiment submission contains trailing data")
+					return
+				}
+				if submission.Repetitions != nil {
+					repetitions = *submission.Repetitions
+				}
+				raw = []byte(submission.Scenario)
+			}
+			experiment, err := s.StartScenarioRepeated(ctx, raw, repetitions)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return

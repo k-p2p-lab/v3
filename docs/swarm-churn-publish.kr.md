@@ -53,17 +53,20 @@ worker network는 `scope: p2p`, 지연 25ms, jitter 2ms, 설정 packet loss 0.5%
 
 ## 관측과 결과 저장
 
+실행 창 **Run** 옆 **Runs**를 1~100으로 설정하면 전체 시나리오를 순차 반복하고 회차별 결과를 남깁니다. **Stop batch** 또는 회차 실패는 남은 반복을 취소하며 명시된 seed는 재사용합니다. [반복 실행과 지표 정의](experiment-metrics.kr.md)를 참고하십시오.
+
 Control Room에서는 ready Peer 수, Agent 점유량, 실험·job 상태와 이벤트를 확인합니다. Grafana의 **KP2PLab Experiment Analysis**에서 **Run**에 실행한 `swarm-churn-random-publish`를 선택하고 **Agent**, **Topic**으로 필터링하십시오. 종료 후에는 시간 범위를 실험 구간으로 맞춥니다.
 
 | 관측 항목 | 데이터 |
 |---|---|
 | 변화하는 노드 수와 점유 용량 | 실시간 node inventory, `kpl_nodes`, `kpl_agent_active_nodes` |
 | 발행·수신·중복 이벤트 수 | `kpl_events_total`. mesh 변화는 `graft`/`prune` 이벤트로 관측 |
+| 도달률과 원격 성공 수신당 평균 추가 복사본 | `kpl_delivery_ratio`, `kpl_delivery_duplicates_per_reached_pair`. Grafana의 이 패널에는 Run 필터만 적용 |
 | Envelope 지연과 PubSub 데이터 양 | `kpl_propagation_latency_seconds`, `kpl_message_bytes_total` |
 | 설정한 네트워크 조건 | `kpl_network_configured_*`. 실제 손실률이나 RTT가 아닌 설정값 |
 | 실패 요청과 보고된 telemetry drop | `kpl_operation_failures_total`, `kpl_telemetry_dropped_events_total` |
 
-PubSub `join`/`leave`는 topic 참여·탈퇴이며 **Peer 생성·종료가 아닙니다**. 노드 lifecycle은 inventory 갱신과 주기적으로 수집한 gauge로 관측하며 `events.jsonl`이 모든 전이를 보장하지 않습니다. 발행의 `targetNodes`는 요청 전 대상 수이고 수신자 목록이나 생존 이력이 없으므로, 내보내기만으로 변동하는 노드 집합의 정확한 도달 비율을 복원할 수는 없습니다. [지표 정의와 수집 한계](monitoring.kr.md#지표-정의)를 참고하십시오.
+PubSub `join`/`leave`는 topic 참여·탈퇴이며 **Peer 생성·종료가 아닙니다**. 노드 lifecycle은 inventory와 주기적 gauge로 관측하며 `events.jsonl`이 모든 전이를 보장하지 않습니다. 새 발행은 요청 직전 `targetNodeIds`와 `cohortCapturedAt`을 보존해 이후 이탈은 분모에 유지하고 새 join은 제외합니다. ZIP `metrics.json`은 같은 로그 경계에서 도달률·첫 원격 수신 지연·평균 중복 수를 재계산합니다. 과거의 `targetNodes` 숫자만으로는 대상을 복원할 수 없습니다. [지표 정의와 수집 한계](experiment-metrics.kr.md)를 참고하십시오.
 
 실험 종료 후 Peer 정리와, 다른 실행이 없다면 Agent 점유량 0을 확인합니다. `stop-all`이 끝나지 않은 join job을 의도적으로 취소하므로 `completed` 실행에도 `canceledJobs: 1`이 있을 수 있습니다. 이 값만으로 실패를 뜻하지는 않습니다.
 

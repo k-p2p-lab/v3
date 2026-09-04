@@ -3,7 +3,6 @@ package controller
 import (
 	"bytes"
 	"context"
-	cryptorand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,15 +31,17 @@ type ServerConfig struct {
 }
 
 type Server struct {
-	config       ServerConfig
-	state        *state
-	client       *http.Client
-	logger       *slog.Logger
-	cancelMu     sync.Mutex
-	cancels      map[string]context.CancelFunc
-	shuttingDown bool
-	runs         sync.WaitGroup
-	nodeSeq      atomic.Uint64
+	config          ServerConfig
+	state           *state
+	client          *http.Client
+	logger          *slog.Logger
+	cancelMu        sync.Mutex
+	cancels         map[string]context.CancelFunc
+	shuttingDown    bool
+	runs            sync.WaitGroup
+	nodeSeq         atomic.Uint64
+	repeatBatches   map[string]*repeatBatch
+	resultDownloads map[string]int
 }
 
 func New(config ServerConfig, logger *slog.Logger) *Server {
@@ -63,57 +64,15 @@ func New(config ServerConfig, logger *slog.Logger) *Server {
 }
 
 func (s *Server) StartScenario(parent context.Context, raw []byte) (model.Experiment, error) {
-	spec, err := scenario.Parse(raw)
-	if err != nil {
-		return model.Experiment{}, err
-	}
-	s.cancelMu.Lock()
-	defer s.cancelMu.Unlock()
-	if s.shuttingDown {
-		return model.Experiment{}, fmt.Errorf("controller is shutting down")
-	}
-	if err := parent.Err(); err != nil {
-		return model.Experiment{}, err
-	}
-	var nonce [16]byte
-	if _, err := cryptorand.Read(nonce[:]); err != nil {
-		return model.Experiment{}, fmt.Errorf("generate experiment id: %w", err)
-	}
-	runID := fmt.Sprintf("run-%s-%x", time.Now().UTC().Format("20060102T150405Z"), nonce)
-	experiment := model.Experiment{
-		ID:           runID,
-		Name:         spec.Name,
-		State:        "running",
-		Seed:         spec.Seed,
-		TotalPhases:  len(spec.Phases),
-		StartedAt:    time.Now().UTC(),
-		ScenarioYAML: string(raw),
-	}
-	if experiment.Seed == 0 {
-		experiment.Seed = time.Now().UnixNano()
-	}
-	if err := s.persistManifest(experiment, raw); err != nil {
-		return model.Experiment{}, err
-	}
-	s.state.mu.Lock()
-	s.state.experiments[runID] = experiment
-	s.state.mu.Unlock()
-	s.state.notify()
-
-	ctx, cancel := context.WithCancel(parent)
-	s.cancels[runID] = cancel
-	s.runs.Add(1)
-	go func() {
-		defer s.runs.Done()
-		defer cancel()
-		s.runScenario(ctx, experiment, spec)
-	}()
-	return experiment, nil
+	return s.StartScenarioRepeated(parent, raw, 1)
 }
 
 func (s *Server) StopScenario(runID string) error {
 	s.cancelMu.Lock()
 	defer s.cancelMu.Unlock()
+	if s.cancelRepeatLocked(runID) {
+		return nil
+	}
 	cancel, ok := s.cancels[runID]
 	if !ok {
 		return fmt.Errorf("running experiment %q not found", runID)
@@ -245,11 +204,10 @@ func (s *Server) runScenario(parentCtx context.Context, experiment model.Experim
 		runErr = backgroundErr
 	}
 
-	// A natural onExit policy only governs background jobs; peers remain alive
-	// until an explicit stop-all. Cancellation and failed scenarios are
-	// different: after producers have stopped, fence the current generation on
-	// every Agent so no in-flight or already-created peer can escape cleanup.
-	if runErr != nil || cleanupErr != nil {
+	// For a single run, natural onExit only governs background jobs. Repeated,
+	// canceled, or failed runs also fence and remove Peers after producers stop,
+	// so no in-flight creation can escape cleanup or overlap the next iteration.
+	if runErr != nil || cleanupErr != nil || experiment.Repetitions > 1 {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		stopErr := s.stopRunGeneration(cleanupCtx, experiment.ID, generation)
 		refreshErr := s.refreshAgentState(cleanupCtx)
@@ -447,7 +405,7 @@ func (s *Server) runPublish(ctx context.Context, runID string, phase scenario.Ph
 	return runOperations(ctx, count, phase.Parallel, phase.Parallelism, delays, true, func(operationCtx context.Context, i int) error {
 		node := nodes[i]
 		agent, ok := s.agent(node.AgentID)
-		if !ok || agent.State != model.AgentOnline {
+		if !ok || !agentIsOnline(agent, time.Now()) {
 			return s.phaseOperationError(operationCtx, runID, phase, node, "", fmt.Errorf("agent %q for node %q is unavailable", node.AgentID, node.ID))
 		}
 		topic := phase.Topic
@@ -455,13 +413,8 @@ func (s *Server) runPublish(ctx context.Context, runID string, phase scenario.Ph
 			topic = nodeDefaultTopic(node)
 		}
 		request := model.PublishRequest{RunID: runID, Topic: topic, PayloadSize: phase.PayloadSize, PayloadEncoding: phase.PayloadEncoding}
-		if topic == "*" {
-			request.TargetNodesByTopic = make(map[string]int)
-			for _, configuredTopic := range nodePublishTopics(node, topic) {
-				request.TargetNodesByTopic[configuredTopic] = s.topicReachTargetCount(runID, configuredTopic, node.ID)
-			}
-		} else {
-			request.TargetNodes = s.topicReachTargetCount(runID, topic, node.ID)
+		if !s.capturePublishCohort(&request, node, nodePublishTopics(node, topic)) {
+			return s.phaseOperationError(operationCtx, runID, phase, node, topic, fmt.Errorf("publisher %q is no longer ready", node.ID))
 		}
 		path := "/api/v1/nodes/" + node.ID + "/publish"
 		if err := s.callAgent(operationCtx, agent.URL, http.MethodPost, path, request, nil); err != nil {
@@ -901,9 +854,43 @@ func (s *Server) topicReachTargetCount(runID, topic, publisherID string) int {
 	return count
 }
 
+// Capture all topic cohorts under one inventory lock immediately before the
+// publish RPC. This is a Controller observation, not an atomic cluster barrier:
+// a receiver leaving after this snapshot remains an intended recipient.
+func (s *Server) capturePublishCohort(request *model.PublishRequest, publisher model.Node, topics []string) bool {
+	s.state.mu.RLock()
+	defer s.state.mu.RUnlock()
+	now := time.Now().UTC()
+	current, exists := s.state.nodes[publisher.ID]
+	if !exists || current.State != model.NodeReady || !agentIsOnline(s.state.agents[current.AgentID], now) {
+		return false
+	}
+	request.CohortCapturedAt = now
+	request.TargetNodeIDsByTopic = make(map[string][]string, len(topics))
+	request.TargetNodesByTopic = make(map[string]int, len(topics))
+	for _, topic := range topics {
+		targets := make([]string, 0)
+		for _, node := range s.state.nodes {
+			if node.ID != publisher.ID && node.RunID == request.RunID && node.State == model.NodeReady &&
+				agentIsOnline(s.state.agents[node.AgentID], now) && nodeSubscribesToTopic(node, topic) {
+				targets = append(targets, node.ID)
+			}
+		}
+		sort.Strings(targets)
+		request.TargetNodeIDsByTopic[topic] = targets
+		// Retain the old count for older peers. New metrics only use exact IDs.
+		request.TargetNodesByTopic[topic] = len(targets) + 1
+		if request.Topic != "*" {
+			request.TargetNodeIDs = targets
+			request.TargetNodes = len(targets) + 1
+		}
+	}
+	return true
+}
+
 func (s *Server) nodeAgentOnline(node model.Node) bool {
 	agent, ok := s.agent(node.AgentID)
-	return ok && agent.State == model.AgentOnline
+	return ok && agentIsOnline(agent, time.Now())
 }
 
 func nodeCanPublishTopic(node model.Node, topic string) bool {
@@ -1156,8 +1143,18 @@ func (s *Server) callAgent(ctx context.Context, baseURL, method, path string, in
 func (s *Server) updateExperiment(runID string, update func(*model.Experiment)) {
 	s.state.persistMu.Lock()
 	defer s.state.persistMu.Unlock()
+	if deleted, err := s.state.resultDeletedLocked(runID); err != nil || deleted {
+		if err != nil {
+			s.logger.Warn("check deleted experiment", "run", runID, "error", err)
+		}
+		return
+	}
 	s.state.mu.Lock()
-	experiment := s.state.experiments[runID]
+	experiment, exists := s.state.experiments[runID]
+	if !exists {
+		s.state.mu.Unlock()
+		return
+	}
 	update(&experiment)
 	s.state.experiments[runID] = experiment
 	s.state.mu.Unlock()

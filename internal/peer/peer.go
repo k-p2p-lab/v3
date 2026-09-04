@@ -43,6 +43,8 @@ type Server struct {
 	logger     *slog.Logger
 	startedAt  time.Time
 	publishSeq atomic.Uint64
+	publishMu  sync.Mutex
+	publishing publicationBridge
 	closeOnce  sync.Once
 }
 
@@ -202,11 +204,12 @@ func (s *Server) Run(ctx context.Context) error {
 
 func (s *Server) startPubSub(ctx context.Context) error {
 	config := s.config.NodeConfig.GossipSub
-	tracer := &gossipTracer{telemetry: s.telemetry, peerID: s.host.ID().String()}
+	tracer := &gossipTracer{telemetry: s.telemetry, peerID: s.host.ID().String(), publishing: &s.publishing}
 	options, err := gossipSubOptions(config, tracer)
 	if err != nil {
 		return err
 	}
+	options = append(options, pubsub.WithRawTracer(&messageTracer{server: s}))
 	if config.Score != nil && config.ScoreInspectInterval != "" {
 		interval, parseErr := time.ParseDuration(config.ScoreInspectInterval)
 		if parseErr != nil {
@@ -318,12 +321,18 @@ func (s *Server) handlePublish(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	results := make([]map[string]any, 0, len(topicNames))
 	for _, topicName := range topicNames {
+		// Start the application clock after acquiring the publication gate.
+		// Queueing behind another HTTP publish is not propagation latency.
+		s.publishMu.Lock()
 		message, err := s.preparePublication(request, time.Now().UTC())
 		if err != nil {
+			s.publishMu.Unlock()
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if err := s.topics[topicName].Publish(publishCtx, message.wire); err != nil {
+		message, err = s.publishPreparedMessage(publishCtx, topicName, message)
+		s.publishMu.Unlock()
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
@@ -331,7 +340,19 @@ func (s *Server) handlePublish(w http.ResponseWriter, r *http.Request) {
 		if perTopic, exists := request.TargetNodesByTopic[topicName]; exists {
 			targetNodes = perTopic
 		}
-		s.telemetry.emit(model.TraceEvent{PeerID: s.host.ID().String(), Type: "publish", MessageID: message.id, Topic: topicName, Timestamp: message.sentAt, Fields: map[string]any{"payloadBytes": request.PayloadSize, "wireBytes": len(message.wire), "payloadEncoding": message.encoding, "targetNodes": targetNodes}})
+		fields := map[string]any{"publisher": s.config.Node.ID, "payloadBytes": request.PayloadSize, "wireBytes": len(message.wire), "payloadEncoding": message.encoding, "pubsubMessageId": message.pubsubID, "targetNodes": targetNodes}
+		cohort, known := request.TargetNodeIDs, request.TargetNodeIDs != nil
+		if perTopic, exists := request.TargetNodeIDsByTopic[topicName]; exists {
+			cohort, known = perTopic, true
+		}
+		if known {
+			// A known empty cohort must serialize as [], never as null or missing.
+			fields["targetNodeIds"] = append([]string{}, cohort...)
+		}
+		if !request.CohortCapturedAt.IsZero() {
+			fields["cohortCapturedAt"] = request.CohortCapturedAt.UTC().Format(time.RFC3339Nano)
+		}
+		s.telemetry.emit(model.TraceEvent{PeerID: s.host.ID().String(), Type: "publish", MessageID: message.id, Topic: topicName, Timestamp: message.sentAt, Fields: fields})
 		results = append(results, map[string]any{"messageId": message.id, "topic": topicName, "payloadBytes": request.PayloadSize, "wireBytes": len(message.wire), "payloadEncoding": message.encoding})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -349,7 +370,7 @@ func (s *Server) consume(ctx context.Context, topic string, sub *pubsub.Subscrip
 		if err != nil {
 			return
 		}
-		if event, ok := s.deliveryEvent(message.Data, topic, message.ReceivedFrom.String(), time.Now().UTC()); ok {
+		if event, ok := s.deliveryEvent(message, topic, time.Now().UTC()); ok {
 			s.telemetry.emit(event)
 		}
 	}

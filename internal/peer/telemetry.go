@@ -3,6 +3,7 @@ package peer
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -37,16 +38,25 @@ func newTelemetry(node model.Node, agentURL, token string, logger *slog.Logger) 
 }
 
 func (t *telemetry) emit(event model.TraceEvent) {
-	event.RunID = t.node.RunID
-	event.NodeID = t.node.ID
-	if event.Timestamp.IsZero() {
-		event.Timestamp = time.Now().UTC()
-	}
+	event = t.identify(event)
 	select {
 	case t.events <- event:
 	default:
 		t.dropped.Add(1)
 	}
+}
+
+func (t *telemetry) identify(event model.TraceEvent) model.TraceEvent {
+	event.RunID = t.node.RunID
+	event.NodeID = t.node.ID
+	if event.EventID == "" {
+		// Assigned at the source, so Agent queue retries retain the same ID.
+		event.EventID = rand.Text()
+	}
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now().UTC()
+	}
+	return event
 }
 
 func (t *telemetry) run(ctx context.Context) {
@@ -67,7 +77,7 @@ func (t *telemetry) run(ctx context.Context) {
 		case <-ticker.C:
 			dropped := t.dropped.Swap(0)
 			if dropped > 0 {
-				batch = append(batch, model.TraceEvent{RunID: t.node.RunID, NodeID: t.node.ID, Type: "telemetry_drop", Timestamp: time.Now().UTC(), Fields: map[string]any{"count": dropped}})
+				batch = append(batch, t.identify(model.TraceEvent{Type: "telemetry_drop", Timestamp: time.Now().UTC(), Fields: map[string]any{"count": dropped}}))
 			}
 			if len(batch) > 0 {
 				t.flush(ctx, batch)

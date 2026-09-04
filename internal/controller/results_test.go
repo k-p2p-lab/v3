@@ -123,7 +123,7 @@ func TestResultDownloadIncludesFullPersistedFilesAndOriginalInterruptedState(t *
 		t.Fatalf("download status=%d headers=%v body=%s", response.Code, response.Header(), response.Body)
 	}
 	files := decodeResultZIP(t, response.Body.Bytes())
-	if len(files) != 4 || !bytes.Equal(files["experiment.json"], original) || !bytes.Equal(files["events.jsonl"], events) || string(files["scenario.yaml"]) != "version: 3\nname: original scenario\n" {
+	if len(files) != 5 || !json.Valid(files["metrics.json"]) || !bytes.Equal(files["experiment.json"], original) || !bytes.Equal(files["events.jsonl"], events) || string(files["scenario.yaml"]) != "version: 3\nname: original scenario\n" {
 		t.Fatalf("incorrect archive contents: %v", files)
 	}
 	var exported struct {
@@ -309,6 +309,58 @@ func TestResultExportPreservesAlreadyInterruptedStoredState(t *testing.T) {
 	defer snapshot.close()
 	if snapshot.storedState != "interrupted" || snapshot.result.State != "interrupted" || snapshot.result.Active {
 		t.Fatalf("original state was inferred incorrectly: %+v", snapshot)
+	}
+}
+
+func TestResultMetricsUseTheSamePersistedSnapshotAsExportedEvents(t *testing.T) {
+	server := New(ServerConfig{DataDir: t.TempDir()}, nil)
+	resultFixture(t, server, "run", "completed", time.Now().UTC())
+	initial := model.EventBatch{Events: []model.TraceEvent{
+		cohortDelivery("first", "topic", "receiver", 12),
+		cohortPublish("first", "topic", []string{"receiver"}),
+	}}
+	if err := server.state.appendEvents(initial); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := server.captureResult("run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snapshot.close()
+	// A transport retry and a new publication arrive after the file boundary.
+	if err := server.state.appendEvents(initial); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.state.appendEvents(model.EventBatch{Events: []model.TraceEvent{
+		cohortPublish("later", "topic", []string{"receiver", "departed"}),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := snapshot.writeZIP(context.Background(), &output); err != nil {
+		t.Fatal(err)
+	}
+	files := decodeResultZIP(t, output.Bytes())
+	var exported model.Metrics
+	if err := json.Unmarshal(files["metrics.json"], &exported); err != nil {
+		t.Fatal(err)
+	}
+	if exported.Published != 1 || exported.ExpectedDeliveries != 1 || exported.EligibleDeliveries != 1 || exported.AverageLatencyMS != 12 {
+		t.Fatalf("exported metrics included later telemetry: %+v", exported)
+	}
+	rebuilt, err := summarizeRunEvents("run", bytes.NewReader(files["events.jsonl"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebuiltJSON, err := json.MarshalIndent(rebuilt, "", "  ")
+	if err != nil || !bytes.Equal(bytes.TrimSpace(files["metrics.json"]), rebuiltJSON) {
+		t.Fatalf("metrics do not reproduce the exported event bytes: %s, %v", files["metrics.json"], err)
+	}
+	server.state.mu.RLock()
+	live, _ := server.state.runMetrics["run"].summarize("run")
+	server.state.mu.RUnlock()
+	if live.Published != 2 || live.ExpectedDeliveries != 3 {
+		t.Fatalf("later telemetry was not processed independently: %+v", live)
 	}
 }
 

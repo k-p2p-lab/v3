@@ -2,7 +2,7 @@
   "id": null,
   "uid": "kpl-experiments",
   "title": "KP2PLab Experiment Analysis",
-  "description": "Analyze Peer counts, message events, valid envelope propagation latency, network configuration, and Agent status for KP2PLab v3 experiments.",
+  "description": "Analyze frozen-cohort delivery ratio, first remote application latency, duplicate copies per successful delivery, Peer churn, network conditions, and Agent status.",
   "tags": [
     "KP2PLab",
     "P2P",
@@ -40,7 +40,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**Select a Run, Agent, and Topic, then adjust the time range.** `Total` shows the current collector counter value; `Selected range` shows the estimated increase calculated with `increase`. Per-second rates use `rate` over an interval matched to the scrape frequency. **Propagation latency includes valid received envelopes only and is unavailable for raw messages.** Missing observations are not filled with zero."
+        "content": "**Select Run, Agent, and Topic, then adjust the time range.** Traffic rates use `rate` and selected-range traffic uses `increase`. **Delivery ratio and average duplicates use the whole observed run and only the Run filter.** A publication freezes online, ready remote subscribers at dispatch; departures remain expected and late joins are excluded. Latency uses first successful remote envelope deliveries, excluding local deliveries, raw data and negative clock-skew samples. Missing denominators remain N/A. Late telemetry can update these estimates. Legacy runs without recipient IDs cannot supply cohort metrics."
       }
     },
     {
@@ -458,6 +458,210 @@
       }
     },
     {
+      "id": 28,
+      "type": "stat",
+      "title": "Delivery ratio · Whole observed run",
+      "description": "Reached subscriber/message pairs divided by expected pairs. Online ready remote subscribers are frozen at dispatch. Departures remain in the denominator; late joins and sender-local delivery are excluded. Only the Run filter applies. This is application delivery, not packet-loss rate.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(kpl_delivery_reached_pairs{run_id=~\"${run_id:regex}\"}) / sum(kpl_delivery_expected_pairs{run_id=~\"${run_id:regex}\"})) and on() (sum(kpl_delivery_expected_pairs{run_id=~\"${run_id:regex}\"}) > 0)",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percentunit",
+          "noValue": "N/A",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 29,
+      "type": "stat",
+      "title": "Avg duplicates / delivery · Whole run",
+      "description": "Extra PubSub duplicate copies at successful remote cohort pairs divided by reached pairs. Weighted across selected runs. Only the Run filter applies. Not TCP retransmissions or duplicate bytes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(kpl_delivery_duplicate_copies{run_id=~\"${run_id:regex}\"}) / sum(kpl_delivery_reached_pairs{run_id=~\"${run_id:regex}\"})) and on() (sum(kpl_delivery_reached_pairs{run_id=~\"${run_id:regex}\"}) > 0)",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "N/A",
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 30,
+      "type": "stat",
+      "title": "Expected remote deliveries · Whole run",
+      "description": "Sum of frozen remote subscriber/message pairs. Only the Run filter applies. Each publication has its own recipient cohort. Zero targets cannot define a delivery ratio.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "kpl-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(kpl_delivery_expected_pairs{run_id=~\"${run_id:regex}\"})",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "N/A",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      }
+    },
+    {
       "id": 9,
       "type": "timeseries",
       "title": "Peer states",
@@ -470,7 +674,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 14
+        "y": 18
       },
       "targets": [
         {
@@ -620,7 +824,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 14
+        "y": 18
       },
       "targets": [
         {
@@ -740,7 +944,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 22
+        "y": 26
       },
       "panels": []
     },
@@ -757,7 +961,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 23
+        "y": 27
       },
       "targets": [
         {
@@ -858,8 +1062,8 @@
     {
       "id": 13,
       "type": "timeseries",
-      "title": "Propagation latency · P50 / P95 / P99",
-      "description": "Valid propagation latency from received envelopes only. Raw messages, negative samples caused by clock skew, and intervals without observations are excluded. Quantiles are estimated from histogram buckets. Synchronize clocks across hosts.",
+      "title": "First remote latency · Whole observed run P50 / P95 / P99",
+      "description": "Cumulative first application delivery latency among dispatch-time remote subscriber pairs at each scrape. Raw, self-delivery, late join, unknown cohorts, and negative clock-skew samples are excluded. Whole-run histogram quantiles are bucket estimates, not selected-range quantiles. Late batches can backfill or correct samples; query this histogram directly rather than with rate/increase. Synchronize clocks across hosts.",
       "datasource": {
         "type": "prometheus",
         "uid": "kpl-prometheus"
@@ -868,12 +1072,12 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 23
+        "y": 27
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(kpl_propagation_latency_seconds_bucket{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}[$__rate_interval]))) and on() (sum(rate(kpl_propagation_latency_seconds_count{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}[$__rate_interval])) > 0)",
+          "expr": "histogram_quantile(0.5, sum by (le) (kpl_propagation_latency_seconds_bucket{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"})) and on() (sum(kpl_propagation_latency_seconds_count{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}) > 0)",
           "legendFormat": "P50",
           "instant": false,
           "range": true,
@@ -886,7 +1090,7 @@
         },
         {
           "refId": "B",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(kpl_propagation_latency_seconds_bucket{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}[$__rate_interval]))) and on() (sum(rate(kpl_propagation_latency_seconds_count{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}[$__rate_interval])) > 0)",
+          "expr": "histogram_quantile(0.95, sum by (le) (kpl_propagation_latency_seconds_bucket{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"})) and on() (sum(kpl_propagation_latency_seconds_count{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}) > 0)",
           "legendFormat": "P95",
           "instant": false,
           "range": true,
@@ -899,7 +1103,7 @@
         },
         {
           "refId": "C",
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(kpl_propagation_latency_seconds_bucket{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}[$__rate_interval]))) and on() (sum(rate(kpl_propagation_latency_seconds_count{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}[$__rate_interval])) > 0)",
+          "expr": "histogram_quantile(0.99, sum by (le) (kpl_propagation_latency_seconds_bucket{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"})) and on() (sum(kpl_propagation_latency_seconds_count{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\",topic=~\"${topic:regex}\"}) > 0)",
           "legendFormat": "P99",
           "instant": false,
           "range": true,
@@ -992,7 +1196,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 31
+        "y": 35
       },
       "targets": [
         {
@@ -1116,7 +1320,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 31
+        "y": 35
       },
       "targets": [
         {
@@ -1214,7 +1418,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 39
+        "y": 43
       },
       "targets": [
         {
@@ -1312,7 +1516,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 39
+        "y": 43
       },
       "targets": [
         {
@@ -1375,7 +1579,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 47
+        "y": 51
       },
       "panels": []
     },
@@ -1392,7 +1596,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 48
+        "y": 52
       },
       "targets": [
         {
@@ -1490,7 +1694,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 48
+        "y": 52
       },
       "targets": [
         {
@@ -1589,7 +1793,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 56
+        "y": 60
       },
       "targets": [
         {
@@ -1687,7 +1891,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 56
+        "y": 60
       },
       "targets": [
         {
@@ -1781,7 +1985,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 64
+        "y": 68
       },
       "panels": []
     },
@@ -1798,7 +2002,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 65
+        "y": 69
       },
       "targets": [
         {
@@ -1896,7 +2100,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 65
+        "y": 69
       },
       "targets": [
         {
@@ -1994,7 +2198,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 73
+        "y": 77
       },
       "targets": [
         {
@@ -2085,7 +2289,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 73
+        "y": 77
       },
       "targets": [
         {
@@ -2282,7 +2486,7 @@
       "24h"
     ]
   },
-  "version": 1,
+  "version": 2,
   "weekStart": "monday",
   "annotations": {
     "list": [
