@@ -1,0 +1,258 @@
+version: 2
+name: mixed-worker-network
+seed: 20260904
+
+# A profile starts from its built-in `type`; each value below overrides that
+# preset. A join phase can add another `node` block for phase-local overrides.
+profiles:
+  lab-boot:
+    type: boot
+    libp2p:
+      userAgent: kpl-v3/mixed-boot
+      connectionLimit: 96
+      dialTimeout: 8s
+    kademlia:
+      mode: server
+      protocolPrefix: /k-p2p-lab/v3
+      bucketSize: 20
+      concurrency: 10
+      bootstrapTimeout: 45s
+      bootstrapRetryInterval: 500ms
+    gossipsub:
+      enabled: true
+      topics: [kpl/mixed]
+      peerExchange: true
+      params:
+        d: 6
+        dLow: 4
+        dHigh: 12
+        dScore: 3
+        dOut: 2
+        dLazy: 6
+        heartbeatInterval: 1s
+
+  tuned-full:
+    type: full
+    libp2p:
+      userAgent: kpl-v3/mixed-full
+      connectionLimit: 128
+      connectionManager:
+        lowWater: 64
+        highWater: 96
+        gracePeriod: 30s
+      dialTimeout: 8s
+    kademlia:
+      mode: server
+      protocolPrefix: /k-p2p-lab/v3
+      bucketSize: 24
+      concurrency: 10
+      resiliency: 3
+      lookupCheckConcurrency: 5
+      routingTableRefreshPeriod: 10m
+      routingTableRefreshTimeout: 1m
+      bootstrapTimeout: 45s
+      bootstrapRetryInterval: 500ms
+    gossipsub:
+      router: gossipsub
+      topicMode: subscribe
+      allowPublish: true
+      topics: [kpl/mixed]
+      floodPublish: false
+      peerExchange: true
+      maxMessageSize: 4194304
+      peerOutboundQueueSize: 64
+      subscriptionBufferSize: 256
+      params:
+        d: 8
+        dLow: 6
+        dHigh: 12
+        dScore: 4
+        dOut: 3
+        dLazy: 8
+        historyLength: 5
+        historyGossip: 3
+        gossipFactor: 0.25
+        gossipRetransmission: 3
+        heartbeatInitialDelay: 1s
+        heartbeatInterval: 750ms
+        fanoutTTL: 1m
+        prunePeers: 16
+        pruneBackoff: 1m
+        connectors: 8
+        maxPendingConnections: 128
+        connectionTimeout: 30s
+
+  mesh-without-lazy-gossip:
+    type: non-gossip
+    kademlia:
+      mode: server
+      protocolPrefix: /k-p2p-lab/v3
+    gossipsub:
+      topics: [kpl/mixed]
+      params:
+        historyLength: 5
+        historyGossip: 0
+        gossipFactor: 0
+
+  event-publisher:
+    type: publisher
+    kademlia:
+      protocolPrefix: /k-p2p-lab/v3
+    gossipsub:
+      topics: [kpl/mixed]
+      maxMessageSize: 4194304
+
+  event-subscriber:
+    type: subscriber
+    kademlia:
+      protocolPrefix: /k-p2p-lab/v3
+    gossipsub:
+      topics: [kpl/mixed]
+      subscriptionBufferSize: 256
+
+phases:
+  - name: create bootstrap nodes
+    action: join
+    group: bootstrap
+    role: boot
+    profile: lab-boot
+    count: 2
+    parallel: true
+    parallelism: 2
+
+  - name: wait for bootstrap nodes
+    action: wait-ready
+    group: bootstrap
+    type: boot
+    readyRatio: 1
+    timeout: 45s
+
+  # These two paced jobs run concurrently with the following foreground phases.
+  - name: paced full-node churn
+    action: join
+    job: full-churn
+    await: false
+    parallel: false
+    group: full-workers
+    role: worker
+    profile: tuned-full
+    count: 6
+    interval:
+      model: exponential
+      mean: 300ms
+      min: 50ms
+      max: 1s
+    lifetime:
+      model: pareto
+      xm: 2m
+      alpha: 2.5
+      max: 10m
+
+  - name: paced non-gossip churn
+    action: join
+    job: mesh-only-churn
+    await: false
+    parallel: false
+    group: mesh-only-workers
+    role: worker
+    profile: mesh-without-lazy-gossip
+    count: 4
+    interval:
+      model: normal
+      mean: 350ms
+      sigma: 75ms
+      min: 50ms
+      max: 1s
+
+  - name: create subscribers in a bounded parallel batch
+    action: join
+    group: subscribers
+    role: worker
+    profile: event-subscriber
+    count: 4
+    parallel: true
+    parallelism: 2
+
+  - name: create relay
+    action: join
+    group: relays
+    role: worker
+    type: relay
+    count: 1
+    node:
+      gossipsub:
+        topics: [kpl/mixed]
+
+  - name: create floodsub workers
+    action: join
+    group: flood-workers
+    role: worker
+    type: flood
+    count: 2
+    parallel: true
+    parallelism: 2
+    node:
+      gossipsub:
+        topics: [kpl/mixed]
+
+  - name: create randomsub workers
+    action: join
+    group: random-workers
+    role: worker
+    type: random
+    count: 2
+    parallel: true
+    parallelism: 2
+    node:
+      gossipsub:
+        topics: [kpl/mixed]
+        randomDegree: 4
+        randomNetworkSize: 16
+
+  - name: create publishers
+    action: join
+    group: publishers
+    role: worker
+    profile: event-publisher
+    count: 2
+    parallel: true
+    parallelism: 2
+
+  - name: wait for paced background jobs
+    action: wait-jobs
+    jobs: [full-churn, mesh-only-churn]
+    timeout: 2m
+
+  - name: wait for full workers
+    action: wait-ready
+    group: full-workers
+    type: full
+    readyRatio: 1
+    timeout: 1m
+
+  - name: wait for subscribers
+    action: wait-ready
+    group: subscribers
+    type: subscriber
+    readyRatio: 1
+    timeout: 1m
+
+  - name: publish sample messages
+    action: publish
+    group: publishers
+    type: publisher
+    count: 2
+    topic: kpl/mixed
+    payloadSize: 2048
+    parallel: true
+    parallelism: 2
+    interval:
+      model: fixed
+      value: 250ms
+
+  - name: allow messages to settle
+    action: wait
+    duration: 3s
+
+  - name: stop the experiment nodes
+    action: stop-all

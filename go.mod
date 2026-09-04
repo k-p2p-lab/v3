@@ -1,4 +1,4 @@
-module github.com/elecbug/kpl-v3
+module github.com/k-p2p-lab/v3
 
 go 1.24.0
 

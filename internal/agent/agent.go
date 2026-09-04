@@ -19,10 +19,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/elecbug/kpl-v3/internal/model"
+	"github.com/k-p2p-lab/v3/internal/model"
 )
 
 type Config struct {
@@ -47,19 +46,24 @@ type process struct {
 	configPath string
 	command    *exec.Cmd
 	cancel     context.CancelFunc
+	lease      *portLease
+	exited     bool
+	proxyRefs  int
 }
 
 type Server struct {
-	config    Config
-	logger    *slog.Logger
-	client    *http.Client
-	startedAt time.Time
-	mu        sync.RWMutex
-	processes map[string]*process
-	portSeq   atomic.Uint64
-	eventsMu  sync.Mutex
-	events    []model.TraceEvent
-	flushNow  chan struct{}
+	config         Config
+	logger         *slog.Logger
+	client         *http.Client
+	commandContext func(context.Context, string, ...string) *exec.Cmd
+	startedAt      time.Time
+	mu             sync.RWMutex
+	processes      map[string]*process
+	ports          portPool
+	runFences      map[string]uint64
+	eventsMu       sync.Mutex
+	events         []model.TraceEvent
+	flushNow       chan struct{}
 }
 
 func New(config Config, logger *slog.Logger) (*Server, error) {
@@ -101,12 +105,14 @@ func New(config Config, logger *slog.Logger) (*Server, error) {
 		logger = slog.Default()
 	}
 	return &Server{
-		config:    config,
-		logger:    logger,
-		client:    &http.Client{Timeout: 10 * time.Second},
-		startedAt: time.Now().UTC(),
-		processes: make(map[string]*process),
-		flushNow:  make(chan struct{}, 1),
+		config:         config,
+		logger:         logger,
+		client:         &http.Client{Timeout: 10 * time.Second},
+		commandContext: exec.CommandContext,
+		startedAt:      time.Now().UTC(),
+		processes:      make(map[string]*process),
+		runFences:      make(map[string]uint64),
+		flushNow:       make(chan struct{}, 1),
 	}, nil
 }
 
@@ -212,7 +218,21 @@ func (s *Server) createNode(ctx context.Context, request model.CreateNodeRequest
 	if request.ID == "" || request.RunID == "" || request.Group == "" {
 		return model.Node{}, fmt.Errorf("id, runId, and group are required")
 	}
+	if request.Lifetime != "" {
+		lifetime, err := time.ParseDuration(request.Lifetime)
+		if err != nil || lifetime < 0 {
+			return model.Node{}, fmt.Errorf("lifetime must be a non-negative duration")
+		}
+	}
+	resolvedConfig, nodeType := resolveCreateNodeConfig(request)
+	if err := resolvedConfig.Validate(); err != nil {
+		return model.Node{}, fmt.Errorf("invalid node config: %w", err)
+	}
 	s.mu.Lock()
+	if fence, exists := s.runFences[request.RunID]; exists && request.Generation <= fence {
+		s.mu.Unlock()
+		return model.Node{}, fmt.Errorf("run %q generation %d is fenced at generation %d", request.RunID, request.Generation, fence)
+	}
 	if _, exists := s.processes[request.ID]; exists {
 		s.mu.Unlock()
 		return model.Node{}, fmt.Errorf("node %q already exists", request.ID)
@@ -221,57 +241,82 @@ func (s *Server) createNode(ctx context.Context, request model.CreateNodeRequest
 		s.mu.Unlock()
 		return model.Node{}, fmt.Errorf("agent capacity reached")
 	}
-	index := int(s.portSeq.Add(1)) - 1
-	apiPort := s.config.PeerAPIPort + index
-	p2pPort := s.config.PeerP2PPort + index
-	if apiPort > 65535 || p2pPort > 65535 {
+	lease, ok := s.ports.acquire(s.config.PeerAPIPort, s.config.PeerP2PPort)
+	if !ok {
 		s.mu.Unlock()
 		return model.Node{}, fmt.Errorf("peer port range exhausted")
 	}
 	now := time.Now().UTC()
+	profile := request.Profile
+	if profile == "" {
+		profile = nodeType
+	}
+	topicsJSON, _ := json.Marshal(resolvedConfig.GossipSub.Topics)
 	node := model.Node{
-		ID:        request.ID,
-		RunID:     request.RunID,
-		AgentID:   s.config.ID,
-		Group:     request.Group,
-		Role:      request.Role,
-		State:     model.NodeStarting,
+		ID:         request.ID,
+		RunID:      request.RunID,
+		Generation: request.Generation,
+		AgentID:    s.config.ID,
+		Group:      request.Group,
+		Role:       request.Role,
+		Type:       nodeType,
+		Profile:    profile,
+		State:      model.NodeStarting,
+		Metadata: map[string]string{
+			"profile":       profile,
+			"pubsubRouter":  resolvedConfig.GossipSub.Router,
+			"pubsubEnabled": strconv.FormatBool(resolvedConfig.GossipSub.Enabled != nil && *resolvedConfig.GossipSub.Enabled),
+			"allowPublish":  strconv.FormatBool(resolvedConfig.PublishAllowed()),
+			"topicMode":     resolvedConfig.GossipSub.TopicMode,
+			"topics":        strings.Join(resolvedConfig.GossipSub.Topics, ","),
+			"topicsJSON":    string(topicsJSON),
+			"dhtEnabled":    strconv.FormatBool(resolvedConfig.Kademlia.Enabled != nil && *resolvedConfig.Kademlia.Enabled),
+			"dhtMode":       resolvedConfig.Kademlia.Mode,
+		},
 		StartedAt: now,
 		LastSeen:  now,
 	}
 	processCtx, cancel := context.WithCancel(ctx)
 	peerConfig := model.PeerProcessConfig{
 		Node:          node,
-		NodeConfig:    request.Config.WithDefaults(),
+		NodeConfig:    resolvedConfig,
 		Seed:          request.Seed,
 		ControllerURL: strings.TrimRight(s.config.ControllerURL, "/"),
 		AgentURL:      strings.TrimRight(s.config.SelfURL, "/"),
-		APListen:      fmt.Sprintf("127.0.0.1:%d", apiPort),
-		P2PListen:     fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", p2pPort),
+		APListen:      fmt.Sprintf("127.0.0.1:%d", lease.apiPort),
+		P2PListen:     fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", lease.p2pPort),
 		Token:         s.config.Token,
 	}
 	configPath, err := s.writePeerConfig(peerConfig)
 	if err != nil {
 		cancel()
+		s.ports.release(lease)
 		s.mu.Unlock()
 		return model.Node{}, err
 	}
-	command := exec.CommandContext(processCtx, s.config.Executable, "peer", "--config", configPath)
+	commandContext := s.commandContext
+	if commandContext == nil {
+		commandContext = exec.CommandContext
+	}
+	command := commandContext(processCtx, s.config.Executable, "peer", "--config", configPath)
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		cancel()
+		s.ports.release(lease)
 		s.mu.Unlock()
 		return model.Node{}, err
 	}
 	stderr, err := command.StderrPipe()
 	if err != nil {
 		cancel()
+		s.ports.release(lease)
 		s.mu.Unlock()
 		return model.Node{}, err
 	}
-	proc := &process{node: node, apiURL: fmt.Sprintf("http://127.0.0.1:%d", apiPort), configPath: configPath, command: command, cancel: cancel}
+	proc := &process{node: node, apiURL: fmt.Sprintf("http://127.0.0.1:%d", lease.apiPort), configPath: configPath, command: command, cancel: cancel, lease: lease}
 	if err := command.Start(); err != nil {
 		cancel()
+		s.ports.release(lease)
 		s.mu.Unlock()
 		return model.Node{}, fmt.Errorf("start peer process: %w", err)
 	}
@@ -280,20 +325,55 @@ func (s *Server) createNode(ctx context.Context, request model.CreateNodeRequest
 	go s.pipeLogs(request.ID, "stdout", stdout)
 	go s.pipeLogs(request.ID, "stderr", stderr)
 	go s.waitProcess(request.ID, proc)
-	if request.Lifetime != "" {
-		if lifetime, err := time.ParseDuration(request.Lifetime); err == nil && lifetime > 0 {
-			go func() {
-				timer := time.NewTimer(lifetime)
-				defer timer.Stop()
-				select {
-				case <-processCtx.Done():
-				case <-timer.C:
-					_ = s.stopNode(request.ID)
-				}
-			}()
+	scheduleLifetimeStop(processCtx, request.Lifetime, func() { _ = s.stopNode(request.ID) })
+	return node, nil
+}
+
+func resolveCreateNodeConfig(request model.CreateNodeRequest) (model.NodeConfig, string) {
+	kind := request.Type
+	if kind == "" {
+		kind = request.Config.Type
+	}
+	if kind == "" {
+		if request.Role == "boot" {
+			kind = "boot"
+		} else {
+			kind = "full"
 		}
 	}
-	return node, nil
+	if base, ok := model.BuiltInNodeConfig(kind); ok {
+		resolved := base.Merge(request.Config).WithDefaults()
+		// The chosen built-in preset is authoritative, including aliases such as
+		// worker, which canonicalize to full.
+		resolved.Type = base.Type
+		return resolved, resolved.Type
+	}
+	base, _ := model.BuiltInNodeConfig("full")
+	base.Type = kind
+	resolved := base.Merge(request.Config)
+	resolved.Type = kind
+	resolved = resolved.WithDefaults()
+	return resolved, resolved.Type
+}
+
+func scheduleLifetimeStop(ctx context.Context, value string, stop func()) bool {
+	if value == "" {
+		return false
+	}
+	lifetime, err := time.ParseDuration(value)
+	if err != nil || lifetime < 0 {
+		return false
+	}
+	go func() {
+		timer := time.NewTimer(lifetime)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+		case <-timer.C:
+			stop()
+		}
+	}()
+	return true
 }
 
 func (s *Server) writePeerConfig(config model.PeerProcessConfig) (string, error) {
@@ -324,6 +404,7 @@ func (s *Server) pipeLogs(nodeID, stream string, reader io.Reader) {
 func (s *Server) waitProcess(nodeID string, proc *process) {
 	err := proc.command.Wait()
 	s.mu.Lock()
+	proc.exited = true
 	current, ok := s.processes[nodeID]
 	if ok && current == proc {
 		current.node.LastSeen = time.Now().UTC()
@@ -334,7 +415,14 @@ func (s *Server) waitProcess(nodeID string, proc *process) {
 			current.node.Error = err.Error()
 		}
 	}
+	s.releaseProcessPortsLocked(proc)
 	s.mu.Unlock()
+}
+
+func (s *Server) releaseProcessPortsLocked(proc *process) {
+	if proc.exited && proc.proxyRefs == 0 {
+		s.ports.release(proc.lease)
+	}
 }
 
 func (s *Server) stopNode(nodeID string) error {
@@ -368,6 +456,41 @@ func (s *Server) stopAll() {
 	}
 }
 
+// stopRunGeneration establishes the fence before marking matching processes as
+// stopping. A create for the stopped generation can therefore never commit
+// after this method has taken the lock: it either committed first and is in the
+// cancellation set, or observes the fence and is rejected.
+func (s *Server) stopRunGeneration(runID string, generation uint64) {
+	s.mu.Lock()
+	if s.runFences == nil {
+		s.runFences = make(map[string]uint64)
+	}
+	fence, exists := s.runFences[runID]
+	if !exists || generation > fence {
+		fence = generation
+		s.runFences[runID] = fence
+	}
+	now := time.Now().UTC()
+	cancels := make([]context.CancelFunc, 0)
+	for _, proc := range s.processes {
+		if proc.node.RunID != runID || proc.node.Generation > fence || proc.exited {
+			continue
+		}
+		if proc.node.State == model.NodeStopping || proc.node.State == model.NodeStopped || proc.node.State == model.NodeFailed {
+			continue
+		}
+		proc.node.State = model.NodeStopping
+		proc.node.LastSeen = now
+		if proc.cancel != nil {
+			cancels = append(cancels, proc.cancel)
+		}
+	}
+	s.mu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
+}
+
 func (s *Server) updateNode(update model.Node) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -375,11 +498,15 @@ func (s *Server) updateNode(update model.Node) error {
 	if !ok {
 		return fmt.Errorf("node %q not found", update.ID)
 	}
+	if proc.exited || proc.node.State == model.NodeStopping || proc.node.State == model.NodeStopped || proc.node.State == model.NodeFailed {
+		return nil
+	}
 	proc.node.PeerID = update.PeerID
 	proc.node.State = update.State
 	proc.node.Addresses = append([]string(nil), update.Addresses...)
 	proc.node.ConnectedPeers = append([]string(nil), update.ConnectedPeers...)
 	proc.node.TopicPeers = update.TopicPeers
+	proc.node.PeerScores = update.PeerScores
 	proc.node.LastSeen = time.Now().UTC()
 	proc.node.Error = update.Error
 	return nil
@@ -399,7 +526,7 @@ func (s *Server) nodes() []model.Node {
 func activeNodeCount(nodes []model.Node) int {
 	count := 0
 	for _, node := range nodes {
-		if node.State != model.NodeStopped && node.State != model.NodeFailed {
+		if node.State != model.NodeStopping && node.State != model.NodeStopped && node.State != model.NodeFailed {
 			count++
 		}
 	}
@@ -409,7 +536,7 @@ func activeNodeCount(nodes []model.Node) int {
 func activeNodeCountLocked(processes map[string]*process) int {
 	count := 0
 	for _, proc := range processes {
-		if proc.node.State != model.NodeStopped && proc.node.State != model.NodeFailed {
+		if proc.node.State != model.NodeStopping && proc.node.State != model.NodeStopped && proc.node.State != model.NodeFailed {
 			count++
 		}
 	}

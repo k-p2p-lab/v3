@@ -30,11 +30,19 @@ phases:
     interval:
       model: exponential
       mean: 250ms
+    lifetime:
+      model: pareto
+      xm: 45s
+      alpha: 2.5
+      max: 3m
     node:
       topics: [kpl/default]
       d: 6
       dLow: 4
       dHigh: 12
+      dOut: 2
+      dLazy: 6
+      heartbeat: 1s
 
   - name: mesh barrier
     action: wait-ready
@@ -54,6 +62,9 @@ phases:
   - name: settle
     action: wait
     duration: 5s
+
+  - name: cleanup
+    action: stop-all
 `;
 
 function escapeHTML(value) {
@@ -147,6 +158,7 @@ function renderRuns(runs) {
     return `<article class="run-item">
       <div class="run-title"><strong title="${escapeHTML(run.name)}">${escapeHTML(run.name)}</strong><span class="status-pill ${escapeHTML(run.state)}">${escapeHTML(run.state)}</span></div>
       <div class="run-meta"><span>${escapeHTML(run.phaseName || `seed ${run.seed}`)}</span>${stop}</div>
+      <div class="run-meta"><span>job ${formatNumber(run.activeJobs || 0)} 실행 · ${formatNumber(run.completedJobs || 0)} 완료 · ${formatNumber(run.failedJobs || 0)} 실패 · ${formatNumber(run.canceledJobs || 0)} 취소</span></div>
       <div class="progress-track" aria-label="${progress}% 완료"><i style="width:${Math.min(100, progress)}%"></i></div>
       ${run.error ? `<div class="run-meta"><span>${escapeHTML(run.error)}</span></div>` : ""}
     </article>`;
@@ -228,7 +240,12 @@ function renderTopology(nodes, edges) {
     circle.setAttribute("r", node.role === "boot" ? 7 : 5);
     circle.setAttribute("class", `topology-node ${mode}`);
     const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
-    title.textContent = `${node.id}\n${node.state} · ${node.connectedPeers?.length || 0} connections`;
+    const scoreValues = Object.values(node.peerScores || {});
+    const scoreText = scoreValues.length ? ` · ${scoreValues.length} scores (avg ${(scoreValues.reduce((sum, score) => sum + score, 0) / scoreValues.length).toFixed(2)})` : "";
+    const metadata = node.metadata || {};
+    const pubsubText = metadata.pubsubEnabled === "false" ? "off" : `${metadata.pubsubRouter || "pubsub"}/${metadata.topicMode || "subscribe"}`;
+    const dhtText = metadata.dhtEnabled === "false" ? "off" : metadata.dhtMode || "server";
+    title.textContent = `${node.id}\n${node.type || node.role} · ${node.state} · ${node.connectedPeers?.length || 0} connections${scoreText}\nPubSub ${pubsubText} · DHT ${dhtText} · ${metadata.topics || "no topics"}`;
     circle.append(title);
     svg.append(circle);
   });

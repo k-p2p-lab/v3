@@ -4,21 +4,24 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/elecbug/kpl-v3/internal/model"
-	"github.com/elecbug/kpl-v3/internal/scenario"
+	"github.com/k-p2p-lab/v3/internal/model"
+	"github.com/k-p2p-lab/v3/internal/scenario"
 )
 
 type ServerConfig struct {
@@ -92,8 +95,8 @@ func (s *Server) StartScenario(parent context.Context, raw []byte) (model.Experi
 
 func (s *Server) StopScenario(runID string) error {
 	s.cancelMu.Lock()
+	defer s.cancelMu.Unlock()
 	cancel, ok := s.cancels[runID]
-	s.cancelMu.Unlock()
 	if !ok {
 		return fmt.Errorf("running experiment %q not found", runID)
 	}
@@ -101,9 +104,33 @@ func (s *Server) StopScenario(runID string) error {
 	return nil
 }
 
-func (s *Server) runScenario(ctx context.Context, experiment model.Experiment, spec scenario.Scenario) {
+func (s *Server) runScenario(parentCtx context.Context, experiment model.Experiment, spec scenario.Scenario) {
+	ctx, cancelScenario := context.WithCancel(parentCtx)
+	defer cancelScenario()
+
 	rng := rand.New(rand.NewSource(experiment.Seed))
+	jobs := newPhaseJobs()
+	shutdownTimeout, _ := time.ParseDuration(spec.JobShutdownTimeout)
+	if shutdownTimeout <= 0 {
+		shutdownTimeout = 10 * time.Second
+	}
+
+	var asyncMu sync.Mutex
+	var asyncErr error
+	recordAsyncFailure := func(jobID string, err error) {
+		if err == nil || errors.Is(err, context.Canceled) {
+			return
+		}
+		asyncMu.Lock()
+		if asyncErr == nil {
+			asyncErr = fmt.Errorf("job %q: %w", jobID, err)
+			cancelScenario()
+		}
+		asyncMu.Unlock()
+	}
+
 	var runErr error
+	generation := uint64(1)
 	for index, phase := range spec.Phases {
 		if err := ctx.Err(); err != nil {
 			runErr = err
@@ -113,161 +140,445 @@ func (s *Server) runScenario(ctx context.Context, experiment model.Experiment, s
 			current.Phase = index + 1
 			current.PhaseName = phase.Name
 		})
-		s.logger.Info("scenario phase started", "run", experiment.ID, "phase", phase.Name, "action", phase.Action)
-		switch phase.Action {
-		case "join":
-			runErr = s.runJoin(ctx, experiment.ID, phase, rng)
-		case "wait":
-			duration, _ := time.ParseDuration(phase.Duration)
-			runErr = sleepContext(ctx, duration)
-		case "wait-ready":
-			runErr = s.waitReady(ctx, experiment.ID, phase)
-		case "publish":
-			runErr = s.runPublish(ctx, experiment.ID, phase, rng)
-		case "leave":
-			runErr = s.runLeave(ctx, experiment.ID, phase, rng)
-		case "stop-all":
-			runErr = s.stopNodes(ctx, experiment.ID, "", 0, rng, scenario.Distribution{})
+		phaseSeed := rng.Int63()
+		phaseGeneration := generation
+		execute := func(executionCtx context.Context) error {
+			phaseRNG := rand.New(rand.NewSource(phaseSeed))
+			for repetition := 0; repetition < phase.Repeat; repetition++ {
+				if err := executionCtx.Err(); err != nil {
+					return err
+				}
+				if err := s.runPhase(executionCtx, experiment.ID, phaseGeneration, phase, phaseRNG, jobs, shutdownTimeout); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		s.logger.Info("scenario phase started", "run", experiment.ID, "phase", phase.Name, "job", phase.Job, "action", phase.Action, "parallel", phase.Parallel, "await", phase.ShouldAwait())
+		if phase.ShouldAwait() {
+			runErr = execute(ctx)
+		} else {
+			jobID := phase.Job
+			s.updateExperiment(experiment.ID, func(current *model.Experiment) { current.ActiveJobs++ })
+			runErr = jobs.startContext(ctx, jobID, execute, func(err error) {
+				s.updateExperiment(experiment.ID, func(current *model.Experiment) {
+					if current.ActiveJobs > 0 {
+						current.ActiveJobs--
+					}
+					switch {
+					case err == nil:
+						current.CompletedJobs++
+					case errors.Is(err, context.Canceled):
+						current.CanceledJobs++
+					default:
+						current.FailedJobs++
+					}
+				})
+				recordAsyncFailure(jobID, err)
+			})
+			if runErr != nil {
+				s.updateExperiment(experiment.ID, func(current *model.Experiment) {
+					if current.ActiveJobs > 0 {
+						current.ActiveJobs--
+					}
+				})
+			}
 		}
 		if runErr != nil {
 			break
 		}
+		if phase.Action == "stop-all" {
+			generation++
+		}
 	}
+	if runErr == nil && spec.OnExit == "drain" {
+		runErr = jobs.wait(ctx, nil, 0)
+	}
+
+	var cleanupErr error
+	if runErr != nil || spec.OnExit == "cancel" {
+		cancelScenario()
+		jobs.cancelAll()
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		jobCleanupErr := jobs.waitDone(cleanupCtx, nil, 0)
+		cleanupCancel()
+		if jobCleanupErr != nil {
+			jobCleanupErr = fmt.Errorf("stop background jobs: %w", jobCleanupErr)
+			cleanupErr = errors.Join(cleanupErr, jobCleanupErr)
+			s.logger.Error("scenario background-job cleanup failed", "run", experiment.ID, "error", jobCleanupErr)
+		}
+	} else {
+		cancelScenario()
+	}
+
+	asyncMu.Lock()
+	backgroundErr := asyncErr
+	asyncMu.Unlock()
+	// Retire the cancellation handle and sample its context while holding the
+	// same lock used by StopScenario. Thus a stop either wins here and triggers
+	// cleanup, or observes that the run has already entered finalization.
+	s.cancelMu.Lock()
+	delete(s.cancels, experiment.ID)
+	parentErr := parentCtx.Err()
+	s.cancelMu.Unlock()
+	if parentErr != nil {
+		runErr = parentErr
+	} else if backgroundErr != nil && (runErr == nil || errors.Is(runErr, context.Canceled)) {
+		runErr = backgroundErr
+	}
+
+	// A natural onExit policy only governs background jobs; peers remain alive
+	// until an explicit stop-all. Cancellation and failed scenarios are
+	// different: after producers have stopped, fence the current generation on
+	// every Agent so no in-flight or already-created peer can escape cleanup.
+	if runErr != nil || cleanupErr != nil {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		stopErr := s.stopRunGeneration(cleanupCtx, experiment.ID, generation)
+		refreshErr := s.refreshAgentState(cleanupCtx)
+		cleanupCancel()
+		if err := errors.Join(stopErr, refreshErr); err != nil {
+			err = fmt.Errorf("stop scenario peers through generation %d: %w", generation, err)
+			cleanupErr = errors.Join(cleanupErr, err)
+			s.logger.Error("scenario peer cleanup failed", "run", experiment.ID, "generation", generation, "error", err)
+		}
+	}
+	resultErr := errors.Join(runErr, cleanupErr)
+
 	finished := time.Now().UTC()
 	s.updateExperiment(experiment.ID, func(current *model.Experiment) {
 		current.FinishedAt = finished
 		current.PhaseName = ""
 		switch {
-		case runErr == nil:
+		case resultErr == nil:
 			current.State = "completed"
-		case runErr == context.Canceled:
+		case errors.Is(runErr, context.Canceled):
 			current.State = "canceled"
+			if cleanupErr != nil {
+				current.Error = resultErr.Error()
+			}
 		default:
 			current.State = "failed"
-			current.Error = runErr.Error()
+			current.Error = resultErr.Error()
 		}
 	})
-	s.cancelMu.Lock()
-	delete(s.cancels, experiment.ID)
-	s.cancelMu.Unlock()
-	if runErr != nil && runErr != context.Canceled {
-		s.logger.Error("scenario failed", "run", experiment.ID, "error", runErr)
+	if resultErr != nil && (!errors.Is(runErr, context.Canceled) || cleanupErr != nil) {
+		s.logger.Error("scenario failed", "run", experiment.ID, "error", resultErr)
 	} else {
-		s.logger.Info("scenario finished", "run", experiment.ID, "result", runErr)
+		s.logger.Info("scenario finished", "run", experiment.ID, "result", resultErr)
 	}
 }
 
-func (s *Server) runJoin(ctx context.Context, runID string, phase scenario.Phase, rng *rand.Rand) error {
-	for i := 0; i < phase.Count; i++ {
-		agent, err := s.chooseAgent()
-		if err != nil {
-			return err
+func (s *Server) runPhase(ctx context.Context, runID string, generation uint64, phase scenario.Phase, rng *rand.Rand, jobs *phaseJobs, shutdownTimeout time.Duration) error {
+	switch phase.Action {
+	case "join":
+		return s.runJoin(ctx, runID, generation, phase, rng)
+	case "wait":
+		duration, _ := time.ParseDuration(phase.Duration)
+		return sleepContext(ctx, duration)
+	case "wait-ready":
+		timeout, _ := time.ParseDuration(phase.Timeout)
+		waitCtx, waitCancel := context.WithTimeout(ctx, timeout)
+		defer waitCancel()
+		if len(phase.Jobs) > 0 {
+			if err := jobs.wait(waitCtx, phase.Jobs, 0); err != nil {
+				return err
+			}
 		}
+		return s.waitReadyUntil(waitCtx, runID, generation, phase)
+	case "wait-jobs":
+		timeout, _ := time.ParseDuration(phase.Timeout)
+		return jobs.wait(ctx, phase.Jobs, timeout)
+	case "publish":
+		return s.runPublish(ctx, runID, phase, rng)
+	case "leave":
+		return s.runLeave(ctx, runID, phase, rng)
+	case "stop-all":
+		jobs.cancelAll()
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		err := jobs.waitDone(cleanupCtx, nil, 0)
+		cleanupCancel()
+		if err != nil {
+			return fmt.Errorf("stop background jobs before stop-all: %w", err)
+		}
+		if err := jobs.reset(); err != nil {
+			return fmt.Errorf("reset background jobs before stop-all: %w", err)
+		}
+		cleanupCtx, cleanupCancel = context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cleanupCancel()
+		stopErr := s.stopRunGeneration(cleanupCtx, runID, generation)
+		refreshErr := s.refreshAgentState(cleanupCtx)
+		return errors.Join(refreshErr, stopErr)
+	case "log":
+		s.logger.Info("scenario message", "run", runID, "message", phase.Message)
+		return nil
+	default:
+		return fmt.Errorf("unsupported action %q", phase.Action)
+	}
+}
+
+func (s *Server) runJoin(ctx context.Context, runID string, generation uint64, phase scenario.Phase, rng *rand.Rand) error {
+	requests := make([]model.CreateNodeRequest, 0, phase.Count)
+	for i := 0; i < phase.Count; i++ {
 		seq := s.nodeSeq.Add(1)
 		nodeID := fmt.Sprintf("%s-%s-%05d", runID, safeName(phase.Group), seq)
 		lifetime := ""
 		if phase.Lifetime.Model != "" {
 			lifetime = phase.Lifetime.Sample(rng).String()
 		}
-		request := model.CreateNodeRequest{
-			ID:       nodeID,
-			RunID:    runID,
-			Group:    phase.Group,
-			Role:     phase.Role,
-			Seed:     rng.Int63(),
-			Config:   phase.Node.WithDefaults(),
-			Lifetime: lifetime,
-		}
-		if err := s.callAgent(ctx, agent.URL, http.MethodPost, "/api/v1/nodes", request, nil); err != nil {
-			s.releaseAgent(agent.ID)
-			return fmt.Errorf("create node %s on agent %s: %w", nodeID, agent.ID, err)
-		}
-		if i+1 < phase.Count {
-			if err := sleepContext(ctx, phase.Interval.Sample(rng)); err != nil {
-				return err
-			}
-		}
+		requests = append(requests, model.CreateNodeRequest{
+			ID:         nodeID,
+			RunID:      runID,
+			Generation: generation,
+			Group:      phase.Group,
+			Role:       phase.Role,
+			Type:       phase.NodeType,
+			Profile:    phase.Profile,
+			Seed:       rng.Int63(),
+			Config:     phase.Node.WithDefaults(),
+			Lifetime:   lifetime,
+		})
 	}
-	return nil
+	delays := sampleDelays(rng, phase.Interval, phase.Count)
+	return runOperations(ctx, phase.Count, phase.Parallel, phase.Parallelism, delays, false, func(operationCtx context.Context, i int) error {
+		request := requests[i]
+		agent, err := s.acquireAgent(operationCtx, request.ID)
+		if err != nil {
+			return err
+		}
+		var node model.Node
+		if err := s.callAgent(operationCtx, agent.URL, http.MethodPost, "/api/v1/nodes", request, &node); err != nil {
+			s.releaseReservation(request.ID)
+			return fmt.Errorf("create node %s on agent %s: %w", request.ID, agent.ID, err)
+		}
+		s.recordCreatedNode(request, agent.ID, node)
+		return nil
+	})
 }
 
-func (s *Server) waitReady(ctx context.Context, runID string, phase scenario.Phase) error {
+func (s *Server) waitReady(ctx context.Context, runID string, generation uint64, phase scenario.Phase) error {
 	timeout, _ := time.ParseDuration(phase.Timeout)
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return s.waitReadyUntil(waitCtx, runID, generation, phase)
+}
+
+func (s *Server) waitReadyUntil(ctx context.Context, runID string, generation uint64, phase scenario.Phase) error {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		ready, total := s.readyCount(runID, phase.Group)
-		if total > 0 && float64(ready)/float64(total) >= phase.ReadyRatio {
+		ready, total, failed := s.readyCount(runID, generation, phase.Group, phase.NodeType)
+		enoughNodes := total > 0
+		if phase.MinCount > 0 {
+			enoughNodes = total >= phase.MinCount
+		}
+		if failed == 0 && enoughNodes && float64(ready)/float64(total) >= phase.ReadyRatio {
 			return nil
 		}
 		select {
 		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return fmt.Errorf("ready barrier timed out for group %q in generation %d: %d/%d ready, %d failed: %w", phase.Group, generation, ready, total, failed, ctx.Err())
+			}
 			return ctx.Err()
-		case <-deadline.C:
-			return fmt.Errorf("ready barrier timed out for group %q: %d/%d ready", phase.Group, ready, total)
 		case <-ticker.C:
 		}
 	}
 }
 
 func (s *Server) runPublish(ctx context.Context, runID string, phase scenario.Phase, rng *rand.Rand) error {
-	for i := 0; i < phase.Count; i++ {
-		nodes := s.matchingNodes(runID, phase.Group, model.NodeReady)
-		if len(nodes) == 0 {
-			return fmt.Errorf("no ready nodes in group %q", phase.Group)
+	candidates := s.matchingNodes(runID, phase.Group, model.NodeReady, phase.NodeType)
+	nodes := make([]model.Node, 0, len(candidates))
+	for _, node := range candidates {
+		if !s.nodeAgentOnline(node) {
+			continue
 		}
-		node := nodes[rng.Intn(len(nodes))]
+		topic := phase.Topic
+		if topic == "" {
+			topic = nodeDefaultTopic(node)
+		}
+		if nodeCanPublishTopic(node, topic) {
+			nodes = append(nodes, node)
+		}
+	}
+	if len(nodes) == 0 {
+		return fmt.Errorf("no publish-capable ready nodes in group %q for topic %q", phase.Group, phase.Topic)
+	}
+	rng.Shuffle(len(nodes), func(i, j int) { nodes[i], nodes[j] = nodes[j], nodes[i] })
+	count := phase.Count
+	if count > len(nodes) {
+		count = len(nodes)
+	}
+	delays := publishDelays(rng, phase.Interval, count, phase.Parallel)
+	return runOperations(ctx, count, phase.Parallel, phase.Parallelism, delays, true, func(operationCtx context.Context, i int) error {
+		node := nodes[i]
 		agent, ok := s.agent(node.AgentID)
 		if !ok || agent.State != model.AgentOnline {
 			return fmt.Errorf("agent %q for node %q is unavailable", node.AgentID, node.ID)
 		}
-		request := model.PublishRequest{RunID: runID, Topic: phase.Topic, PayloadSize: phase.PayloadSize, TargetNodes: len(s.matchingNodes(runID, "", model.NodeReady))}
+		topic := phase.Topic
+		if topic == "" {
+			topic = nodeDefaultTopic(node)
+		}
+		targetNodes := s.topicReachTargetCount(runID, topic, node.ID)
+		request := model.PublishRequest{RunID: runID, Topic: topic, PayloadSize: phase.PayloadSize, TargetNodes: targetNodes}
 		path := "/api/v1/nodes/" + node.ID + "/publish"
-		if err := s.callAgent(ctx, agent.URL, http.MethodPost, path, request, nil); err != nil {
+		if err := s.callAgent(operationCtx, agent.URL, http.MethodPost, path, request, nil); err != nil {
 			return fmt.Errorf("publish through node %s: %w", node.ID, err)
 		}
-		if i+1 < phase.Count {
-			if err := sleepContext(ctx, phase.Interval.Sample(rng)); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func (s *Server) runLeave(ctx context.Context, runID string, phase scenario.Phase, rng *rand.Rand) error {
-	return s.stopNodes(ctx, runID, phase.Group, phase.Count, rng, phase.Interval)
+	return s.stopNodes(ctx, runID, phase.Group, phase.NodeType, phase.Count, rng, phase.Interval, phase.Parallel, phase.Parallelism)
 }
 
-func (s *Server) stopNodes(ctx context.Context, runID, group string, count int, rng *rand.Rand, interval scenario.Distribution) error {
-	nodes := s.matchingNodes(runID, group, "")
+func (s *Server) stopNodes(ctx context.Context, runID, group, nodeType string, count int, rng *rand.Rand, interval scenario.Distribution, parallel bool, parallelism int) error {
+	nodes := s.matchingNodes(runID, group, "", nodeType)
 	rng.Shuffle(len(nodes), func(i, j int) { nodes[i], nodes[j] = nodes[j], nodes[i] })
 	if count <= 0 || count > len(nodes) {
 		count = len(nodes)
 	}
-	for i := 0; i < count; i++ {
+	delays := sampleDelays(rng, interval, count)
+	var stopErrorsMu sync.Mutex
+	var stopErrors []error
+	operationErr := runOperations(ctx, count, parallel, parallelism, delays, false, func(operationCtx context.Context, i int) error {
 		node := nodes[i]
 		agent, ok := s.agent(node.AgentID)
 		if !ok {
-			continue
+			stopErrorsMu.Lock()
+			stopErrors = append(stopErrors, fmt.Errorf("stop node %s: agent %q is unavailable", node.ID, node.AgentID))
+			stopErrorsMu.Unlock()
+			return nil
 		}
-		if err := s.callAgent(ctx, agent.URL, http.MethodDelete, "/api/v1/nodes/"+node.ID, nil, nil); err != nil {
-			return fmt.Errorf("stop node %s: %w", node.ID, err)
+		if err := s.callAgent(operationCtx, agent.URL, http.MethodDelete, "/api/v1/nodes/"+node.ID, nil, nil); err != nil {
+			stopErrorsMu.Lock()
+			stopErrors = append(stopErrors, fmt.Errorf("stop node %s: %w", node.ID, err))
+			stopErrorsMu.Unlock()
+			return nil
 		}
-		if i+1 < count {
-			if err := sleepContext(ctx, interval.Sample(rng)); err != nil {
-				return err
+		s.markNodeStoppingAndReleaseCapacity(node.ID)
+		return nil
+	})
+	if operationErr != nil {
+		stopErrors = append(stopErrors, operationErr)
+	}
+	return errors.Join(stopErrors...)
+}
+
+// stopRunGeneration is the stop-all transaction boundary. Each Agent records
+// a monotonically increasing fence for the run before stopping matching peers,
+// so a create that was already in flight cannot commit after cleanup. A later
+// scenario generation is still allowed to create peers with the same run ID.
+func (s *Server) stopRunGeneration(ctx context.Context, runID string, generation uint64) error {
+	s.state.mu.RLock()
+	agents := make([]model.Agent, 0, len(s.state.agents))
+	for _, agent := range s.state.agents {
+		agents = append(agents, agent)
+	}
+	s.state.mu.RUnlock()
+	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
+
+	type result struct {
+		agentID string
+		err     error
+	}
+	results := make(chan result, len(agents))
+	var group sync.WaitGroup
+	for _, agent := range agents {
+		agent := agent
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			path := "/api/v1/runs/" + url.PathEscape(runID) + "/nodes?generation=" + strconv.FormatUint(generation, 10)
+			err := s.callAgent(ctx, agent.URL, http.MethodDelete, path, nil, nil)
+			if err != nil {
+				err = fmt.Errorf("stop run generation on agent %s: %w", agent.ID, err)
+			}
+			results <- result{agentID: agent.ID, err: err}
+		}()
+	}
+	group.Wait()
+	close(results)
+
+	succeeded := make(map[string]struct{}, len(agents))
+	var stopErrors []error
+	for result := range results {
+		if result.err != nil {
+			stopErrors = append(stopErrors, result.err)
+		} else {
+			succeeded[result.agentID] = struct{}{}
+		}
+	}
+	for _, node := range s.matchingNodes(runID, "", "", "") {
+		if node.Generation <= generation {
+			if _, ok := succeeded[node.AgentID]; ok {
+				s.markNodeStoppingAndReleaseCapacity(node.ID)
 			}
 		}
 	}
-	return nil
+	return errors.Join(stopErrors...)
 }
 
-func (s *Server) chooseAgent() (model.Agent, error) {
+func (s *Server) refreshAgentState(ctx context.Context) error {
+	s.state.mu.RLock()
+	agents := make([]model.Agent, 0, len(s.state.agents))
+	for _, agent := range s.state.agents {
+		if agent.State == model.AgentOnline {
+			agents = append(agents, agent)
+		}
+	}
+	s.state.mu.RUnlock()
+	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
+
+	var group sync.WaitGroup
+	errorsByAgent := make(chan error, len(agents))
+	for _, agent := range agents {
+		agent := agent
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			var heartbeat model.AgentHeartbeat
+			if err := s.callAgent(ctx, agent.URL, http.MethodGet, "/api/v1/status", nil, &heartbeat); err != nil {
+				errorsByAgent <- fmt.Errorf("refresh agent %s: %w", agent.ID, err)
+				return
+			}
+			if err := s.state.heartbeat(heartbeat); err != nil {
+				errorsByAgent <- fmt.Errorf("apply agent %s status: %w", agent.ID, err)
+			}
+		}()
+	}
+	group.Wait()
+	close(errorsByAgent)
+	var refreshErrors []error
+	for err := range errorsByAgent {
+		refreshErrors = append(refreshErrors, err)
+	}
+	return errors.Join(refreshErrors...)
+}
+
+func (s *Server) acquireAgent(ctx context.Context, nodeID string) (model.Agent, error) {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if agent, ok := s.tryReserveAgent(nodeID); ok {
+			return agent, nil
+		}
+		select {
+		case <-ctx.Done():
+			return model.Agent{}, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *Server) tryReserveAgent(nodeID string) (model.Agent, bool) {
 	s.state.mu.Lock()
 	defer s.state.mu.Unlock()
+	if agentID, exists := s.state.reservations[nodeID]; exists {
+		agent, ok := s.state.agents[agentID]
+		return agent, ok && agent.State == model.AgentOnline
+	}
 	var candidates []model.Agent
 	for _, agent := range s.state.agents {
 		if agent.State == model.AgentOnline && (agent.Capacity <= 0 || agent.ActiveNodes < agent.Capacity) {
@@ -275,7 +586,7 @@ func (s *Server) chooseAgent() (model.Agent, error) {
 		}
 	}
 	if len(candidates) == 0 {
-		return model.Agent{}, fmt.Errorf("no online agent has free capacity")
+		return model.Agent{}, false
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		left, right := utilization(candidates[i]), utilization(candidates[j])
@@ -287,7 +598,8 @@ func (s *Server) chooseAgent() (model.Agent, error) {
 	selected := candidates[0]
 	selected.ActiveNodes++
 	s.state.agents[selected.ID] = selected
-	return selected, nil
+	s.state.reservations[nodeID] = selected.ID
+	return selected, true
 }
 
 func utilization(agent model.Agent) float64 {
@@ -297,44 +609,334 @@ func utilization(agent model.Agent) float64 {
 	return float64(agent.ActiveNodes) / float64(agent.Capacity)
 }
 
-func (s *Server) releaseAgent(id string) {
+func (s *Server) releaseReservation(nodeID string) {
 	s.state.mu.Lock()
-	agent, ok := s.state.agents[id]
+	agentID, reserved := s.state.reservations[nodeID]
+	if reserved {
+		delete(s.state.reservations, nodeID)
+	}
+	agent, ok := s.state.agents[agentID]
 	if ok && agent.ActiveNodes > 0 {
 		agent.ActiveNodes--
-		s.state.agents[id] = agent
+		s.state.agents[agentID] = agent
 	}
 	s.state.mu.Unlock()
+	if reserved {
+		s.state.notify()
+	}
 }
 
-func (s *Server) readyCount(runID, group string) (int, int) {
-	nodes := s.matchingNodes(runID, group, "")
-	ready := 0
-	for _, node := range nodes {
-		if node.State == model.NodeReady {
-			ready++
+func (s *Server) recordCreatedNode(request model.CreateNodeRequest, agentID string, node model.Node) {
+	now := time.Now().UTC()
+	config := request.Config.WithDefaults()
+	if node.ID == "" {
+		node.ID = request.ID
+	}
+	if node.RunID == "" {
+		node.RunID = request.RunID
+	}
+	if node.Generation == 0 {
+		node.Generation = request.Generation
+	}
+	if node.AgentID == "" {
+		node.AgentID = agentID
+	}
+	if node.Group == "" {
+		node.Group = request.Group
+	}
+	if node.Role == "" {
+		node.Role = request.Role
+	}
+	if node.Type == "" {
+		node.Type = request.Type
+	}
+	if node.Profile == "" {
+		node.Profile = request.Profile
+	}
+	if node.State == "" {
+		node.State = model.NodeStarting
+	}
+	if node.Metadata == nil {
+		node.Metadata = map[string]string{
+			"profile":       node.Profile,
+			"pubsubRouter":  config.GossipSub.Router,
+			"pubsubEnabled": strconv.FormatBool(config.GossipSub.Enabled != nil && *config.GossipSub.Enabled),
+			"allowPublish":  strconv.FormatBool(config.PublishAllowed()),
+			"topicMode":     config.GossipSub.TopicMode,
+			"topics":        strings.Join(config.GossipSub.Topics, ","),
+			"topicsJSON":    encodeTopics(config.GossipSub.Topics),
+			"dhtEnabled":    strconv.FormatBool(config.Kademlia.Enabled != nil && *config.Kademlia.Enabled),
+			"dhtMode":       config.Kademlia.Mode,
 		}
 	}
-	return ready, len(nodes)
+	if node.StartedAt.IsZero() {
+		node.StartedAt = now
+	}
+	if node.LastSeen.IsZero() {
+		node.LastSeen = now
+	}
+	s.state.mu.Lock()
+	if current, exists := s.state.nodes[node.ID]; !exists || current.LastSeen.Before(node.LastSeen) {
+		s.state.nodes[node.ID] = node
+	}
+	s.state.mu.Unlock()
+	s.state.notify()
 }
 
-func (s *Server) matchingNodes(runID, group, state string) []model.Node {
+func (s *Server) markNodeStoppingAndReleaseCapacity(nodeID string) {
+	s.state.mu.Lock()
+	node, exists := s.state.nodes[nodeID]
+	releaseCapacity := false
+	agentID := node.AgentID
+	if exists && node.State != model.NodeStopping && node.State != model.NodeStopped && node.State != model.NodeFailed {
+		releaseCapacity = true
+		node.State = model.NodeStopping
+		node.LastSeen = time.Now().UTC()
+		s.state.nodes[nodeID] = node
+	}
+	if reservedAgentID, reserved := s.state.reservations[nodeID]; reserved {
+		delete(s.state.reservations, nodeID)
+		agentID = reservedAgentID
+		releaseCapacity = true
+	}
+	if agent, ok := s.state.agents[agentID]; ok && releaseCapacity && agent.ActiveNodes > 0 {
+		agent.ActiveNodes--
+		s.state.agents[agentID] = agent
+	}
+	s.state.mu.Unlock()
+	if exists || releaseCapacity {
+		s.state.notify()
+	}
+}
+
+func (s *Server) readyCount(runID string, generation uint64, group, nodeType string) (ready, total, failed int) {
+	s.state.mu.RLock()
+	defer s.state.mu.RUnlock()
+	for _, node := range s.state.nodes {
+		if node.RunID != runID || node.Generation != generation || group != "" && node.Group != group || nodeType != "" && node.Type != nodeType {
+			continue
+		}
+		total++
+		switch node.State {
+		case model.NodeReady:
+			if agent, ok := s.state.agents[node.AgentID]; ok && agent.State == model.AgentOnline {
+				ready++
+			}
+		case model.NodeFailed:
+			failed++
+		}
+	}
+	return ready, total, failed
+}
+
+func (s *Server) matchingNodes(runID, group, state, nodeType string) []model.Node {
 	s.state.mu.RLock()
 	defer s.state.mu.RUnlock()
 	var nodes []model.Node
 	for _, node := range s.state.nodes {
-		if node.RunID != runID || group != "" && node.Group != group {
+		if node.RunID != runID || group != "" && node.Group != group || nodeType != "" && node.Type != nodeType {
 			continue
 		}
 		if state != "" && node.State != state {
 			continue
 		}
-		if node.State == model.NodeStopped || node.State == model.NodeFailed {
+		if node.State == model.NodeStopping || node.State == model.NodeStopped || node.State == model.NodeFailed {
 			continue
 		}
 		nodes = append(nodes, node)
 	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
 	return nodes
+}
+
+func (s *Server) topicSubscriberCount(runID, topic string) int {
+	nodes := s.matchingNodes(runID, "", model.NodeReady, "")
+	count := 0
+	for _, node := range nodes {
+		if s.nodeAgentOnline(node) && nodeSubscribesToTopic(node, topic) {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *Server) topicReachTargetCount(runID, topic, publisherID string) int {
+	count := s.topicSubscriberCount(runID, topic)
+	for _, node := range s.matchingNodes(runID, "", model.NodeReady, "") {
+		if node.ID == publisherID && s.nodeAgentOnline(node) {
+			if !nodeSubscribesToTopic(node, topic) {
+				count++
+			}
+			break
+		}
+	}
+	if count == 0 {
+		return 1
+	}
+	return count
+}
+
+func (s *Server) nodeAgentOnline(node model.Node) bool {
+	agent, ok := s.agent(node.AgentID)
+	return ok && agent.State == model.AgentOnline
+}
+
+func nodeCanPublishTopic(node model.Node, topic string) bool {
+	if !nodeFeatureEnabled(node, "pubsubEnabled", node.Type != "boot" && node.Type != "dht-only") {
+		return false
+	}
+	fallback := node.Type != "subscriber" && node.Type != "observer" && node.Type != "relay"
+	if !nodeFeatureEnabled(node, "allowPublish", fallback) {
+		return false
+	}
+	return nodeHasTopic(node, topic)
+}
+
+func nodeSubscribesToTopic(node model.Node, topic string) bool {
+	if !nodeFeatureEnabled(node, "pubsubEnabled", node.Type != "boot" && node.Type != "dht-only") {
+		return false
+	}
+	mode := node.Metadata["topicMode"]
+	if mode == "" {
+		if node.Type == "publisher" || node.Type == "relay" {
+			mode = node.Type
+		} else {
+			mode = "subscribe"
+		}
+	}
+	if mode != "subscribe" {
+		return false
+	}
+	return nodeHasTopic(node, topic)
+}
+
+func nodeFeatureEnabled(node model.Node, key string, fallback bool) bool {
+	raw, exists := node.Metadata[key]
+	if !exists {
+		return fallback
+	}
+	value, err := strconv.ParseBool(raw)
+	return err == nil && value
+}
+
+func nodeDefaultTopic(node model.Node) string {
+	for _, topic := range nodeTopics(node) {
+		if topic = strings.TrimSpace(topic); topic != "" {
+			return topic
+		}
+	}
+	return "kpl/default"
+}
+
+func nodeHasTopic(node model.Node, topic string) bool {
+	if topic == "" {
+		return true
+	}
+	topics := nodeTopics(node)
+	if len(topics) == 0 {
+		return topic == "kpl/default"
+	}
+	for _, candidate := range topics {
+		if strings.TrimSpace(candidate) == topic {
+			return true
+		}
+	}
+	return false
+}
+
+func nodeTopics(node model.Node) []string {
+	if raw := strings.TrimSpace(node.Metadata["topicsJSON"]); raw != "" {
+		var topics []string
+		if json.Unmarshal([]byte(raw), &topics) == nil {
+			return topics
+		}
+	}
+	if raw := strings.TrimSpace(node.Metadata["topics"]); raw != "" {
+		return strings.Split(raw, ",")
+	}
+	return nil
+}
+
+func encodeTopics(topics []string) string {
+	data, err := json.Marshal(topics)
+	if err != nil {
+		return "[]"
+	}
+	return string(data)
+}
+
+func sampleDelays(rng *rand.Rand, distribution scenario.Distribution, count int) []time.Duration {
+	delays := make([]time.Duration, count)
+	for i := range delays {
+		delays[i] = distribution.Sample(rng)
+	}
+	return delays
+}
+
+func publishDelays(rng *rand.Rand, distribution scenario.Distribution, count int, parallel bool) []time.Duration {
+	delays := sampleDelays(rng, distribution, count)
+	if parallel && distribution.Model == "" {
+		for i := range delays {
+			delays[i] = time.Second
+		}
+	}
+	return delays
+}
+
+func runOperations(ctx context.Context, count int, parallel bool, parallelism int, delays []time.Duration, delayParallel bool, operation func(context.Context, int) error) error {
+	if !parallel {
+		for i := 0; i < count; i++ {
+			if err := operation(ctx, i); err != nil {
+				return err
+			}
+			if i+1 < count && i < len(delays) {
+				if err := sleepContext(ctx, delays[i]); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if parallelism <= 0 || parallelism > count {
+		parallelism = count
+	}
+	operationCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	semaphore := make(chan struct{}, parallelism)
+	errors := make(chan error, count)
+	var group sync.WaitGroup
+	for i := 0; i < count; i++ {
+		index := i
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			if delayParallel && index < len(delays) {
+				if err := sleepContext(operationCtx, delays[index]); err != nil {
+					errors <- err
+					return
+				}
+			}
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			case <-operationCtx.Done():
+				errors <- operationCtx.Err()
+				return
+			}
+			if err := operation(operationCtx, index); err != nil {
+				errors <- err
+				cancel()
+			}
+		}()
+	}
+	group.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil && err != context.Canceled {
+			return err
+		}
+	}
+	return ctx.Err()
 }
 
 func (s *Server) agent(id string) (model.Agent, bool) {
@@ -379,6 +981,8 @@ func (s *Server) callAgent(ctx context.Context, baseURL, method, path string, in
 }
 
 func (s *Server) updateExperiment(runID string, update func(*model.Experiment)) {
+	s.state.persistMu.Lock()
+	defer s.state.persistMu.Unlock()
 	s.state.mu.Lock()
 	experiment := s.state.experiments[runID]
 	update(&experiment)

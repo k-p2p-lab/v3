@@ -12,29 +12,31 @@ import (
 	"sync"
 	"time"
 
-	"github.com/elecbug/kpl-v3/internal/model"
+	"github.com/k-p2p-lab/v3/internal/model"
 )
 
 const recentEventLimit = 300
 
 type state struct {
-	mu          sync.RWMutex
-	persistMu   sync.Mutex
-	agents      map[string]model.Agent
-	nodes       map[string]model.Node
-	experiments map[string]model.Experiment
-	events      []model.TraceEvent
-	watchers    map[chan struct{}]struct{}
-	dataDir     string
+	mu           sync.RWMutex
+	persistMu    sync.Mutex
+	agents       map[string]model.Agent
+	nodes        map[string]model.Node
+	reservations map[string]string
+	experiments  map[string]model.Experiment
+	events       []model.TraceEvent
+	watchers     map[chan struct{}]struct{}
+	dataDir      string
 }
 
 func newState(dataDir string) *state {
 	return &state{
-		agents:      make(map[string]model.Agent),
-		nodes:       make(map[string]model.Node),
-		experiments: make(map[string]model.Experiment),
-		watchers:    make(map[chan struct{}]struct{}),
-		dataDir:     dataDir,
+		agents:       make(map[string]model.Agent),
+		nodes:        make(map[string]model.Node),
+		reservations: make(map[string]string),
+		experiments:  make(map[string]model.Experiment),
+		watchers:     make(map[chan struct{}]struct{}),
+		dataDir:      dataDir,
 	}
 }
 
@@ -47,6 +49,15 @@ func (s *state) registerAgent(agent model.Agent) (model.Agent, error) {
 	previous, exists := s.agents[agent.ID]
 	if exists && agent.StartedAt.IsZero() {
 		agent.StartedAt = previous.StartedAt
+	}
+	if exists {
+		agent.ActiveNodes = previous.ActiveNodes
+	} else {
+		for _, agentID := range s.reservations {
+			if agentID == agent.ID {
+				agent.ActiveNodes++
+			}
+		}
 	}
 	if agent.StartedAt.IsZero() {
 		agent.StartedAt = now
@@ -96,9 +107,22 @@ func (s *state) heartbeat(h model.AgentHeartbeat) error {
 				node.StartedAt = now
 			}
 		}
+		if old, found := s.nodes[node.ID]; found && old.State == model.NodeStopping && node.State != model.NodeStopping && node.State != model.NodeStopped && node.State != model.NodeFailed {
+			// Stopping is a local tombstone. A heartbeat assembled before the
+			// DELETE must not resurrect the peer or consume capacity again.
+			node = old
+		}
 		s.nodes[node.ID] = node
+		if s.reservations[node.ID] == h.Agent.ID {
+			delete(s.reservations, node.ID)
+		}
 		seen[node.ID] = struct{}{}
-		if node.State != model.NodeStopped && node.State != model.NodeFailed {
+		if node.State != model.NodeStopping && node.State != model.NodeStopped && node.State != model.NodeFailed {
+			h.Agent.ActiveNodes++
+		}
+	}
+	for _, agentID := range s.reservations {
+		if agentID == h.Agent.ID {
 			h.Agent.ActiveNodes++
 		}
 	}
@@ -107,6 +131,9 @@ func (s *state) heartbeat(h model.AgentHeartbeat) error {
 			continue
 		}
 		if _, found := seen[id]; !found && node.State != model.NodeStopped {
+			if s.reservations[id] == h.Agent.ID {
+				continue
+			}
 			node.State = model.NodeStopped
 			node.LastSeen = now
 			s.nodes[id] = node

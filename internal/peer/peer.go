@@ -2,15 +2,16 @@ package peer
 
 import (
 	"context"
+	"crypto/ed25519"
 	crand "crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	mrand "math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -20,18 +21,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/elecbug/kpl-v3/internal/model"
+	"github.com/k-p2p-lab/v3/internal/model"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	libcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/multiformats/go-multiaddr"
 )
-
-const dhtProtocol = "/kpl/kad/1.0.0"
 
 type Server struct {
 	config     model.PeerProcessConfig
@@ -40,6 +38,9 @@ type Server struct {
 	pubsub     *pubsub.PubSub
 	topics     map[string]*pubsub.Topic
 	subs       []*pubsub.Subscription
+	relays     []pubsub.RelayCancelFunc
+	scoreMu    sync.RWMutex
+	peerScores map[string]float64
 	telemetry  *telemetry
 	logger     *slog.Logger
 	startedAt  time.Time
@@ -85,29 +86,45 @@ func New(ctx context.Context, config model.PeerProcessConfig, logger *slog.Logge
 		logger = slog.Default()
 	}
 	config.NodeConfig = config.NodeConfig.WithDefaults()
-	identity, err := deterministicIdentity(config.Seed)
+	if err := config.NodeConfig.Validate(); err != nil {
+		return nil, fmt.Errorf("validate node config: %w", err)
+	}
+	identity, err := deterministicIdentity(config.Node.RunID, config.Seed)
 	if err != nil {
 		return nil, fmt.Errorf("create identity: %w", err)
 	}
-	h, err := libp2p.New(libp2p.Identity(identity), libp2p.ListenAddrStrings(config.P2PListen))
+	options, err := hostOptions(config.NodeConfig)
+	if err != nil {
+		return nil, err
+	}
+	options = append(options, libp2p.Identity(identity), libp2p.ListenAddrStrings(config.P2PListen))
+	h, err := libp2p.New(options...)
 	if err != nil {
 		return nil, fmt.Errorf("create libp2p host: %w", err)
 	}
 	telemetry := newTelemetry(config.Node, config.AgentURL, config.Token, logger)
 	server := &Server{
-		config:    config,
-		host:      h,
-		topics:    make(map[string]*pubsub.Topic),
-		telemetry: telemetry,
-		logger:    logger,
-		startedAt: time.Now().UTC(),
+		config:     config,
+		host:       h,
+		topics:     make(map[string]*pubsub.Topic),
+		peerScores: make(map[string]float64),
+		telemetry:  telemetry,
+		logger:     logger,
+		startedAt:  time.Now().UTC(),
 	}
-	dhtInstance, err := dht.New(ctx, h, dht.Mode(dht.ModeServer), dht.ProtocolPrefix(protocol.ID(dhtProtocol)))
-	if err != nil {
-		_ = h.Close()
-		return nil, fmt.Errorf("create dht: %w", err)
+	if *config.NodeConfig.Kademlia.Enabled {
+		dhtConfig, err := dhtOptions(config.NodeConfig.Kademlia)
+		if err != nil {
+			_ = h.Close()
+			return nil, err
+		}
+		dhtInstance, err := dht.New(ctx, h, dhtConfig...)
+		if err != nil {
+			_ = h.Close()
+			return nil, fmt.Errorf("create dht: %w", err)
+		}
+		server.dht = dhtInstance
 	}
-	server.dht = dhtInstance
 	return server, nil
 }
 
@@ -119,36 +136,15 @@ func (s *Server) Run(ctx context.Context) error {
 	if err := s.connectBootstrap(ctx); err != nil {
 		return err
 	}
-	if err := s.dht.Bootstrap(ctx); err != nil {
-		return fmt.Errorf("bootstrap dht: %w", err)
-	}
-	params := pubsub.DefaultGossipSubParams()
-	params.D = s.config.NodeConfig.D
-	params.Dlo = s.config.NodeConfig.DLow
-	params.Dhi = s.config.NodeConfig.DHigh
-	params.Dout = s.config.NodeConfig.DOut
-	params.Dlazy = s.config.NodeConfig.DLazy
-	if heartbeat, err := time.ParseDuration(s.config.NodeConfig.Heartbeat); err == nil && heartbeat > 0 {
-		params.HeartbeatInterval = heartbeat
-	}
-	tracer := &gossipTracer{telemetry: s.telemetry, peerID: s.host.ID().String()}
-	ps, err := pubsub.NewGossipSub(ctx, s.host, pubsub.WithGossipSubParams(params), pubsub.WithEventTracer(tracer))
-	if err != nil {
-		return fmt.Errorf("create gossipsub: %w", err)
-	}
-	s.pubsub = ps
-	for _, topicName := range s.config.NodeConfig.Topics {
-		topic, err := ps.Join(topicName)
-		if err != nil {
-			return fmt.Errorf("join topic %s: %w", topicName, err)
+	if s.dht != nil {
+		if err := s.dht.Bootstrap(ctx); err != nil {
+			return fmt.Errorf("bootstrap dht: %w", err)
 		}
-		sub, err := topic.Subscribe()
-		if err != nil {
-			return fmt.Errorf("subscribe topic %s: %w", topicName, err)
+	}
+	if *s.config.NodeConfig.GossipSub.Enabled {
+		if err := s.startPubSub(ctx); err != nil {
+			return err
 		}
-		s.topics[topicName] = topic
-		s.subs = append(s.subs, sub)
-		go s.consume(ctx, topicName, sub)
 	}
 	apiServer := &http.Server{
 		Handler:           s.handler(),
@@ -180,6 +176,68 @@ func (s *Server) Run(ctx context.Context) error {
 	return err
 }
 
+func (s *Server) startPubSub(ctx context.Context) error {
+	config := s.config.NodeConfig.GossipSub
+	tracer := &gossipTracer{telemetry: s.telemetry, peerID: s.host.ID().String()}
+	options, err := gossipSubOptions(config, tracer)
+	if err != nil {
+		return err
+	}
+	if config.Score != nil && config.ScoreInspectInterval != "" {
+		interval, parseErr := time.ParseDuration(config.ScoreInspectInterval)
+		if parseErr != nil {
+			return fmt.Errorf("parse score inspect interval: %w", parseErr)
+		}
+		if interval > 0 {
+			options = append(options, pubsub.WithPeerScoreInspect(pubsub.PeerScoreInspectFn(s.recordPeerScores), interval))
+		}
+	}
+	var ps *pubsub.PubSub
+	switch config.Router {
+	case "gossipsub":
+		ps, err = pubsub.NewGossipSub(ctx, s.host, options...)
+	case "floodsub":
+		ps, err = pubsub.NewFloodSub(ctx, s.host, options...)
+	case "randomsub":
+		pubsub.RandomSubD = *config.RandomDegree
+		ps, err = pubsub.NewRandomSub(ctx, s.host, *config.RandomNetworkSize, options...)
+	default:
+		return fmt.Errorf("unknown pubsub router %q", config.Router)
+	}
+	if err != nil {
+		return fmt.Errorf("create %s: %w", config.Router, err)
+	}
+	s.pubsub = ps
+	for _, topicName := range config.Topics {
+		topic, err := ps.Join(topicName)
+		if err != nil {
+			return fmt.Errorf("join topic %s: %w", topicName, err)
+		}
+		s.topics[topicName] = topic
+		switch config.TopicMode {
+		case "subscribe":
+			var subscriptionOptions []pubsub.SubOpt
+			if config.SubscriptionBufferSize != nil {
+				subscriptionOptions = append(subscriptionOptions, pubsub.WithBufferSize(*config.SubscriptionBufferSize))
+			}
+			sub, err := topic.Subscribe(subscriptionOptions...)
+			if err != nil {
+				return fmt.Errorf("subscribe topic %s: %w", topicName, err)
+			}
+			s.subs = append(s.subs, sub)
+			go s.consume(ctx, topicName, sub)
+		case "relay":
+			cancel, err := topic.Relay()
+			if err != nil {
+				return fmt.Errorf("relay topic %s: %w", topicName, err)
+			}
+			s.relays = append(s.relays, cancel)
+		case "publish":
+		}
+	}
+	return nil
+}
+
 func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -201,6 +259,10 @@ func (s *Server) handlePublish(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if !s.config.NodeConfig.PublishAllowed() {
+		http.Error(w, "publishing is disabled for this node type", http.StatusForbidden)
+		return
+	}
 	var request model.PublishRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
@@ -217,7 +279,7 @@ func (s *Server) handlePublish(w http.ResponseWriter, r *http.Request) {
 	}
 	topicName := request.Topic
 	if topicName == "" {
-		topicName = s.config.NodeConfig.Topics[0]
+		topicName = s.config.NodeConfig.GossipSub.Topics[0]
 	}
 	topic, ok := s.topics[topicName]
 	if !ok {
@@ -275,7 +337,13 @@ func (s *Server) consume(ctx context.Context, topic string, sub *pubsub.Subscrip
 }
 
 func (s *Server) connectBootstrap(ctx context.Context) error {
-	deadline := time.NewTimer(60 * time.Second)
+	bootstrapTimeout, _ := time.ParseDuration(s.config.NodeConfig.Kademlia.BootstrapTimeout)
+	retryInterval, _ := time.ParseDuration(s.config.NodeConfig.Kademlia.BootstrapRetryInterval)
+	dialTimeout := 5 * time.Second
+	if s.config.NodeConfig.Libp2p.DialTimeout != "" {
+		dialTimeout, _ = time.ParseDuration(s.config.NodeConfig.Libp2p.DialTimeout)
+	}
+	deadline := time.NewTimer(bootstrapTimeout)
 	defer deadline.Stop()
 	for {
 		nodes, err := s.fetchBootstrap(ctx)
@@ -289,7 +357,7 @@ func (s *Server) connectBootstrap(ctx context.Context) error {
 				if err != nil {
 					continue
 				}
-				connectCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				connectCtx, cancel := context.WithTimeout(ctx, dialTimeout)
 				err = s.host.Connect(connectCtx, info)
 				cancel()
 				if err == nil {
@@ -304,8 +372,8 @@ func (s *Server) connectBootstrap(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline.C:
-			return fmt.Errorf("no reachable bootstrap node after 60s")
-		case <-time.After(time.Second):
+			return fmt.Errorf("no reachable bootstrap node after %s", bootstrapTimeout)
+		case <-time.After(retryInterval):
 		}
 	}
 }
@@ -315,6 +383,9 @@ func (s *Server) fetchBootstrap(ctx context.Context) ([]bootstrapNode, error) {
 	if err != nil {
 		return nil, err
 	}
+	query := req.URL.Query()
+	query.Set("runId", s.config.Node.RunID)
+	req.URL.RawQuery = query.Encode()
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -387,16 +458,42 @@ func (s *Server) reportStatus(ctx context.Context, state, message string) error 
 			node.TopicPeers[topic] = len(s.pubsub.ListPeers(topic))
 		}
 	}
+	s.scoreMu.RLock()
+	if len(s.peerScores) > 0 {
+		node.PeerScores = make(map[string]float64, len(s.peerScores))
+		for peerID, score := range s.peerScores {
+			node.PeerScores[peerID] = score
+		}
+	}
+	s.scoreMu.RUnlock()
 	return s.telemetry.reportNode(ctx, node)
 }
 
-func deterministicIdentity(seed int64) (libcrypto.PrivKey, error) {
-	if seed == 0 {
-		seed = 1
+func (s *Server) recordPeerScores(scores map[peer.ID]float64) {
+	copyScores := make(map[string]float64, len(scores))
+	for peerID, score := range scores {
+		copyScores[peerID.String()] = score
 	}
-	rng := mrand.New(mrand.NewSource(seed))
-	privateKey, _, err := libcrypto.GenerateEd25519Key(rng)
-	return privateKey, err
+	s.scoreMu.Lock()
+	s.peerScores = copyScores
+	s.scoreMu.Unlock()
+}
+
+func deterministicIdentity(runID string, seed int64) (libcrypto.PrivKey, error) {
+	if runID == "" {
+		return nil, fmt.Errorf("identity run namespace is required")
+	}
+	var runIDLength [8]byte
+	var seedBytes [8]byte
+	binary.BigEndian.PutUint64(runIDLength[:], uint64(len(runID)))
+	binary.BigEndian.PutUint64(seedBytes[:], uint64(seed))
+	hash := sha256.New()
+	_, _ = hash.Write([]byte("kpl-v3/libp2p-identity/v1"))
+	_, _ = hash.Write(runIDLength[:])
+	_, _ = hash.Write([]byte(runID))
+	_, _ = hash.Write(seedBytes[:])
+	privateKey := ed25519.NewKeyFromSeed(hash.Sum(nil))
+	return libcrypto.UnmarshalEd25519PrivateKey(privateKey)
 }
 
 func unique(values []string) []string {
@@ -414,6 +511,9 @@ func unique(values []string) []string {
 
 func (s *Server) Close() {
 	s.closeOnce.Do(func() {
+		for _, cancel := range s.relays {
+			cancel()
+		}
 		for _, sub := range s.subs {
 			sub.Cancel()
 		}

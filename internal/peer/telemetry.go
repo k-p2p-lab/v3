@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/elecbug/kpl-v3/internal/model"
+	"github.com/k-p2p-lab/v3/internal/model"
 )
 
 type telemetry struct {

@@ -7,10 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/elecbug/kpl-v3/internal/model"
+	"github.com/k-p2p-lab/v3/internal/model"
 )
 
 func (s *Server) Handler() http.Handler {
@@ -19,6 +20,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/status", s.handleStatus)
 	mux.HandleFunc("/api/v1/nodes", s.handleNodes)
 	mux.HandleFunc("/api/v1/nodes/", s.handleNodeAction)
+	mux.HandleFunc("/api/v1/runs/", s.handleRunAction)
 	mux.HandleFunc("/api/v1/telemetry", s.handleTelemetry)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -28,6 +30,27 @@ func (s *Server) Handler() http.Handler {
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+func (s *Server) handleRunAction(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/runs/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] != "nodes" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodDelete {
+		methodNotAllowed(w)
+		return
+	}
+	rawGeneration := r.URL.Query().Get("generation")
+	generation, err := strconv.ParseUint(rawGeneration, 10, 64)
+	if err != nil || rawGeneration == "" {
+		writeError(w, http.StatusBadRequest, "generation must be an unsigned integer")
+		return
+	}
+	s.stopRunGeneration(parts[0], generation)
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -126,17 +149,26 @@ func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) proxyPublish(ctx context.Context, nodeID string, request model.PublishRequest) error {
-	s.mu.RLock()
+	s.mu.Lock()
 	proc, ok := s.processes[nodeID]
-	s.mu.RUnlock()
-	if !ok || proc.node.State != model.NodeReady {
+	if !ok || proc.exited || proc.node.State != model.NodeReady {
+		s.mu.Unlock()
 		return fmt.Errorf("node %q is not ready", nodeID)
 	}
+	proc.proxyRefs++
+	apiURL := proc.apiURL
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		proc.proxyRefs--
+		s.releaseProcessPortsLocked(proc)
+		s.mu.Unlock()
+	}()
 	data, err := json.Marshal(request)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, proc.apiURL+"/publish", bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL+"/publish", bytes.NewReader(data))
 	if err != nil {
 		return err
 	}

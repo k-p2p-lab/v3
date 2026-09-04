@@ -28,20 +28,24 @@ type Agent struct {
 }
 
 type Node struct {
-	ID             string            `json:"id"`
-	RunID          string            `json:"runId"`
-	AgentID        string            `json:"agentId"`
-	Group          string            `json:"group"`
-	Role           string            `json:"role"`
-	PeerID         string            `json:"peerId,omitempty"`
-	State          string            `json:"state"`
-	Addresses      []string          `json:"addresses,omitempty"`
-	ConnectedPeers []string          `json:"connectedPeers,omitempty"`
-	TopicPeers     map[string]int    `json:"topicPeers,omitempty"`
-	Metadata       map[string]string `json:"metadata,omitempty"`
-	StartedAt      time.Time         `json:"startedAt"`
-	LastSeen       time.Time         `json:"lastSeen"`
-	Error          string            `json:"error,omitempty"`
+	ID             string             `json:"id"`
+	RunID          string             `json:"runId"`
+	Generation     uint64             `json:"generation,omitempty"`
+	AgentID        string             `json:"agentId"`
+	Group          string             `json:"group"`
+	Role           string             `json:"role"`
+	Type           string             `json:"type"`
+	Profile        string             `json:"profile,omitempty"`
+	PeerID         string             `json:"peerId,omitempty"`
+	State          string             `json:"state"`
+	Addresses      []string           `json:"addresses,omitempty"`
+	ConnectedPeers []string           `json:"connectedPeers,omitempty"`
+	TopicPeers     map[string]int     `json:"topicPeers,omitempty"`
+	PeerScores     map[string]float64 `json:"peerScores,omitempty"`
+	Metadata       map[string]string  `json:"metadata,omitempty"`
+	StartedAt      time.Time          `json:"startedAt"`
+	LastSeen       time.Time          `json:"lastSeen"`
+	Error          string             `json:"error,omitempty"`
 }
 
 type TraceEvent struct {
@@ -68,50 +72,17 @@ type AgentHeartbeat struct {
 	Nodes []Node `json:"nodes"`
 }
 
-type NodeConfig struct {
-	Topics       []string `json:"topics" yaml:"topics"`
-	D            int      `json:"d" yaml:"d"`
-	DLow         int      `json:"dLow" yaml:"dLow"`
-	DHigh        int      `json:"dHigh" yaml:"dHigh"`
-	DOut         int      `json:"dOut" yaml:"dOut"`
-	DLazy        int      `json:"dLazy" yaml:"dLazy"`
-	Heartbeat    string   `json:"heartbeat" yaml:"heartbeat"`
-	ConnectLimit int      `json:"connectLimit" yaml:"connectLimit"`
-}
-
-func (c NodeConfig) WithDefaults() NodeConfig {
-	if len(c.Topics) == 0 {
-		c.Topics = []string{"kpl/default"}
-	}
-	if c.D == 0 {
-		c.D = 6
-	}
-	if c.DLow == 0 {
-		c.DLow = 4
-	}
-	if c.DHigh == 0 {
-		c.DHigh = 12
-	}
-	if c.DOut == 0 {
-		c.DOut = 2
-	}
-	if c.DLazy == 0 {
-		c.DLazy = 6
-	}
-	if c.Heartbeat == "" {
-		c.Heartbeat = "1s"
-	}
-	return c
-}
-
 type CreateNodeRequest struct {
-	ID       string     `json:"id"`
-	RunID    string     `json:"runId"`
-	Group    string     `json:"group"`
-	Role     string     `json:"role"`
-	Seed     int64      `json:"seed"`
-	Config   NodeConfig `json:"config"`
-	Lifetime string     `json:"lifetime,omitempty"`
+	ID         string     `json:"id"`
+	RunID      string     `json:"runId"`
+	Generation uint64     `json:"generation,omitempty"`
+	Group      string     `json:"group"`
+	Role       string     `json:"role"`
+	Type       string     `json:"type"`
+	Profile    string     `json:"profile,omitempty"`
+	Seed       int64      `json:"seed"`
+	Config     NodeConfig `json:"config"`
+	Lifetime   string     `json:"lifetime,omitempty"`
 }
 
 type PublishRequest struct {
@@ -122,17 +93,21 @@ type PublishRequest struct {
 }
 
 type Experiment struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	State        string    `json:"state"`
-	Seed         int64     `json:"seed"`
-	Phase        int       `json:"phase"`
-	TotalPhases  int       `json:"totalPhases"`
-	PhaseName    string    `json:"phaseName,omitempty"`
-	StartedAt    time.Time `json:"startedAt"`
-	FinishedAt   time.Time `json:"finishedAt,omitempty"`
-	Error        string    `json:"error,omitempty"`
-	ScenarioYAML string    `json:"-"`
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	State         string    `json:"state"`
+	Seed          int64     `json:"seed"`
+	Phase         int       `json:"phase"`
+	TotalPhases   int       `json:"totalPhases"`
+	PhaseName     string    `json:"phaseName,omitempty"`
+	ActiveJobs    int       `json:"activeJobs"`
+	CompletedJobs int       `json:"completedJobs"`
+	FailedJobs    int       `json:"failedJobs"`
+	CanceledJobs  int       `json:"canceledJobs"`
+	StartedAt     time.Time `json:"startedAt"`
+	FinishedAt    time.Time `json:"finishedAt,omitempty"`
+	Error         string    `json:"error,omitempty"`
+	ScenarioYAML  string    `json:"-"`
 }
 
 type Edge struct {

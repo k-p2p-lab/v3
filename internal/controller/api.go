@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/elecbug/kpl-v3/internal/model"
-	"github.com/elecbug/kpl-v3/internal/webui"
+	"github.com/k-p2p-lab/v3/internal/model"
+	"github.com/k-p2p-lab/v3/internal/webui"
 )
 
 func (s *Server) Run(ctx context.Context) error {
@@ -173,6 +173,11 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
+	runID := strings.TrimSpace(r.URL.Query().Get("runId"))
+	if runID == "" {
+		writeError(w, http.StatusBadRequest, "runId query parameter is required")
+		return
+	}
 	snapshot := s.state.snapshot()
 	type bootstrapNode struct {
 		NodeID    string   `json:"nodeId"`
@@ -181,7 +186,7 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	var result []bootstrapNode
 	for _, node := range snapshot.Nodes {
-		if node.Role == "boot" && node.State == model.NodeReady && node.PeerID != "" && len(node.Addresses) > 0 {
+		if node.RunID == runID && node.Role == "boot" && node.State == model.NodeReady && node.PeerID != "" && len(node.Addresses) > 0 {
 			result = append(result, bootstrapNode{NodeID: node.ID, PeerID: node.PeerID, Addresses: node.Addresses})
 		}
 	}
