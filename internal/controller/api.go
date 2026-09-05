@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/k-p2p-lab/v3/internal/model"
 	"github.com/k-p2p-lab/v3/internal/webui"
@@ -101,6 +102,8 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 	mux.HandleFunc("/api/v1/discovery", s.handleDiscovery)
 	mux.HandleFunc("/api/v1/events", s.handleEvents)
 	mux.HandleFunc("/api/v1/events/batch", s.handleEventBatch)
+	mux.HandleFunc("/api/v1/scenarios", s.handleScenarios)
+	mux.HandleFunc("/api/v1/scenarios/", s.handleScenarioAction)
 	mux.HandleFunc("/api/v1/experiments", s.handleExperiments(ctx))
 	mux.HandleFunc("/api/v1/results", s.handleResults)
 	mux.HandleFunc("/api/v1/results/", s.handleResultAction)
@@ -346,15 +349,27 @@ func (s *Server) handleExperiments(ctx context.Context) http.HandlerFunc {
 				_ = http.NewResponseController(w).SetReadDeadline(time.Now())
 			})
 			defer stopDeadline()
-			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-			raw, err := io.ReadAll(r.Body)
+			mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+			bodyLimit := int64(scenarioYAMLLimit)
+			if mediaType == "application/json" {
+				bodyLimit = scenarioJSONRequestBodyLimit
+			}
+			raw, err := readLimitedRequestBody(w, r, bodyLimit)
 			if err != nil {
+				var tooLarge *http.MaxBytesError
+				if errors.As(err, &tooLarge) {
+					writeError(w, http.StatusRequestEntityTooLarge, "experiment request is too large")
+					return
+				}
 				writeError(w, http.StatusBadRequest, "cannot read scenario")
 				return
 			}
 			repetitions := 1
-			mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 			if mediaType == "application/json" {
+				if !utf8.Valid(raw) {
+					writeError(w, http.StatusBadRequest, "experiment request must be valid UTF-8")
+					return
+				}
 				var submission struct {
 					Scenario    string `json:"scenario"`
 					Repetitions *int   `json:"repetitions"`
@@ -372,6 +387,10 @@ func (s *Server) handleExperiments(ctx context.Context) http.HandlerFunc {
 				}
 				if submission.Repetitions != nil {
 					repetitions = *submission.Repetitions
+				}
+				if len(submission.Scenario) > scenarioYAMLLimit {
+					writeError(w, http.StatusBadRequest, fmt.Sprintf("scenario YAML cannot exceed %d bytes", scenarioYAMLLimit))
+					return
 				}
 				raw = []byte(submission.Scenario)
 			}

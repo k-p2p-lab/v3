@@ -128,7 +128,8 @@ main { width: min(1600px, 100%); margin: 0 auto; padding: 1.4rem clamp(1rem, 3vw
 
 .workspace-grid, .detail-grid { display: grid; gap: 0.85rem; margin-top: 0.85rem; }
 .workspace-grid { grid-template-columns: minmax(0, 1fr); }
-.detail-grid { grid-template-columns: minmax(0, 1.5fr) minmax(21rem, 0.75fr); align-items: start; }
+.detail-grid { grid-template-columns: minmax(0, 1.5fr) minmax(21rem, 0.75fr); align-items: stretch; }
+.agents-panel { align-self: start; width: 100%; }
 .panel {
   min-width: 0;
   border: 1px solid var(--line-soft);
@@ -253,7 +254,8 @@ tbody tr:last-child td { border-bottom: 0; }
 .usage-track i { display: block; height: 100%; background: var(--cyan); }
 .empty-cell { padding: 2rem; text-align: center; color: var(--muted); }
 
-.event-list { max-height: 22rem; margin: 0; padding: 0.45rem 1rem 0.8rem; overflow: auto; list-style: none; }
+.events-panel { display: flex; flex-direction: column; min-height: 0; overflow: hidden; contain: size; }
+.event-list { flex: 1 1 auto; min-height: 0; margin: 0; padding: 0.45rem 1rem 0.8rem; overflow: auto; list-style: none; }
 .event-item { display: grid; grid-template-columns: 4.5rem minmax(7rem, 0.8fr) minmax(0, 1.2fr); gap: 0.22rem 0.65rem; align-items: start; padding: 0.62rem 0; border-bottom: 1px solid var(--line-soft); font-size: 0.75rem; }
 .event-item time { color: var(--muted); font-variant-numeric: tabular-nums; }
 .event-type { min-width: 0; color: var(--cyan); font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; text-transform: uppercase; }
@@ -262,7 +264,7 @@ tbody tr:last-child td { border-bottom: 0; }
 
 dialog { width: min(52rem, calc(100% - 2rem)); max-height: calc(100vh - 2rem); padding: 0; border: 1px solid var(--line); border-radius: 0.9rem; color: var(--text); background: var(--surface-raised); box-shadow: 0 2rem 6rem rgba(0, 0, 0, 0.55); }
 dialog::backdrop { background: rgba(1, 7, 11, 0.74); backdrop-filter: blur(4px); }
-.dialog-shell { display: grid; gap: 0.75rem; padding: 1.25rem; }
+.dialog-shell { display: grid; gap: 0.75rem; max-height: calc(100vh - 2rem); padding: 1.25rem; overflow-y: auto; }
 .dialog-shell header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem; }
 .dialog-shell h2 { margin-top: 0.2rem; font-size: 1.15rem; }
 .dialog-shell label { color: var(--muted); font-size: 0.82rem; }
@@ -271,6 +273,34 @@ textarea, input { width: 100%; border: 1px solid var(--line); border-radius: 0.5
 textarea { min-height: 24rem; resize: vertical; padding: 0.9rem; font: 0.82rem/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; tab-size: 2; }
 input { min-height: 2.65rem; padding: 0.55rem 0.75rem; }
 dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
+#scenarioDialog { width: min(76rem, calc(100% - 2rem)); }
+#scenarioForm { height: calc(100vh - 2rem); overflow: hidden; grid-template-rows: auto minmax(0, 1fr) auto auto auto auto; }
+.scenario-workspace { display: grid; grid-template-columns: minmax(16rem, 0.72fr) minmax(28rem, 1.8fr); gap: 0.85rem; min-height: 0; }
+.scenario-library, .scenario-editor { min-width: 0; border: 1px solid var(--line-soft); border-radius: 0.7rem; background: rgba(7, 16, 24, 0.42); }
+.scenario-library { display: flex; flex-direction: column; min-height: 0; }
+.scenario-library > header, .scenario-editor-heading { min-height: 4.2rem; padding: 0.8rem 0.9rem; border-bottom: 1px solid var(--line-soft); }
+.scenario-library > header { flex-wrap: wrap; gap: 0.65rem; margin: 0; }
+.scenario-library h3, .scenario-editor h3 { margin: 0; font-size: 0.9rem; }
+.scenario-library header p, .scenario-editor-heading p { margin-top: 0.25rem; color: var(--muted); font-size: 0.72rem; line-height: 1.4; overflow-wrap: anywhere; }
+.scenario-library-toolbar, .scenario-save-row, .scenario-item-actions { display: flex; align-items: center; gap: 0.5rem; }
+.scenario-library-toolbar .secondary-button, .scenario-item-actions button { min-height: 2rem; padding: 0.35rem 0.55rem; font-size: 0.72rem; }
+.scenario-library-status { padding: 0.7rem 0.9rem 0.1rem; color: var(--muted); font-size: 0.75rem; line-height: 1.45; }
+.scenario-library-status.error { color: var(--red); }
+.scenario-library-list { min-height: 4rem; margin: 0; padding: 0.55rem; overflow-y: auto; list-style: none; }
+.scenario-library-item { display: grid; gap: 0.55rem; padding: 0.7rem; border: 1px solid transparent; border-radius: 0.55rem; background: rgba(17, 36, 49, 0.52); }
+.scenario-library-item + .scenario-library-item { margin-top: 0.45rem; }
+.scenario-library-item.selected { border-color: rgba(57, 214, 208, 0.48); background: rgba(57, 214, 208, 0.07); }
+.scenario-library-item strong { display: block; overflow: hidden; font-size: 0.8rem; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.scenario-library-item small { display: block; margin-top: 0.22rem; overflow: hidden; color: var(--muted); font-size: 0.67rem; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.scenario-item-actions { flex-wrap: wrap; }
+.scenario-item-actions .load-scenario-button { color: var(--cyan); }
+.scenario-item-actions .delete-scenario-button { margin-left: auto; color: var(--red); }
+.scenario-item-actions .confirm-delete-scenario { color: #210b09; border-color: transparent; background: var(--red); font-weight: 700; }
+.scenario-editor { display: grid; grid-template-rows: auto auto auto auto minmax(10rem, 1fr) auto; gap: 0.65rem; min-height: 0; padding: 0 0.9rem 0.9rem; }
+.scenario-editor-heading { margin-inline: -0.9rem; padding-inline: 0.9rem; }
+.scenario-editor textarea { height: 100%; min-height: 0; }
+.scenario-save-row { justify-content: flex-end; flex-wrap: wrap; }
+.scenario-save-row .dialog-error { margin-right: auto; overflow-wrap: anywhere; }
 .run-repetitions { display: flex; align-items: center; gap: 0.5rem; }
 .run-repetitions input { width: 4.6rem; }
 .dialog-help { color: var(--muted); font-size: 0.8rem; line-height: 1.5; }
@@ -286,7 +316,16 @@ dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
   .metric-card { grid-column: span 2; }
   .metric-card:nth-last-child(-n + 2) { grid-column: span 3; }
   .workspace-grid, .detail-grid { grid-template-columns: 1fr; }
+  .events-panel { height: auto !important; overflow: visible; contain: none; }
+  .event-list { overflow: visible; }
   .run-list { max-height: 20rem; }
+}
+
+@media (max-width: 860px) {
+  #scenarioForm { height: auto; overflow-y: auto; grid-template-rows: none; }
+  .scenario-workspace { grid-template-columns: 1fr; }
+  .scenario-library { max-height: 15rem; }
+  .scenario-editor textarea { height: auto; min-height: 19rem; }
 }
 
 @media (max-width: 620px) {
@@ -311,9 +350,13 @@ dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
   .event-type, .event-summary, .event-run-id { grid-column: 2; }
   .event-summary { white-space: normal; overflow-wrap: anywhere; }
   .event-run-id { text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
-  textarea { min-height: 19rem; }
+  textarea, .scenario-editor textarea { min-height: 19rem; }
   dialog footer { flex-wrap: wrap; }
   #scenarioError { flex-basis: 100%; }
+  .scenario-library > header { align-items: flex-start; }
+  .scenario-library-toolbar { width: 100%; }
+  .scenario-library-toolbar button { flex: 1; }
+  .scenario-save-row .dialog-error { flex-basis: 100%; }
 }
 
 @media (max-width: 460px) {

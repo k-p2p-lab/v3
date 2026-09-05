@@ -196,3 +196,95 @@ func TestRepetitionValidationAndLegacyYAMLSubmission(t *testing.T) {
 		t.Fatalf("legacy single run changed: %+v", experiments)
 	}
 }
+
+func TestExperimentSubmissionLimitsAreBasedOnDecodedScenarioBytes(t *testing.T) {
+	base := validSavedScenarioYAML("request-limit")
+	exact := base + strings.Repeat("\n", scenarioYAMLLimit-len(base))
+	if len(exact) != scenarioYAMLLimit {
+		t.Fatalf("exact scenario length=%d", len(exact))
+	}
+
+	t.Run("escaped JSON accepts one MiB", func(t *testing.T) {
+		server := New(ServerConfig{DataDir: t.TempDir()}, nil)
+		body, err := json.Marshal(map[string]any{"scenario": exact, "repetitions": 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(body) <= scenarioYAMLLimit || len(body) > scenarioJSONRequestBodyLimit {
+			t.Fatalf("test body does not exercise escaped envelope: %d", len(body))
+		}
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/experiments", bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		server.Handler(context.Background()).ServeHTTP(response, request)
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("escaped one MiB status=%d body=%s", response.Code, response.Body)
+		}
+		if experiments := waitRepetitions(t, server); len(experiments) != 1 || experiments[0].State != "completed" {
+			t.Fatalf("escaped one MiB experiment failed: %+v", experiments)
+		}
+	})
+
+	t.Run("decoded JSON over one MiB is invalid", func(t *testing.T) {
+		server := New(ServerConfig{DataDir: t.TempDir()}, nil)
+		body, err := json.Marshal(map[string]any{"scenario": exact + "\n", "repetitions": 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/experiments", bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		server.Handler(context.Background()).ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "cannot exceed") {
+			t.Fatalf("decoded over-limit status=%d body=%s", response.Code, response.Body)
+		}
+	})
+
+	t.Run("raw JSON envelope over limit is too large", func(t *testing.T) {
+		server := New(ServerConfig{DataDir: t.TempDir()}, nil)
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/experiments", strings.NewReader(strings.Repeat(" ", scenarioJSONRequestBodyLimit+1)))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		server.Handler(context.Background()).ServeHTTP(response, request)
+		if response.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("raw JSON over-limit status=%d body=%s", response.Code, response.Body)
+		}
+	})
+
+	t.Run("raw YAML retains one MiB limit", func(t *testing.T) {
+		server := New(ServerConfig{DataDir: t.TempDir()}, nil)
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/experiments", strings.NewReader(exact))
+		request.Header.Set("Content-Type", "application/yaml")
+		response := httptest.NewRecorder()
+		server.Handler(context.Background()).ServeHTTP(response, request)
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("raw one MiB status=%d body=%s", response.Code, response.Body)
+		}
+		waitRepetitions(t, server)
+
+		server = New(ServerConfig{DataDir: t.TempDir()}, nil)
+		request = httptest.NewRequest(http.MethodPost, "/api/v1/experiments", strings.NewReader(exact+"\n"))
+		request.Header.Set("Content-Type", "application/yaml")
+		response = httptest.NewRecorder()
+		server.Handler(context.Background()).ServeHTTP(response, request)
+		if response.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("raw YAML over-limit status=%d body=%s", response.Code, response.Body)
+		}
+	})
+}
+
+func TestExperimentJSONSubmissionRejectsInvalidUTF8BeforeDecode(t *testing.T) {
+	server := New(ServerConfig{DataDir: t.TempDir()}, nil)
+	raw := append([]byte(`{"scenario":"version: 2\nname: `), 0xff)
+	raw = append(raw, []byte(`\nphases: [{action: wait, duration: 1ms}]","repetitions":1}`)...)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/experiments", bytes.NewReader(raw))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Handler(context.Background()).ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "valid UTF-8") {
+		t.Fatalf("invalid UTF-8 status=%d body=%s", response.Code, response.Body)
+	}
+	if len(server.state.snapshot().Experiments) != 0 {
+		t.Fatal("invalid UTF-8 request reserved an experiment")
+	}
+}

@@ -184,22 +184,53 @@
     </section>
   </main>
 
-  <dialog id="scenarioDialog">
-    <form method="dialog" class="dialog-shell" id="scenarioForm">
+  <dialog id="scenarioDialog" aria-labelledby="scenarioDialogHeading">
+    <form class="dialog-shell" id="scenarioForm">
       <header>
         <div>
           <p class="eyebrow">NEW RUN</p>
-          <h2>Run scenario</h2>
+          <h2 id="scenarioDialogHeading">Run scenario</h2>
         </div>
-        <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        <button class="icon-button" aria-label="Close scenario editor" type="button" data-scenario-close>×</button>
       </header>
-      <label for="scenarioText">YAML scenario</label>
-      <textarea id="scenarioText" spellcheck="false"></textarea>
+      <div class="scenario-workspace">
+        <section class="scenario-library" aria-labelledby="scenarioLibraryHeading" aria-busy="false">
+          <header>
+            <div>
+              <h3 id="scenarioLibraryHeading">Saved scenarios</h3>
+              <p>Stored on this Controller.</p>
+            </div>
+            <div class="scenario-library-toolbar">
+              <button class="secondary-button" id="newScenario" type="button">New</button>
+              <button class="secondary-button" id="refreshScenarios" type="button">Refresh</button>
+            </div>
+          </header>
+          <p class="scenario-library-status" id="scenarioLibraryStatus" role="status" aria-live="polite">Open the editor to load saved scenarios.</p>
+          <ul class="scenario-library-list" id="scenarioLibraryList" aria-label="Saved scenarios"></ul>
+        </section>
+        <section class="scenario-editor" aria-labelledby="scenarioEditorHeading">
+          <div class="scenario-editor-heading">
+            <div>
+              <h3 id="scenarioEditorHeading">Scenario editor</h3>
+              <p id="scenarioEditingStatus">New unsaved scenario</p>
+            </div>
+          </div>
+          <label for="scenarioName">Saved scenario name</label>
+          <input id="scenarioName" type="text" maxlength="128" autocomplete="off" placeholder="Example: 100-peer churn baseline">
+          <label for="scenarioText">YAML scenario</label>
+          <textarea id="scenarioText" spellcheck="false"></textarea>
+          <div class="scenario-save-row">
+            <span class="dialog-error" id="scenarioLibraryError" role="alert"></span>
+            <button class="secondary-button" id="saveScenarioCopy" type="button" hidden>Save as new</button>
+            <button class="secondary-button" id="saveScenario" type="button">Save scenario</button>
+          </div>
+        </section>
+      </div>
       <label for="apiToken">API token <small>Required only when the Controller has a token configured</small></label>
       <input id="apiToken" type="password" autocomplete="off" placeholder="Optional">
       <footer>
         <span id="scenarioError" role="alert"></span>
-        <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+        <button class="secondary-button" type="button" data-scenario-close>Cancel</button>
         <label class="run-repetitions" for="runRepetitions">Runs<input id="runRepetitions" type="number" min="1" max="100" step="1" value="1" aria-describedby="repetitionHelp"></label>
         <button class="primary-button" id="runScenario" type="button">Run</button>
       </footer>

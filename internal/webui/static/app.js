@@ -3,11 +3,15 @@ const state = {
   snapshot: null, stream: null, reconnectTimer: null,
   savedResults: null, resultsLoading: false, resultsError: "",
   resultsRefreshTimer: null, resultsRefreshPending: false, runStates: null,
+  savedScenarios: null, scenariosLoading: false, scenariosError: "", scenarioActionError: "",
+  selectedScenarioId: null, scenarioLoadingId: null, scenarioSaving: false,
+  scenarioDeletingId: null, pendingScenarioDeleteId: null, scenarioLoadVersion: 0, scenarioSubmitting: false,
   resultSizeInflight: new Set(), resultSizeQueue: [], resultSizeActive: 0, resultSizeUnavailable: new Set(),
   resultSizeExpiryTimer: null, resultSizeExpiryAt: 0,
   agentNumbers: loadAgentNumbers(),
   pendingStops: new Set(), deletedResultIDs: new Set(),
   pendingDelete: null, deletingResultId: null, apiToken: null,
+  detailPanelObserver: null,
   topology: {
     layout: {},
     filters: { kademlia: true, gossipsub: true, transport: false, topic: "" },
@@ -257,6 +261,32 @@ async function api(path, options = {}) {
   return response.json();
 }
 
+const scenarioRequestTimeoutMs = 30000;
+
+function scenarioTimeoutError(kind) {
+  const message = kind === "run"
+    ? "Request timed out. The experiment may have been submitted. Check Experiment progress before trying again."
+    : kind === "mutation"
+      ? "Request timed out. The server may have completed this operation. Refresh the saved scenario list before trying again."
+      : "Request timed out.";
+  const error = new Error(message);
+  error.name = "TimeoutError";
+  return error;
+}
+
+async function scenarioRequest(path, options = {}, kind = "read") {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), scenarioRequestTimeoutMs);
+  try {
+    return await api(path, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error.name === "AbortError") throw scenarioTimeoutError(kind);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function setConnection(mode, label) {
   const element = $("#connectionState");
   element.className = `connection-state ${mode}`;
@@ -278,6 +308,24 @@ function connectStream() {
     clearTimeout(state.reconnectTimer);
     state.reconnectTimer = setTimeout(connectStream, 2000);
   };
+}
+
+function syncDetailPanelHeight() {
+  const agents = $(".agents-panel");
+  const events = $(".events-panel");
+  if (!agents || !events) return;
+  events.style.removeProperty("height");
+  if (window.matchMedia?.("(max-width: 1050px)").matches) return;
+  const height = agents.getBoundingClientRect().height;
+  if (height > 0) events.style.height = `${height}px`;
+}
+
+function setupDetailPanelSizing() {
+  syncDetailPanelHeight();
+  if (typeof ResizeObserver === "undefined") return;
+  state.detailPanelObserver?.disconnect();
+  state.detailPanelObserver = new ResizeObserver(syncDetailPanelHeight);
+  state.detailPanelObserver.observe($(".agents-panel"));
 }
 
 function render(snapshot) {
@@ -321,6 +369,7 @@ function render(snapshot) {
   renderRuns(snapshot.experiments || []);
   renderAgents(agents);
   renderEvents(snapshot.events || []);
+  syncDetailPanelHeight();
   renderTopology(nodes, edges);
 }
 
@@ -561,6 +610,235 @@ function formatResultTime(value) {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return "—";
   return date.toLocaleString("en-US", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function validateSavedScenario(value, requireYAML = false) {
+  if (!value || typeof value !== "object" || typeof value.id !== "string" || !value.id
+      || typeof value.name !== "string" || (requireYAML && typeof value.yaml !== "string")) {
+    throw new Error("Unexpected saved scenario response.");
+  }
+  return value;
+}
+
+function scenarioOperationBusy() {
+  return state.scenariosLoading || state.scenarioSaving || state.scenarioSubmitting
+    || Boolean(state.scenarioLoadingId) || Boolean(state.scenarioDeletingId);
+}
+
+function renderSavedScenarios() {
+  const scenarios = state.savedScenarios || [];
+  const status = $("#scenarioLibraryStatus");
+  const busy = scenarioOperationBusy();
+  $(".scenario-library").setAttribute("aria-busy", String(busy));
+  $("#refreshScenarios").disabled = busy;
+  $("#refreshScenarios").textContent = state.scenariosLoading ? "Refreshing…" : "Refresh";
+  $("#newScenario").disabled = busy;
+  $("#saveScenario").disabled = busy;
+  $("#saveScenario").textContent = state.scenarioSaving ? "Saving…"
+    : state.selectedScenarioId ? "Save changes" : "Save scenario";
+  $("#saveScenarioCopy").hidden = !state.selectedScenarioId;
+  $("#saveScenarioCopy").disabled = busy;
+  $("#scenarioName").disabled = busy;
+  $("#scenarioText").disabled = busy;
+  $("#apiToken").disabled = busy;
+  $("#runRepetitions").disabled = busy;
+  $("#runScenario").disabled = busy;
+  $("#runScenario").textContent = state.scenarioSubmitting ? "Submitting…" : "Run";
+  $("#scenarioLibraryError").textContent = state.scenarioActionError;
+  status.classList.toggle("error", Boolean(state.scenariosError));
+  status.setAttribute("role", state.scenariosError ? "alert" : "status");
+  status.textContent = state.scenariosLoading ? "Loading saved scenarios…"
+    : state.scenariosError ? `Could not load saved scenarios: ${state.scenariosError}${scenarios.length ? " Showing the last loaded list." : ""}`
+    : state.savedScenarios === null ? "Open the editor to load saved scenarios."
+    : scenarios.length ? "" : "No saved scenarios yet.";
+  status.hidden = !status.textContent;
+
+  const selected = scenarios.find((item) => item.id === state.selectedScenarioId);
+  $("#scenarioEditingStatus").textContent = state.selectedScenarioId
+    ? `Editing saved scenario · ${selected?.name || state.selectedScenarioId}`
+    : "New unsaved scenario";
+  $("#scenarioLibraryList").innerHTML = scenarios.map((item) => {
+    const name = item.name || item.id;
+    const isSelected = item.id === state.selectedScenarioId;
+    const confirmingDelete = item.id === state.pendingScenarioDeleteId;
+    const isDeleting = item.id === state.scenarioDeletingId;
+    const isLoading = item.id === state.scenarioLoadingId;
+    const controls = confirmingDelete
+      ? `<button class="secondary-button" type="button" data-cancel-scenario-delete="${escapeHTML(item.id)}" ${busy ? "disabled" : ""}>Cancel</button><button class="danger-button confirm-delete-scenario" type="button" data-confirm-scenario-delete="${escapeHTML(item.id)}" aria-label="${escapeHTML(`Confirm deletion of saved scenario: ${name}`)}" ${busy ? "disabled" : ""}>${isDeleting ? "Deleting…" : "Confirm delete"}</button>`
+      : `<button class="secondary-button load-scenario-button" type="button" data-load-scenario="${escapeHTML(item.id)}" aria-label="${escapeHTML(`Load saved scenario: ${name}`)}" ${busy ? "disabled" : ""}>${isLoading ? "Loading…" : "Load"}</button><button class="secondary-button delete-scenario-button" type="button" data-delete-scenario="${escapeHTML(item.id)}" aria-label="${escapeHTML(`Delete saved scenario: ${name}`)}" ${busy ? "disabled" : ""}>Delete</button>`;
+    return `<li class="scenario-library-item${isSelected ? " selected" : ""}"${isSelected ? ' aria-current="true"' : ""}>
+      <div><strong title="${escapeHTML(name)}">${escapeHTML(name)}</strong><small title="${escapeHTML(item.id)}">Updated ${escapeHTML(formatResultTime(item.updatedAt))} · ${escapeHTML(item.id)}</small></div>
+      <div class="scenario-item-actions">${controls}</div>
+    </li>`;
+  }).join("");
+  for (const close of document.querySelectorAll("[data-scenario-close]")) close.disabled = busy;
+}
+
+async function refreshSavedScenarios() {
+  if (scenarioOperationBusy()) return;
+  saveToken($("#apiToken").value);
+  state.scenariosLoading = true;
+  state.scenariosError = "";
+  state.scenarioActionError = "";
+  renderSavedScenarios();
+  try {
+    const response = await scenarioRequest("/api/v1/scenarios", { cache: "no-store" });
+    if (!Array.isArray(response)) throw new Error("Unexpected saved scenarios response.");
+    const scenarios = response.map((item) => validateSavedScenario(item));
+    state.savedScenarios = scenarios;
+    if (state.pendingScenarioDeleteId && !scenarios.some((item) => item.id === state.pendingScenarioDeleteId)) {
+      state.pendingScenarioDeleteId = null;
+    }
+    if (state.selectedScenarioId && !scenarios.some((item) => item.id === state.selectedScenarioId)) {
+      state.selectedScenarioId = null;
+      state.scenarioActionError = "The selected saved scenario no longer exists. The editor was retained as a new scenario.";
+    }
+  } catch (error) {
+    state.scenariosError = error.message;
+  } finally {
+    state.scenariosLoading = false;
+    renderSavedScenarios();
+  }
+}
+
+async function loadSavedScenario(id) {
+  if (scenarioOperationBusy() || !(state.savedScenarios || []).some((item) => item.id === id)) return;
+  saveToken($("#apiToken").value);
+  const version = ++state.scenarioLoadVersion;
+  state.scenarioLoadingId = id;
+  state.pendingScenarioDeleteId = null;
+  state.scenarioActionError = "";
+  renderSavedScenarios();
+  try {
+    const item = validateSavedScenario(await scenarioRequest(`/api/v1/scenarios/${encodeURIComponent(id)}`, { cache: "no-store" }), true);
+    if (version !== state.scenarioLoadVersion) return;
+    state.selectedScenarioId = item.id;
+    $("#scenarioName").value = item.name;
+    $("#scenarioText").value = item.yaml;
+    $("#scenarioText").focus();
+  } catch (error) {
+    if (version === state.scenarioLoadVersion) state.scenarioActionError = `Could not load the saved scenario: ${error.message}`;
+  } finally {
+    if (version === state.scenarioLoadVersion) state.scenarioLoadingId = null;
+    renderSavedScenarios();
+  }
+}
+
+function startNewScenario() {
+  if (scenarioOperationBusy()) return;
+  ++state.scenarioLoadVersion;
+  state.selectedScenarioId = null;
+  state.pendingScenarioDeleteId = null;
+  state.scenarioActionError = "";
+  $("#scenarioName").value = "";
+  const editor = $("#scenarioText");
+  editor.value = defaultScenario;
+  renderSavedScenarios();
+  $("#scenarioName").focus();
+}
+
+function upsertSavedScenario(item) {
+  const summary = { id: item.id, name: item.name, createdAt: item.createdAt, updatedAt: item.updatedAt };
+  state.savedScenarios = [summary, ...(state.savedScenarios || []).filter((saved) => saved.id !== item.id)];
+}
+
+function focusScenarioListAction(attribute, id) {
+  if (!id) return false;
+  const target = [...document.querySelectorAll(`[${attribute}]`)].find((button) => button.getAttribute(attribute) === id);
+  target?.focus();
+  return Boolean(target);
+}
+
+async function saveEditedScenario(asNew = false) {
+  if (scenarioOperationBusy()) return;
+  const name = $("#scenarioName").value.trim();
+  const yaml = $("#scenarioText").value;
+  if (!name) {
+    state.scenarioActionError = "Enter a name for the saved scenario.";
+    renderSavedScenarios();
+    $("#scenarioName").focus();
+    return;
+  }
+  if (!yaml.trim()) {
+    state.scenarioActionError = "Enter a YAML scenario to save.";
+    renderSavedScenarios();
+    $("#scenarioText").focus();
+    return;
+  }
+  saveToken($("#apiToken").value);
+  const updateID = !asNew && state.selectedScenarioId;
+  state.scenarioSaving = true;
+  state.pendingScenarioDeleteId = null;
+  state.scenarioActionError = "";
+  renderSavedScenarios();
+  try {
+    const path = updateID ? `/api/v1/scenarios/${encodeURIComponent(updateID)}` : "/api/v1/scenarios";
+    const item = validateSavedScenario(await scenarioRequest(path, {
+      method: updateID ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, yaml }),
+    }, "mutation"), true);
+    state.selectedScenarioId = item.id;
+    $("#scenarioName").value = item.name;
+    $("#scenarioText").value = item.yaml;
+    upsertSavedScenario(item);
+    showToast(`${updateID ? "Updated" : "Saved"} scenario: ${item.name}.`);
+  } catch (error) {
+    state.scenarioActionError = `${updateID ? "Could not update" : "Could not save"} the scenario: ${error.message}`;
+  } finally {
+    state.scenarioSaving = false;
+    renderSavedScenarios();
+  }
+}
+
+function requestScenarioDeletion(id) {
+  if (scenarioOperationBusy() || !(state.savedScenarios || []).some((item) => item.id === id)) return;
+  state.pendingScenarioDeleteId = id;
+  state.scenarioActionError = "";
+  renderSavedScenarios();
+  focusScenarioListAction("data-confirm-scenario-delete", id);
+}
+
+function cancelScenarioDeletion(id) {
+  if (state.scenarioDeletingId || state.pendingScenarioDeleteId !== id) return;
+  state.pendingScenarioDeleteId = null;
+  renderSavedScenarios();
+  focusScenarioListAction("data-delete-scenario", id);
+}
+
+async function confirmScenarioDeletion(id) {
+  if (scenarioOperationBusy() || state.pendingScenarioDeleteId !== id) return;
+  const item = (state.savedScenarios || []).find((saved) => saved.id === id);
+  if (!item) return;
+  const index = state.savedScenarios.indexOf(item);
+  const focusAfterDelete = state.savedScenarios[index + 1]?.id || state.savedScenarios[index - 1]?.id;
+  let deleted = false;
+  saveToken($("#apiToken").value);
+  state.scenarioDeletingId = id;
+  state.scenarioActionError = "";
+  renderSavedScenarios();
+  try {
+    try {
+      await scenarioRequest(`/api/v1/scenarios/${encodeURIComponent(id)}`, { method: "DELETE" }, "mutation");
+    } catch (error) {
+      if (error.status !== 404) throw error;
+    }
+    state.savedScenarios = (state.savedScenarios || []).filter((saved) => saved.id !== id);
+    state.pendingScenarioDeleteId = null;
+    if (state.selectedScenarioId === id) state.selectedScenarioId = null;
+    deleted = true;
+    showToast(`Deleted saved scenario: ${item.name || item.id}.`);
+  } catch (error) {
+    state.scenarioActionError = `Could not delete the saved scenario: ${error.message}`;
+  } finally {
+    state.scenarioDeletingId = null;
+    renderSavedScenarios();
+    if (deleted) {
+      if (!focusScenarioListAction("data-delete-scenario", focusAfterDelete)) $("#newScenario").focus();
+    } else {
+      focusScenarioListAction("data-confirm-scenario-delete", id);
+    }
+  }
 }
 
 async function refreshSavedResults() {
@@ -1054,6 +1332,47 @@ function setupTopologyControls() {
   }, { passive: false });
 }
 
+async function submitScenarioRun() {
+  if (scenarioOperationBusy()) return;
+  const error = $("#scenarioError");
+  const repetitions = Number($("#runRepetitions").value);
+  if (!Number.isInteger(repetitions) || repetitions < 1 || repetitions > 100) {
+    error.textContent = "Enter a whole number of runs from 1 to 100.";
+    $("#runRepetitions").focus();
+    return;
+  }
+  saveToken($("#apiToken").value);
+  state.scenarioSubmitting = true;
+  state.pendingScenarioDeleteId = null;
+  state.scenarioActionError = "";
+  error.textContent = "";
+  renderSavedScenarios();
+  try {
+    const run = await scenarioRequest("/api/v1/experiments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scenario: $("#scenarioText").value, repetitions }),
+    }, "run");
+    $("#scenarioDialog").close();
+    showToast(repetitions > 1 ? `Queued ${repetitions} runs: ${run.name}.` : `Submitted experiment: ${run.name}.`);
+  } catch (caught) {
+    error.textContent = caught.message;
+  } finally {
+    state.scenarioSubmitting = false;
+    renderSavedScenarios();
+  }
+}
+
+function closeScenarioEditor() {
+  if (!scenarioOperationBusy()) $("#scenarioDialog").close("cancel");
+}
+
+function handleScenarioNameKeydown(event) {
+  if (event.key !== "Enter" || event.isComposing) return;
+  event.preventDefault();
+  if (!scenarioOperationBusy()) saveEditedScenario(false);
+}
+
 function showToast(message) {
   const toast = $("#toast");
   toast.textContent = message;
@@ -1064,33 +1383,41 @@ function showToast(message) {
 $("#scenarioText").value = defaultScenario;
 $("#apiToken").value = token();
 $("#refreshResults").addEventListener("click", refreshSavedResults);
-$("#openScenario").addEventListener("click", () => $("#scenarioDialog").showModal());
-$("#runScenario").addEventListener("click", async () => {
-  const button = $("#runScenario");
-  const error = $("#scenarioError");
-  if (button.disabled) return;
-  const repetitions = Number($("#runRepetitions").value);
-  if (!Number.isInteger(repetitions) || repetitions < 1 || repetitions > 100) {
-    error.textContent = "Enter a whole number of runs from 1 to 100.";
-    return;
-  }
-  saveToken($("#apiToken").value);
-  button.disabled = true;
-  $("#runRepetitions").disabled = true;
-  error.textContent = "";
-  try {
-    const run = await api("/api/v1/experiments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenario: $("#scenarioText").value, repetitions }) });
-    $("#scenarioDialog").close();
-    showToast(repetitions > 1 ? `Queued ${repetitions} runs: ${run.name}.` : `Submitted experiment: ${run.name}.`);
-  } catch (caught) {
-    error.textContent = caught.message;
-  } finally {
-    button.disabled = false;
-    $("#runRepetitions").disabled = false;
-  }
+$("#openScenario").addEventListener("click", () => {
+  $("#scenarioDialog").showModal();
+  renderSavedScenarios();
+  refreshSavedScenarios();
 });
+$("#refreshScenarios").addEventListener("click", refreshSavedScenarios);
+$("#newScenario").addEventListener("click", startNewScenario);
+$("#saveScenario").addEventListener("click", () => saveEditedScenario(false));
+$("#saveScenarioCopy").addEventListener("click", () => saveEditedScenario(true));
+$("#runScenario").addEventListener("click", submitScenarioRun);
+$("#scenarioName").addEventListener("keydown", handleScenarioNameKeydown);
+$("#scenarioForm").addEventListener("submit", (event) => event.preventDefault());
+for (const close of document.querySelectorAll("[data-scenario-close]")) close.addEventListener("click", closeScenarioEditor);
 
 document.addEventListener("click", async (event) => {
+  const loadScenarioButton = event.target.closest("[data-load-scenario]");
+  if (loadScenarioButton) {
+    if (!loadScenarioButton.disabled) loadSavedScenario(loadScenarioButton.dataset.loadScenario);
+    return;
+  }
+  const deleteScenarioButton = event.target.closest("[data-delete-scenario]");
+  if (deleteScenarioButton) {
+    if (!deleteScenarioButton.disabled) requestScenarioDeletion(deleteScenarioButton.dataset.deleteScenario);
+    return;
+  }
+  const cancelScenarioDeleteButton = event.target.closest("[data-cancel-scenario-delete]");
+  if (cancelScenarioDeleteButton) {
+    if (!cancelScenarioDeleteButton.disabled) cancelScenarioDeletion(cancelScenarioDeleteButton.dataset.cancelScenarioDelete);
+    return;
+  }
+  const confirmScenarioDeleteButton = event.target.closest("[data-confirm-scenario-delete]");
+  if (confirmScenarioDeleteButton) {
+    if (!confirmScenarioDeleteButton.disabled) confirmScenarioDeletion(confirmScenarioDeleteButton.dataset.confirmScenarioDelete);
+    return;
+  }
   const deleteButton = event.target.closest("[data-delete-result]");
   if (deleteButton) {
     if (!deleteButton.disabled) requestResultDeletion(deleteButton.dataset.deleteResult);
@@ -1117,6 +1444,12 @@ document.addEventListener("click", async (event) => {
 });
 
 $("#confirmDeleteResult").addEventListener("click", confirmResultDeletion);
+$("#scenarioDialog").addEventListener("cancel", (event) => {
+  if (scenarioOperationBusy()) event.preventDefault();
+});
+$("#scenarioDialog").addEventListener("close", () => {
+  if (!state.scenarioDeletingId) state.pendingScenarioDeleteId = null;
+});
 $("#deleteResultDialog").addEventListener("cancel", (event) => {
   if (state.deletingResultId) event.preventDefault();
 });
@@ -1125,6 +1458,11 @@ $("#deleteResultDialog").addEventListener("close", () => {
 });
 
 setupTopologyControls();
-window.addEventListener("resize", () => state.snapshot && renderTopology(state.snapshot.nodes || [], state.snapshot.edges || []));
+setupDetailPanelSizing();
+renderSavedScenarios();
+window.addEventListener("resize", () => {
+  syncDetailPanelHeight();
+  if (state.snapshot) renderTopology(state.snapshot.nodes || [], state.snapshot.edges || []);
+});
 refreshSavedResults();
 connectStream();

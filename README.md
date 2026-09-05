@@ -2,380 +2,68 @@
 
 English | [Korean](README.kr.md)
 
-K-P2PLab v3 is an experimentation platform for building standard libp2p Kademlia and PubSub networks across multiple hosts, running reproducible churn and publish scenarios, and observing state and propagation events in real time from the web. HopWave is intentionally outside the scope of this version.
+K-P2PLab v3 runs reproducible libp2p Kademlia and PubSub experiments across one or more Linux hosts. A Controller schedules scenarios, one Agent manages each host, and every Peer runs in its own Docker container and network namespace. The web Control Room and the bundled Prometheus/Grafana stack expose topology, churn, propagation, and saved results.
 
-English is the default language for code, the web UI, Grafana dashboards, and documentation. Korean documentation is maintained alongside each English `.md` file as `.kr.md`. Keep both versions in sync when updating documentation.
+English is the default language for code, the UI, and documentation. Korean documentation is maintained in matching `.kr.md` files.
 
-## Architecture
+## Core features
 
-```text
-Browser / REST client
-        │
-        ▼
-Controller ─── scenario state machine / registry / event store / dashboard
-        │
-        ├──────────────┐
-        ▼              ▼
-     Agent A         Agent B       capacity-aware scheduling / batched telemetry
-      │  │            │  │
-      ▼  ▼            ▼  ▼
-    Peer Peer        Peer Peer     configurable libp2p Kademlia + PubSub
-```
+- Version 2 YAML scenarios with joins, leaves, readiness barriers, publishing, repeated phases, background jobs, and seeded distributions
+- Isolated Peer containers with per-Peer delay, jitter, loss, duplication, corruption, reordering, and bandwidth controls
+- Single-host Docker Compose and multi-server Docker Swarm deployment with capacity-aware Peer placement
+- Live Kademlia, GossipSub GRAFT, and transport topology with Agent sectors and topic filters
+- Churn-aware delivery, latency, duplicate, coverage, and observation-quality metrics
+- Reusable scenario library plus repeat runs, persisted results, ZIP export, and deletion
 
-- **Controller** provides Agent and Peer state, separate bootstrap and exact-topic discovery registries, scenario execution, event persistence, the REST API, and the web dashboard.
-- **Agent** runs once per physical or virtual host. It starts and stops one Docker container per Peer by default, forwards publish requests, and batches telemetry for the Controller. A process runtime is also available for local development.
-- **Peer** derives its identity from a deterministic `(run ID, seed)` namespace and runs a selected Kademlia and PubSub configuration. Each Docker Peer has its own network namespace for optional traffic conditions.
-- **Dashboard** uses SSE to update Agent capacity, Peer readiness, peer-score summaries, experiment phases, propagation latency, and recent events. The full-width [interactive topology](docs/topology.md) places numbered Peers inside equal Agent sectors and separates Kademlia routing tables, GRAFT-based GossipSub meshes, and transport connections. Peers settle within their sectors using the visible links; layer/topic filters, motion pause/resume, zoom, and neighbor highlighting help inspect the graph.
-- **Experiment analysis** measures on-time delivery to sessions continuously subscribed throughout a configured window, alongside known-starting-session delivery bounds, stable-coverage bounds, and observation quality. First-delivery latency and average duplicate copies use the same eligible pairs. Agent numbers link topology to the status table; stopped Peers disappear from topology. The web form supports 1–100 sequential runs, and Saved results supports ZIP download and deletion. See [definitions and usage](docs/experiment-metrics.md).
+## Prerequisites
 
-## Quick start
+- Linux with rootful Docker Engine and Docker Compose v2; the supplied deployment does not support userns-remap
+- `NET_ADMIN` and the kernel `sch_prio`, `sch_netem`, `cls_u32`, and optional `sch_tbf` modules for network conditions
+- Go 1.24 or later only for development outside Docker
+- For Swarm: an active manager and an image registry reachable and trusted by every selected node
 
-Linux is the deployment target. See the [Linux deployment guide](docs/linux-deployment.md) for kernel checks, remote access, permissions, and graceful shutdown. Run `sh scripts/check-linux.sh` on the Linux host after building the image; `make test-linux` runs the test suite inside Linux.
+See the [Linux deployment guide](docs/linux-deployment.md) for permissions, remote access, storage, and safe shutdown.
 
-Docker Engine with Linux containers and Docker Compose is the recommended setup. Compose builds the shared `kpl-v3:local` image and starts the Controller and two Agents on the `kpl-v3-peers` network. Agents create Peer containers on that same network when an experiment runs.
-
-```bash
-docker compose up --build
-```
-
-Open `http://localhost:8080` and select **Run experiment** to run the default smoke scenario. To protect mutating API operations, set `KPL_API_TOKEN` before starting the stack and enter the same value in the dashboard's run dialog.
-
-All UI ports bind to localhost by default. Use SSH forwarding for a remote Linux server, or explicitly set `KPL_BIND_ADDRESS`/`KPL_HTTP_PORT` for the Controller. For shutdown, `make stop` keeps Agents available while the Controller cancels experiments and removes Peers.
-
-```bash
-export KPL_API_TOKEN="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
-docker compose up --build
-```
-
-Peer containers use internal API port `18000` and P2P TCP port `20000`; those ports are not published to the host. Each Agent's `--self-url` must be reachable from its Peer containers, so Compose uses `http://agent-a:8090` and `http://agent-b:8090`, with `http://controller:8080` for the Controller.
-
-Compose mounts `/var/run/docker.sock` into the Agents and runs them as `0:0` so they can manage sibling Peer containers. The Docker socket is not mounted into Peers. The image includes Docker CLI and Alpine's [iproute2-tc package](https://pkgs.alpinelinux.org/package/v3.22/main/x86_64/iproute2-tc), which supplies `tc`.
-
-For local development without Docker, install Go 1.24 or later and explicitly select `--runtime process`. This runtime does not support node network conditions.
-
-```bash
-go build -o bin/kpl ./cmd/kpl
-./bin/kpl controller --listen :8080
-./bin/kpl agent --runtime process --id local-a --advertise-url http://127.0.0.1:8090 --controller-url http://127.0.0.1:8080
-```
-
-Validate a scenario without running it:
-
-```bash
-./bin/kpl validate --scenario examples/smoke.yaml
-```
-
-### Runtime and multiple hosts
-
-The Agent defaults are `--runtime docker`, `--docker-image kpl-v3:local`, `--docker-network kpl-v3-peers`, and `--docker-binary docker`. The image must be available on each Agent's Docker daemon, and Controller/Agent URLs must be reachable from the containers. `--runtime process` retains the local child-process backend.
-
-On restart, an Agent removes previously managed Peer containers with its Agent ID on the same Docker daemon and network. It does not restore or resume previous experiments. Agent IDs must be unique within that daemon/network. Container removal failures are reported; a later stop request retries cleanup after a temporary daemon outage.
-
-The supplied Compose bridge connects containers on one Docker host. For servers already joined to a Linux Swarm, place this repository on a manager with the Docker CLI and coreutils `timeout`. You also need an image registry accessible to every node; joining Swarm does not create one. The helper manages [stack.swarm.yaml](stack.swarm.yaml), with one Agent per selected node and a shared attachable Peer overlay.
+## Local quick start
 
 ```sh
-sh scripts/swarm.sh nodes
+test -f .env || cp .env.example .env
+# Set KPL_API_TOKEN and GRAFANA_ADMIN_PASSWORD in .env.
+docker compose build controller
+sh scripts/check-linux.sh
+docker compose up -d --no-build
+```
+
+Open the [Control Room](http://localhost:8080), [Grafana](http://localhost:3000/d/kpl-experiments), or [Prometheus](http://localhost:9090). Run the default scenario from the Control Room. Stop cleanly with `make stop`.
+
+## Swarm quick start
+
+Run these commands from the repository on the active manager. Replace the image reference with a registry accessible to every node.
+
+```sh
 sh scripts/swarm.sh init KPL_IMAGE=registry.example.com/kpl-v3:v3 KPL_AGENT_CAPACITY=20 KPL_MIN_AGENTS=2
-sh scripts/swarm.sh config
-# Only if the registry requires authentication:
-sh scripts/swarm.sh login
 sh scripts/swarm.sh publish
-# Assumes at least two workers. For one manager + one worker, use --all.
 sh scripts/swarm.sh deploy --workers
-sh scripts/swarm.sh check
 sh scripts/swarm.sh status
 sh scripts/swarm.sh access
 sh scripts/swarm.sh credentials
 sh scripts/swarm.sh scenario
 ```
 
-Replace the image reference with your existing registry/repository. If Docker needs sudo, consistently use `sudo sh scripts/swarm.sh ...`, including login and configuration. `init` creates a private configuration and separate API/Grafana credentials without overwriting an existing file. Use `configure KEY=VALUE...` for later changes and `config` to inspect effective settings with secrets redacted. Environment values override the literal configuration file; the helper does not load Compose's `.env` or change registry/TLS settings on the daemons.
+Use `--all` instead of `--workers` when the manager must also run an Agent. Open the Controller URL printed by `access`, paste the scenario printed by `scenario`, and use the API token printed by `credentials`. The helper resolves and pins the current image digest during deployment, so tag updates do not require manual SHA edits. Read the [complete Swarm workflow](docs/swarm.md) before operating or removing a production cluster.
 
-Open the Controller URL from `access` and wait for **at least 2 Online Agents**. In **Agent status**, use only `online` rows and confirm that the remaining slots total at least 6: each **Peers** value is occupied / capacity, so subtract the first number from the second. The summary's **Available slots** can include offline Agents. `status` shows Docker state; it does not establish Controller registration. Choose **Run experiment**, replace **YAML scenario** with the `scenario` output, enter the API token shown by `credentials`, and click **Run**. The web form's initial YAML is a different smoke test. The Swarm example creates six Peers, publishes messages with network conditions, then runs `stop-all`. Grafana uses the separate login shown by `credentials`; select the experiment in **Run**.
+## Documentation
 
-After completion and Peer cleanup, use **Download results** on the experiment or under **Saved results**. ZIP exports include the saved scenario, metadata, event log, and export information; they do not include Grafana/Prometheus time-series storage. Download before taking down the web services:
-
-```sh
-sh scripts/swarm.sh remove
-```
-
-For `deploy`, `add-node`, and `remove-node`, use explicit node IDs/hostnames or one selector: `--all` includes managers, `--workers` selects worker-role nodes, and `--all-excluding-self` excludes the manager selected by the current Docker context. “Self” is determined by that daemon's Swarm Node ID, not `KPL_CONTROL_NODE_ID` or the shell's machine. Selectors cannot be combined or mixed with explicit nodes. Deployment/addition selects Linux, Ready, Active nodes and reports skipped candidates; removal is limited to this stack's labels and fails on unavailable targets. Empty selections fail. Existing labels are preserved, bare `deploy` reuses them, and selectors are evaluated again for each command, not automatically for future members.
-
-For updates, keep the same image tag and run `publish` then `deploy` after finishing active experiments. Use `configure KPL_IMAGE=...` first only when changing the image reference. Each deployment resolves the latest registry digest and pins that deployment without rewriting the file: **no manual SHA replacement is needed**. For mixed architectures, use `publish --platforms linux/amd64,linux/arm64` with a capable existing Buildx builder; the image must support the manager and all target nodes.
-
-`remove` confirms Controller shutdown, then Agent shutdown and Peer cleanup. Failed/unavailable nodes or unverified task history block automatic removal. Experiment and monitoring volumes and the external Peer network remain. Removing an individual node stops its Peers and affects experiments using them. The [complete Swarm workflow](docs/swarm.md) covers configuration, subnet selection, troubleshooting, retained results, and the separate migration procedure for older stacks.
-
-For a Swarm experiment with continuous worker churn and repeated random publishing, use the [churn and publish walkthrough](docs/swarm-churn-publish.md) and [scenario](examples/swarm-churn-publish.yaml).
-
-### Prometheus and Grafana
-
-Compose also starts Prometheus and Grafana, provisions the data source and experiment dashboard, and scrapes the Controller and Agents every 5 seconds. Open [Grafana experiment analysis](http://localhost:3000/d/kpl-experiments) or [Prometheus](http://localhost:9090). Both store data in named volumes and publish their UI ports on localhost.
-
-The dashboard covers peer states, publish/delivery/duplicate traffic, propagation latency, churn failures, and configured network conditions. Grafana allows local read-only viewing by default; administrator settings belong in `.env`. See the [monitoring guide](docs/monitoring.md) and [example experiment](examples/monitoring.yaml).
-
-## Module path
-
-The canonical Go module path is `github.com/k-p2p-lab/v3`. Source imports and commands should use that path.
-
-## Node roles, types, and profiles
-
-`role` controls Kademlia bootstrap discovery: a `boot` node is advertised by the Controller as a bootstrap peer, while a `worker` node is not. Topic transport discovery is separate and considers ready PubSub participants in the same run and exact topic. `type` controls the node's libp2p, Kademlia, and PubSub behavior. These concepts are independent, so an experiment can use several worker behaviors without abusing the bootstrap role. When both `type` and `profile` are omitted, `role: boot` selects the `boot` preset and every other role selects `full`.
-
-| Built-in type | Behavior |
+| Guide | Contents |
 |---|---|
-| `boot` | Kademlia-only bootstrap node by default, matching v2 behavior. |
-| `full` / `worker` | Full Kademlia server and standard GossipSub participant with the v2 hard connection cap of `55`. |
-| `light` | Kademlia client with a lower default connection limit. |
-| `publisher` | Publish-only topic participant. |
-| `subscriber` / `observer` | Subscribe-only participant; publishing is rejected. |
-| `relay` | Relays subscribed topic traffic without publishing application messages. |
-| `flood` | Uses FloodSub. |
-| `random` | Uses RandomSub with separate minimum-degree and estimated-network-size controls. |
-| `dht-only` | Runs Kademlia with PubSub disabled. |
-| `gossip-only` | Runs PubSub with Kademlia disabled. |
-| `non-gossip` / `mesh-only` | Uses the GossipSub mesh with lazy gossip disabled. |
-
-Reusable node profiles belong in the top-level `profiles` map. A join phase resolves its configuration in this order: built-in `type`, named `profile`, then the phase's inline `node` overrides. Explicit `false` and `0` values are preserved, which allows experiments such as disabling lazy gossip with `historyGossip: 0`.
-
-The built-in `boot` type sets `gossipsub.enabled: false`. Set it explicitly to `true` in a profile or inline `node` block when bootstrap nodes should also participate in PubSub. Once enabled, boot nodes can use every PubSub router, parameter, scoring, and inspection option described below; [`examples/mixed-workers.yaml`](examples/mixed-workers.yaml) demonstrates this opt-in. PubSub-enabled Peers query the Controller's same-run, exact-topic registry immediately after startup and every three seconds, then use rendezvous hashing to select up to `DHigh` transport candidates per topic and open missing connections. GossipSub still forms the actual GRAFT mesh; DHT bootstrap, transport candidacy, and mesh membership remain distinct.
-
-```yaml
-version: 2
-name: mixed-workers
-seed: 42
-onExit: cancel
-jobShutdownTimeout: 3m
-
-profiles:
-  tuned-mesh:
-    type: full
-    libp2p:
-      connectionLimit: 128
-      connectionManager:
-        lowWater: 64
-        highWater: 96
-        gracePeriod: 30s
-    kademlia:
-      mode: server
-      protocolPrefix: /k-p2p-lab/v3
-      bucketSize: 20
-      concurrency: 10
-    gossipsub:
-      router: gossipsub
-      topics: [kpl/default]
-      floodPublish: false
-      peerExchange: true
-      params:
-        d: 8
-        dLow: 6
-        dHigh: 12
-        dOut: 3
-        dLazy: 8
-        heartbeatInterval: 500ms
-
-phases:
-  - action: join
-    group: tuned
-    role: worker
-    profile: tuned-mesh
-    count: 100
-    parallel: true
-    parallelism: 16
-```
-
-### Protocol controls
-
-The nested node configuration exposes the parameters supported by the pinned libp2p packages. Go duration strings such as `250ms`, `30s`, and `5m` are used for every duration field.
-
-| Section | Configurable fields |
-|---|---|
-| `libp2p` | `userAgent`, `natPortMap`, `relay`, `relayService`, `connectionLimit`, `connectionManager.lowWater`, `connectionManager.highWater`, `connectionManager.gracePeriod`, `dialTimeout` |
-| `kademlia` | `enabled`, `mode`, `protocolPrefix`, `protocolId`, `protocolExtension`, `bucketSize`, `concurrency`, `resiliency`, `lookupCheckConcurrency`, routing-table latency/refresh durations, `maxRecordAge`, provider/value/auto-refresh switches, optimistic-provide settings, and bootstrap timeout/retry interval |
-| `gossipsub` | `enabled`, `router`, `topicMode`, `randomDegree`, `randomNetworkSize`, `subscribe`, `allowPublish`, `topics`, `floodPublish`, `peerExchange`, message/queue/validation limits, `signaturePolicy`, `seenMessagesTTL`, `subscriptionBufferSize`, and `scoreInspectInterval` |
-| `gossipsub.params` | Every `GossipSubParams` field in the pinned library: mesh degrees, history, gossip factor/retransmission, heartbeat, fanout, prune/backoff, connectors, connection timeout, direct-connect and opportunistic-graft controls, IHAVE limits, IDONTWANT limits, and IWANT follow-up time |
-| `gossipsub.score` | Global PeerScore weights and decay settings except application-defined P5, score thresholds, IP-colocation whitelist, and a complete `topics.<topic>` score block for mesh, first-delivery, failure, and invalid-message terms |
-
-GossipSub-only controls (`params`, score/inspection, `floodPublish`, and `peerExchange`) apply only to the `gossipsub` router; FloodSub and RandomSub reject unsupported scoring options and use their router-specific controls instead.
-
-The base mesh defaults are `D=6`, `DLow=5`, `DHigh=12`, `DScore=4`, `DOut=2`, `DLazy=6`, history `5/3`, gossip factor `0.25`, and a `1s` heartbeat. When PubSub is enabled on `boot`, that preset uses `DScore=3`. `full`/`worker` and the role-focused GossipSub worker presets inherit the v2-derived `DLow=5`, `DScore=3`, `maxIHaveLength=5500`, and `1s` initial heartbeat. Most worker presets also use the v2 hard connection limit of `55`; `light` uses `32`. Kademlia defaults to bucket size `20` and protocol prefix `/k-p2p-lab/v3`. See [`internal/model/config.go`](internal/model/config.go) for the complete typed schema and resolved defaults.
-
-`libp2p.connectionLimit` is only a resource-manager hard cap on total connections; it does not implicitly create a soft connection manager. The soft low-water/high-water trimming behavior is installed only when `libp2p.connectionManager` is explicitly present, using its `lowWater`, `highWater`, and `gracePeriod`. This lets a profile choose the hard cap, the soft manager, or both independently.
-
-When migrating a v2 configuration, map v2's misleadingly named `protocol_id` to v3 `kademlia.protocolPrefix`: v2 used that value as a prefix. In v3, `kademlia.protocolId` instead overrides the exact Kademlia V1 wire protocol ID; it is mutually exclusive with `protocolPrefix` and `protocolExtension`, so do not copy a v2 prefix into it. The default prefix `/k-p2p-lab/v3` is an intentional new protocol namespace. Use `protocolPrefix: /k-p2p-lab/kad-dht` only when an experiment requires the legacy v2 namespace.
-
-For RandomSub, `randomDegree` sets the minimum connection/degree target through libp2p's process-global `RandomSubD`. KPL currently isolates each Peer in its own process, so that global applies to one Peer; an in-process multi-peer runtime would need additional isolation. `randomNetworkSize` is the separate estimated network-size argument passed to `NewRandomSub`.
-
-When `gossipsub.score` is enabled, `scoreInspectInterval` defaults to `1s`. Each inspection updates the node's `peerScores` map. It is returned by `/api/v1/nodes`, `/api/v1/network`, `/api/v1/snapshot`, and the SSE snapshot stream; hovering a node in the topology displays the observed score count and average.
-
-`appSpecificWeight` is intentionally unsupported. PeerScore's P5 term requires an in-process application-specific scoring callback, which cannot be supplied by the serializable scenario or REST configuration. Keep it at `0`; any non-zero value fails configuration validation explicitly instead of being accepted without effect.
-
-### Per-node network conditions
-
-With the Docker runtime, add `network` to a profile or a join phase's `node` block. The default `scope: p2p` shapes outgoing P2P TCP on port `20000` inside each Peer container. Select `scope: all` to reproduce v2's shaping of all egress, including control HTTP and telemetry. A configured delay is a one-way egress delay, not a round-trip latency target.
-
-```yaml
-node:
-  network:
-    delay: 100ms
-    jitter: 10ms
-    lossPercent: 1
-    duplicatePercent: 0.1
-    corruptPercent: 0.1
-    reorderPercent: 1
-    rateMbps: 10
-    queueLimit: 1000
-```
-
-| Field | Meaning |
-|---|---|
-| `delay`, `jitter` | Go durations for added delay and its variation. Jitter requires a positive delay. |
-| `lossPercent`, `duplicatePercent`, `corruptPercent`, `reorderPercent` | Packet percentages from `0` to `100`; reordering requires a positive delay. |
-| `rateMbps` | Non-negative egress rate in megabits per second; `0` disables the rate limit. |
-| `queueLimit` | Positive integer specifying the maximum packets in the netem queue. |
-| `scope` | `p2p` (default) or `all` outgoing traffic. |
-| `delayDistribution` | Samples one base delay per Peer using the interval distribution schema; mutually exclusive with `delay`. |
-| `jitterDistribution` | `normal` (default), `uniform` (v2 behavior), `pareto`, or `paretonormal`. |
-| `reorderCorrelationPercent` | Reordering correlation, corresponding to v2's `reorder.chance`. |
-| `tbf` | Token bucket with `rateMbps`, `burstKbit`, and `latency`; mutually exclusive with positive netem `rateMbps`. |
-
-See the [v2 reproduction audit and mapping](docs/v2-reproduction.md) and [churn example](examples/v2-churn.yaml). They cover placement (`balanced`, per-node `random`, batch `single-agent`, or explicit `agentId`), `onError: continue` for churn, `payloadEncoding: raw` for exact PubSub data length, and `topic: '*'` for all topics. Network scope and payload encoding retain their existing defaults. Worker bootstrap now uses seeded first-success selection, and the transport stack is explicitly TCP/Noise/Yamux.
-
-Peers with network conditions require Linux `NET_ADMIN` and host-kernel `sch_netem` support. The Docker runtime adds `NET_ADMIN` only to those Peers. Missing kernel support or a failed `tc` command fails node startup explicitly. A process-runtime Agent rejects network conditions rather than applying rules to its shared host interface.
-
-[`examples/network-conditions.yaml`](examples/network-conditions.yaml) creates two bootstrap nodes and four constrained workers, waits for initialization, publishes sample messages, and stops all nodes. Run it from the dashboard or submit it with:
-
-```bash
-curl -X POST http://localhost:8080/api/v1/experiments \
-  -H 'Content-Type: application/yaml' \
-  -H "Authorization: Bearer ${KPL_API_TOKEN:-}" \
-  --data-binary @examples/network-conditions.yaml
-```
-
-## Scenarios and jobs
-
-The recommended scenario format is version 2 YAML. It preserves the important v2 execution controls while adding explicit job tracking and readiness barriers. The old line-oriented `.kpl` DSL is not parsed directly; translate its commands into phases.
-
-| Action | Purpose |
-|---|---|
-| `join` | Creates nodes using available Agent capacity. |
-| `wait-ready` | Waits until a target percentage of a group/type is ready, optionally after named jobs or a `minCount` floor. |
-| `publish` | Selects ready nodes from a group to publish messages. `deliveryWindow` sets the per-message receipt deadline (default `10s`, positive, at most `1h`). |
-| `leave` | Selects and stops nodes from a group. |
-| `wait` / `sleep` | Waits for a fixed duration. `sleep` is a v2-compatible alias. |
-| `wait-jobs` | Waits for selected background job IDs, or all jobs when `jobs` is empty. |
-| `log` | Writes a scenario message to the Controller log. |
-| `stop-all` / `reset` | Cancels and drains every background job, then uses the run-generation fence to stop the experiment's current and older Peer generations. `reset` is an alias. |
-
-For `join`, `count` is the exact number of create operations. For `publish` and `leave`, it is a maximum capped by the number of eligible candidate nodes; publish candidates must have PubSub and publishing enabled and must have joined the requested topic. `repeat` repeats the entire phase. `parallel` selects sequential or concurrent replica execution, while `parallelism` optionally caps concurrent operations. `await` defaults to `true`; setting it to `false` starts a tracked background job named by `job`, allowing later phases to run while churn or publishing continues. A `wait-jobs` phase can join selected jobs by name.
-
-Background-job behavior at the natural end of the phase list is controlled by top-level `onExit`. Its default, `cancel`, cancels remaining jobs and then waits for them to stop. `onExit: drain` instead waits for them to complete naturally. A naturally successful completion applies this job policy but leaves Peer processes running unless the scenario contains an explicit `stop-all`.
-
-`jobShutdownTimeout` defaults to `3m`. When a user or API request cancels a scenario, or when any scenario phase or background job fails, the Controller cancels outstanding jobs and waits for their termination within this bound, then asks every Agent to generation-fence and clean up Peer processes through the current generation. An explicit `stop-all` uses the same bounded job shutdown, resets job tracking, and fences the current run generation. The Agent records the monotonically increasing fence before stopping matching processes: a late create at generation N either committed before the fence and is included in cleanup, or is rejected because its generation is at or below the fence. After `stop-all` succeeds, the scenario advances to generation N+1, so later phases may create new nodes under the same run ID and may reuse job IDs.
-
-`wait-ready` evaluates the complete matching cohort in the current run generation, including failed, stopping, and stopped nodes; nodes from previous generations are ignored. A failed cohort member prevents the barrier from succeeding, and a node reported as ready contributes to the ready count only while its Agent is online. Because the cohort still contains only nodes observed so far, `wait-ready` after an `await: false` join must specify either `jobs: [job-id]` or `minCount`. `jobs` waits for the selected producer jobs to finish before checking readiness; `minCount` leaves them running but prevents a partially created group from satisfying the ratio too early.
-
-| `parallel` | `await` | Behavior |
-|---|---|---|
-| `false` | `true` | Paced replicas execute sequentially; the next phase waits. |
-| `true` | `true` | Replicas execute concurrently; the next phase waits for the batch. |
-| `false` | `false` | A paced sequential job runs in the background. |
-| `true` | `false` | A concurrent job runs in the background. |
-
-For v2 compatibility, a `publish` phase with no `interval` has a special default: with `parallel: true`, every operation gets a `1s` phase-start offset; sequential publish uses zero delay. This rule is independent of `await`.
-
-`wait` durations and readiness/job timeouts must be positive. An omitted join `lifetime` means no automatic leave, while an explicitly sampled `0s` lifetime stops the new node immediately, matching v2.
-
-```yaml
-phases:
-  - name: background churn
-    action: join
-    job: churn
-    await: false
-    parallel: false
-    group: churners
-    role: worker
-    type: light
-    count: 100
-    interval: {model: exponential, mean: 250ms}
-    lifetime: {model: pareto, xm: 45s, alpha: 2.5, max: 3m}
-
-  - action: wait
-    duration: 10s
-
-  - action: wait-ready
-    group: churners
-    jobs: [churn]
-    readyRatio: 1
-    timeout: 5m
-```
-
-Intervals and lifetimes support these distributions. Duration-valued fields use Go duration strings, and optional `min`/`max` duration bounds clamp the result.
-
-| Model | Parameters and sampling semantics |
-|---|---|
-| `fixed` | `value` is the exact duration. |
-| `exponential` | `mean` is the mean duration of a continuous exponential sample. |
-| `normal` | `mean` and `sigma` are duration-valued mean and standard deviation. Negative samples are clamped to zero before optional bounds are applied. |
-| `pareto` | `xm` is the scale duration and `alpha` is the dimensionless shape. |
-| `poisson` | v2-compatible behavior: `mean` is a duration, converted to seconds as the Poisson mean; the sampled result is quantized to an integer number of seconds. |
-| `gamma` | `alpha` is the shape. Supply exactly one of v2-compatible `beta` (a rate per second) or `scale` (a duration); the two forms are mutually exclusive. |
-| `lognormal` | `mu` is the log-space mean and sigma is dimensionless: use exactly one of a numeric string such as `sigma: "0.5"` or the numeric `logSigma` field. The sample is `exp(mu + sigma*Z)` seconds for standard normal `Z`. |
-
-A non-zero scenario seed reproduces sampled delays, distribution samples, and random selection/order when the initial state, eligible candidate set, and readiness/job barriers are the same. Peer identity is deterministic per `(run ID, per-node seed)`: the same pair yields the same Peer ID, while different run IDs intentionally yield different Peer IDs and avoid cross-run identity collisions. Thus the same scenario seed reproduces sampling and ordering across runs, but not Peer IDs when their run IDs differ; `seed: 0` intentionally chooses a time-based seed. Start with [`examples/smoke.yaml`](examples/smoke.yaml), then see [`examples/mixed-workers.yaml`](examples/mixed-workers.yaml) for custom profiles, heterogeneous worker types, bounded parallel batches, and background paced jobs.
-
-## REST API
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/api/v1/health` | Controller health and current UTC time used for Peer clock sampling |
-| `GET` | `/api/v1/snapshot` | Full dashboard snapshot, including node `peerScores` |
-| `GET` | `/api/v1/agents` | Agent state |
-| `GET` | `/api/v1/nodes` | Peer state, including inspected `peerScores` |
-| `GET` | `/api/v1/network` | Peers with `peerScores`, connection edges, and propagation metrics |
-| `GET` | `/api/v1/bootstrap?runId={runId}` | Ready bootstrap peers belonging only to the required run ID |
-| `GET` | `/api/v1/discovery?runId={runId}&topic={topic}&requesterNodeId={nodeId}` | Ready, online PubSub transport candidates from the same run and exact topic |
-| `GET` | `/api/v1/events` | Recent trace events |
-| `GET` | `/api/v1/stream` | Real-time snapshot SSE stream, including `peerScores` |
-| `GET` | `/api/v1/experiments` | Experiment state plus `activeJobs`, `completedJobs`, `failedJobs`, and `canceledJobs` counters |
-| `GET` | `/api/v1/results` | Saved experiment results, including runs from previous Controller sessions |
-| `DELETE` | `/api/v1/results/{id}` | Delete an inactive saved result; active batches and downloads are protected |
-| `GET` | `/api/v1/experiments/{id}/download` | Download a ZIP of the saved scenario, metadata, and collected events |
-| `POST` | `/api/v1/experiments` | Run YAML once, or JSON `{scenario, repetitions}` for 1–100 sequential runs |
-| `POST` | `/api/v1/experiments/{id}/stop` | Cancel a running experiment, then perform bounded job shutdown and generation-fenced Peer cleanup |
-
-The `runId` query parameter on `/api/v1/bootstrap` is required. The registry returns only ready `boot` nodes with usable identity and address data from that run, so concurrent experiments cannot discover one another's bootstrap peers. `/api/v1/discovery` requires all three shown query parameters, excludes the requester, and returns configured topic participants rather than observed delivery or mesh outcomes.
-
-Example:
-
-```bash
-curl -X POST http://localhost:8080/api/v1/experiments \
-  -H 'Content-Type: application/yaml' \
-  -H "Authorization: Bearer ${KPL_API_TOKEN:-}" \
-  --data-binary @examples/smoke.yaml
-```
-
-Raw events are stored at `data/runs/<run-id>/events.jsonl`; the exact input is stored as `scenario.yaml` and experiment metadata as `experiment.json` in the same directory. In Compose/Swarm, the persistent `controller-data` volume is mounted at `/var/lib/kpl/data`, and each run's files are under `/var/lib/kpl/data/runs/<run-id>`.
-
-Use **Download results** in the Control Room to export a run as ZIP. **Saved results** also lists files retained from previous Controller sessions; **Refresh** reloads that list. Running experiments offer **Download snapshot**, which contains the records saved when the download starts. These exports include the full saved event log, independently of the 300-event recent buffer. See [result downloads](docs/monitoring.md#download-experiment-results) for archive contents and collection limits.
-
-The Agent exposes this internal operational endpoint for Controller-driven cleanup:
-
-| Method | Agent path | Description |
-|---|---|---|
-| `DELETE` | `/api/v1/runs/{runId}/nodes?generation=N` | Requires an unsigned `generation`; atomically raises the run fence through N, rejects later creates at generation N or below, stops existing nodes in those generations, and returns `202 Accepted` |
-
-This endpoint and the other Controller-to-Agent registration, heartbeat, node lifecycle, publish, and batched-telemetry endpoints use REST/JSON. They are internal cluster and operations APIs, not client-facing Controller APIs, and may change independently.
-
-`KPL_API_TOKEN` is one shared Bearer credential for mutating KPL APIs, not a Swarm join token, Docker permission, or Grafana password. Use the same value for the Controller and every Agent; Agents pass it to their Peers automatically. It is required by the Swarm stack and optional in Compose/the CLI. An empty value disables the token check. There are no per-user roles or scoped tokens.
-
-Enter the value in the dashboard's **Run experiment → API token** field. Clicking Run saves it in that origin's browser `localStorage` for later run/stop requests; it does not expire automatically. REST clients send `Authorization: Bearer <token>`. GET reads, including state, events, SSE, and metrics, stay public. The Controller also exempts HEAD; Agents and Peers only exempt GET. The token does not encrypt HTTP traffic.
-
-The same four job counters are present in `/api/v1/snapshot` and SSE snapshots. The dashboard displays them on each run, so active, successful, failed, and canceled background work is visible without inspecting Controller logs.
-
-## Measurement notes and limitations
-
-Propagation messages include the publisher's timestamp. At startup, every Peer has a five-second budget for up to seven Controller health samples, spacing fast failures by 250ms and using the minimum-RTT midpoint to correct its measurement clock. Failure does not block Ready: unsynchronized Peers retry every five seconds, and synchronized Peers refresh every 30 seconds. A successful sample expires after two minutes without refresh; the last offset remains for timestamp continuity, but trusted clock metadata stops until a later success restores it. A bounded negative point estimate can count as a causally possible on-time delivery while remaining excluded from latency statistics. Keep chrony or NTP enabled on all Agent hosts.
-
-The Docker runtime isolates each Peer and supports per-node P2P egress conditions. `wait-ready` confirms Peer initialization and API readiness; it does not verify mesh convergence. Periodic topic discovery repairs transport candidates under churn, while GossipSub heartbeat and GRAFT processing still need time to converge. Add a settling phase when the experiment needs it. Scenario seeds reproduce application sampling and ordering under the documented conditions, but do not promise identical kernel packet impairment or network timing. HopWave is not supported.
-
-Stopped-node history is currently retained in memory and included in Agent heartbeats and Controller snapshots. Long-running, high-volume churn still needs a bounded retention policy and a separate paginated history API to prevent control-plane state and payloads from growing indefinitely.
+| [Linux deployment](docs/linux-deployment.md) | Single-host preparation, permissions, storage, remote access, and shutdown |
+| [Swarm deployment](docs/swarm.md) | Registry setup, node selection, deployment, updates, scaling, and removal |
+| [Scenario configuration](docs/scenario-reference.md) | YAML actions, profiles, protocol controls, distributions, and network conditions |
+| [Scenario library](docs/scenario-library.md) | Save, name, load, update, and delete reusable scenarios |
+| [REST API](docs/api.md) | Controller endpoints, authentication, results, and internal cleanup API |
+| [Development](docs/development.md) | Go build, validation, tests, and the local process runtime |
+| [Experiment metrics](docs/experiment-metrics.md) | Churn-aware delivery denominator, latency, duplicates, and limitations |
+| [Monitoring and results](docs/monitoring.md) | Prometheus, Grafana, ZIP contents, retained data, and deletion |
+| [Topology](docs/topology.md) | Agent sectors, graph layers, topic filters, and controls |
+| [Swarm churn and publish](docs/swarm-churn-publish.md) | Multi-server continuous-churn experiment walkthrough |
+| [v2 reproduction](docs/v2-reproduction.md) | Compatibility mapping and intentional differences from K-P2PLab v2 |
