@@ -76,6 +76,10 @@ Exports contain collected telemetry, including subscription-session start/checkp
 |---|---|
 | `kpl_events_total` | Cumulative events received by the Controller, labeled by `run_id`, `agent_id`, `event_type`, and `topic` |
 | `kpl_message_bytes_total` | Published/delivered PubSub data bytes, excluding libp2p framing and TCP/IP headers |
+| `kpl_gossipsub_control_rpcs_total` | RPC envelopes containing each GossipSub control type, separated by `send`, `recv`, and local pre-send `drop` |
+| `kpl_gossipsub_control_entries_total` | Repeated protobuf control entries carried in those RPCs |
+| `kpl_gossipsub_control_message_ids_total` | Non-unique message-ID reference occurrences in IHAVE, IWANT, and IDONTWANT entries |
+| `kpl_gossipsub_control_peer_exchange_records_total` | Peer-exchange records carried by PRUNE entries |
 | `kpl_window_stable_pairs`, `kpl_window_reached_pairs` | Mature message/receiver-session pairs proven subscribed for the whole delivery window, and their on-time successes; labeled by `run_id` |
 | `kpl_window_unknown_pairs`, `kpl_window_missed_pairs`, `kpl_window_late_pairs` | Unknown receipt, confirmed miss, and late-receipt counts among stable pairs |
 | `kpl_window_delivery_ratio` (`bound`: `lower` / `upper`) | Logical bounds on stable conditional delivery, absent with no stable pairs; not confidence intervals |
@@ -98,6 +102,8 @@ Exports contain collected telemetry, including subscription-session start/checkp
 | `go_*`, `process_*` | Runtime, CPU, and memory metrics for the scraped Controller/Agent processes; these do not represent total Peer container resource usage |
 
 `kpl_network_configured_loss_ratio` is the configured packet loss ratio, not an observed loss rate. Configured delay is also distinct from measured RTT. The `graft`/`prune`/`remove_peer` events help analyze PubSub mesh changes; they are neither a TCP connection graph nor a complete mesh snapshot.
+
+Control counters use only `run_id`, `agent_id`, `direction`, and `control_type` labels. The Topic filter does not apply because IWANT and IDONTWANT contain no topic and one RPC may contain several topics. `send` records outbound queue admission rather than remote receipt, `recv` precedes later router policy checks, and `drop` is a local queue/size rejection rather than `netem` loss. Read RPC, entry, message-ID-reference, and PRUNE peer-exchange counts as separate units. Exact per-RPC topic counts and the per-Agent totals in `metrics.json` remain in the result ZIP. See [experiment metric definitions](experiment-metrics.md#gossipsub-control-traffic).
 
 For current relationships, the Dashboard's [interactive topology](topology.md) uses Peer status snapshots to display transport, Kademlia routing-table, and GossipSub mesh layers independently. These live snapshots do not depend on the recent-event buffer and are not an exhaustive historical graph in Prometheus or result exports.
 

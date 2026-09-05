@@ -123,6 +123,9 @@ func TestMetricsHeartbeatInitializesSharedZeroSeries(t *testing.T) {
 	requireMetricValue(t, metrics, "kpl_events_total", labels, 0)
 	requireMetricValue(t, metrics, "kpl_operation_failures_total", map[string]string{"run_id": "run", "agent_id": "agent", "action": "leave"}, 0)
 	requireMetricValue(t, metrics, "kpl_telemetry_dropped_events_total", map[string]string{"run_id": "run", "agent_id": "agent"}, 0)
+	for _, metric := range []string{"kpl_gossipsub_control_rpcs_total", "kpl_gossipsub_control_entries_total", "kpl_gossipsub_control_message_ids_total", "kpl_gossipsub_control_peer_exchange_records_total"} {
+		requireMetricValue(t, metrics, metric, map[string]string{"run_id": "run", "agent_id": "agent", "direction": "send", "control_type": "ihave"}, 0)
+	}
 	series := 0
 	for key := range metrics {
 		if strings.HasPrefix(key, "kpl_events_total{") {
@@ -139,6 +142,38 @@ func TestMetricsHeartbeatInitializesSharedZeroSeries(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireMetricValue(t, gatherTestMetrics(t, s), "kpl_events_total", labels, 1)
+}
+
+func TestMetricsAggregateGossipSubControlRPCsAndLogicalIDs(t *testing.T) {
+	s := newState(t.TempDir())
+	events := []model.TraceEvent{
+		{RunID: "run", NodeID: "one", Type: "send_ihave", Fields: map[string]any{"controlEntries": 2, "messageIdCount": 7}},
+		{RunID: "run", NodeID: "two", Type: "send_ihave", Fields: map[string]any{"controlEntries": json.Number("1"), "messageIdCount": float64(3)}},
+		{RunID: "run", NodeID: "three", Type: "recv_iwant", Fields: map[string]any{"controlEntries": 1, "messageIdCount": 2}},
+		{RunID: "run", NodeID: "four", Type: "drop_idontwant", Fields: map[string]any{"controlEntries": 1, "messageIdCount": 4}},
+		{RunID: "run", NodeID: "five", Type: "recv_prune", Fields: map[string]any{"controlEntries": 1, "peerExchangeCount": 3}},
+	}
+	if err := s.appendEvents(model.EventBatch{AgentID: "agent", Events: events}); err != nil {
+		t.Fatal(err)
+	}
+	metrics := gatherTestMetrics(t, s)
+	labels := map[string]string{"run_id": "run", "agent_id": "agent", "direction": "send", "control_type": "ihave"}
+	requireMetricValue(t, metrics, "kpl_gossipsub_control_rpcs_total", labels, 2)
+	requireMetricValue(t, metrics, "kpl_gossipsub_control_entries_total", labels, 3)
+	requireMetricValue(t, metrics, "kpl_gossipsub_control_message_ids_total", labels, 10)
+	requireMetricValue(t, metrics, "kpl_gossipsub_control_rpcs_total", map[string]string{"run_id": "run", "agent_id": "agent", "direction": "recv", "control_type": "iwant"}, 1)
+	requireMetricValue(t, metrics, "kpl_gossipsub_control_message_ids_total", map[string]string{"run_id": "run", "agent_id": "agent", "direction": "drop", "control_type": "idontwant"}, 4)
+	requireMetricValue(t, metrics, "kpl_gossipsub_control_peer_exchange_records_total", map[string]string{"run_id": "run", "agent_id": "agent", "direction": "recv", "control_type": "prune"}, 3)
+	for key := range metrics {
+		if strings.HasPrefix(key, "kpl_gossipsub_control_") && (strings.Contains(key, "node_id=") || strings.Contains(key, "remote_peer_id=") || strings.Contains(key, "message_id=") || strings.Contains(key, "topic=")) {
+			t.Fatalf("high-cardinality control label in %s", key)
+		}
+	}
+	for _, invalid := range []any{-1, 1.5, math.NaN(), math.Inf(1), "2"} {
+		if _, ok := nonnegativeMetricCount(invalid); ok {
+			t.Fatalf("accepted invalid control count %v", invalid)
+		}
+	}
 }
 
 func TestMetricsHeartbeatInitializesConnectionEventsWithoutResetting(t *testing.T) {

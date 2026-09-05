@@ -77,6 +77,10 @@ curl --fail --output run-results.zip \
 |---|---|
 | `kpl_events_total` | Controller가 수신한 이벤트 누적 수. `run_id`, `agent_id`, `event_type`, `topic`으로 구분 |
 | `kpl_message_bytes_total` | 발행/수신 PubSub data 바이트. libp2p framing 및 TCP/IP 헤더 제외 |
+| `kpl_gossipsub_control_rpcs_total` | 각 GossipSub 제어 타입을 포함한 RPC envelope 수. `send`, `recv`, 로컬 송신 전 `drop`으로 구분 |
+| `kpl_gossipsub_control_entries_total` | 해당 RPC에 담긴 repeated protobuf control entry 수 |
+| `kpl_gossipsub_control_message_ids_total` | IHAVE, IWANT, IDONTWANT entry 안의 중복 제거하지 않은 메시지 ID 참조 출현 횟수 |
+| `kpl_gossipsub_control_peer_exchange_records_total` | PRUNE entry에 담긴 peer-exchange record 수 |
 | `kpl_window_stable_pairs`, `kpl_window_reached_pairs` | 기간이 지난 메시지 중 수신 기간 전체의 구독이 증명된 수신 세션 쌍 및 기한 내 성공. `run_id`로 구분 |
 | `kpl_window_unknown_pairs`, `kpl_window_missed_pairs`, `kpl_window_late_pairs` | 안정 쌍의 수신 불명·확인된 미도달·마감 후 수신 수 |
 | `kpl_window_delivery_ratio` (`bound`: `lower` / `upper`) | 안정 대상 조건부 도달률의 논리적 상·하한. 안정 쌍이 없으면 생략하며 신뢰구간이 아님 |
@@ -99,6 +103,8 @@ curl --fail --output run-results.zip \
 | `go_*`, `process_*` | scrape 대상 Controller/Agent 프로세스의 런타임·CPU·메모리. Peer 컨테이너 전체 자원 사용량은 아님 |
 
 `kpl_network_configured_loss_ratio`는 설정한 패킷 손실률이며 실제 관측 손실률이 아닙니다. 설정 delay도 실제 RTT와 구분합니다. graft/prune/remove_peer 이벤트는 PubSub mesh 변화를 분석하는 자료이며 TCP 연결 그래프나 완전한 mesh snapshot을 뜻하지 않습니다.
+
+제어 counter는 `run_id`, `agent_id`, `direction`, `control_type` label만 사용합니다. IWANT와 IDONTWANT에는 topic이 없고 하나의 RPC가 여러 topic을 담을 수 있으므로 Topic filter는 적용하지 않습니다. `send`는 원격 수신이 아닌 outbound queue 수락, `recv`는 이후 router 정책 검사 전 관측, `drop`은 `netem` 손실이 아닌 로컬 queue/크기 거부입니다. RPC, entry, 메시지 ID 참조, PRUNE peer-exchange 수를 서로 다른 단위로 읽으십시오. RPC별 정확한 topic 수와 `metrics.json`의 Agent별 누적치는 결과 ZIP에 남습니다. [실험 지표 정의](experiment-metrics.kr.md#gossipsub-제어-트래픽)를 참고하십시오.
 
 현재 관계는 대시보드의 [대화형 토폴로지](topology.kr.md)에서 Peer 상태 snapshot을 통해 transport, Kademlia 라우팅 테이블, GossipSub mesh를 독립적으로 확인하십시오. 이 live snapshot은 최근 이벤트 버퍼와 독립적이며 Prometheus나 결과 ZIP에 전체 그래프 이력을 저장하는 것은 아닙니다.
 

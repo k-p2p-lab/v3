@@ -1014,7 +1014,17 @@ function renderEvents(events) {
     const latency = event.fields?.latencyAvailable === false ? "latency unavailable" : event.latencyMs > 0 ? `${formatNumber(event.latencyMs, 1)} ms` : "";
     const nodePrefix = event.runId ? `${event.runId}-` : "";
     const nodeLabel = nodePrefix && event.nodeId?.startsWith(nodePrefix) ? event.nodeId.slice(nodePrefix.length) : event.nodeId;
-    const detail = [nodeLabel, event.remotePeerId ? `← ${event.remotePeerId.slice(0, 10)}` : "", latency].filter(Boolean).join(" · ");
+    const direction = event.fields?.direction;
+    const peerArrow = direction === "send" ? "→" : direction === "drop" ? "⇢" : "←";
+    const controlEntries = Number(event.fields?.controlEntries);
+    const messageIDs = Number(event.fields?.messageIdCount);
+    const peerExchange = Number(event.fields?.peerExchangeCount);
+    const control = event.fields?.controlType ? [
+      Number.isFinite(controlEntries) ? `${controlEntries} ${controlEntries === 1 ? "entry" : "entries"}` : "",
+      Number.isFinite(messageIDs) && messageIDs > 0 ? `${messageIDs} message IDs` : "",
+      Number.isFinite(peerExchange) && peerExchange > 0 ? `${peerExchange} PX records` : "",
+    ].filter(Boolean).join(" · ") : "";
+    const detail = [nodeLabel, event.remotePeerId ? `${peerArrow} ${event.remotePeerId.slice(0, 10)}` : "", control, latency].filter(Boolean).join(" · ");
     const runID = event.runId ? `<small class="event-run-id" title="${escapeHTML(`Experiment ID: ${event.runId}`)}">Experiment · ${escapeHTML(event.runId)}</small>` : "";
     return `<li class="event-item"><time datetime="${escapeHTML(event.timestamp)}">${new Date(event.timestamp).toLocaleTimeString("en-US", { hour12: false })}</time><span class="event-type" title="${escapeHTML(event.type)}">${escapeHTML(event.type)}</span><span class="event-summary" title="${escapeHTML(detail)}">${escapeHTML(detail)}</span>${runID}</li>`;
   }).join("");

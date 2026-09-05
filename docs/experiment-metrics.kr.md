@@ -117,6 +117,22 @@ UI와 `metrics.json`은 산술평균, nearest-rank P95, `latencySamples`를 제�
 
 envelope 이벤트는 애플리케이션 메시지 ID로 연결합니다. raw는 `pubsub-<원래 메시지 ID의 hex>`를 사용하여 같은 바이트를 발행해도 메시지를 구분합니다. `fields.pubsubMessageId`는 원래 ID를 보존합니다. wire 형식과 PubSub의 발신자+sequence 메시지 ID 계산은 유지하며 telemetry의 원본 sequence는 별도 카운터입니다. 이벤트 ID는 재시도에도 유지하여 Controller가 한 번만 저장·집계합니다.
 
+## GossipSub 제어 트래픽
+
+KPL은 GossipSub `SEND_RPC`, `RECV_RPC`, `DROP_RPC` trace에 포함된 제어 metadata를 관측합니다. Peer는 RPC마다 그 안에 존재하는 각 제어 타입에 대해 `send_*`, `recv_*`, `drop_*` 이벤트를 하나씩 만듭니다. 지원 suffix는 `ihave`, `iwant`, `idontwant`, `graft`, `prune`입니다. 따라서 IHAVE와 IWANT를 함께 담은 혼합 RPC는 두 시계열에 모두 한 번씩 반영됩니다.
+
+세 수치는 단위가 서로 다릅니다.
+
+- **RPC 수**는 해당 제어 타입을 포함한 envelope 수입니다. 타입 전체를 합하면 하나의 혼합 envelope가 여러 번 포함될 수 있습니다.
+- **Entry 수**는 RPC 안의 repeated protobuf control entry 수입니다.
+- **메시지 ID 수**는 IHAVE, IWANT, IDONTWANT entry 안의 ID 참조 출현 횟수입니다. 같은 ID의 반복 참조도 반복해 세며 unique 메시지 수나 전달 수가 아닙니다.
+
+PRUNE peer-exchange record는 별도로 집계합니다. IHAVE, GRAFT, PRUNE에는 topic 필드가 있으므로 원시 이벤트의 `fields.topics`, `fields.topicEntryCounts`, IHAVE의 `fields.topicMessageIdCounts`에 정렬된 topic별 정보를 보존합니다. 한 RPC가 여러 topic을 담을 수 있고 IWANT/IDONTWANT에는 wire topic이 없으므로 최상위 이벤트 topic은 비워 둡니다. 따라서 Prometheus counter는 topic label 없이 run, Agent, 방향, 제어 타입으로 구분합니다. 다운로드한 `metrics.json`에도 정확히 같은 `events.jsonl` 경계에서 재구성한 Agent별 내역이 들어갑니다.
+
+`send`는 로컬 outbound queue가 RPC를 수락했다는 뜻이며 stream write나 원격 수신을 증명하지 않습니다. `recv`는 이후 router admission과 flood limit 판단 전의 inbound 관측입니다. 두 방향을 더하면 같은 전송의 양 끝 관측을 중복해 셀 수 있으므로 고유 wire RPC 총수로 해석하면 안 됩니다. `drop`은 queue 포화나 oversized RPC 같은 로컬 송신 전 폐기이며 `netem` 패킷 손실이 아닙니다. 기존의 단순 `graft`와 `prune` 이벤트는 로컬 mesh 전이를 뜻하므로 wire `send_graft`/`recv_graft`, `send_prune`/`recv_prune`와 분리합니다.
+
+이 방식은 RPC 발생 수와 논리 ID 참조 수를 나누던 v2의 유용한 기준을 유지하면서 혼합 RPC의 `if/else-if` 누락을 고치고 IDONTWANT와 drop을 추가합니다. IDONTWANT 발생에는 GossipSub v1.2 지원과 메시지 크기도 영향을 줍니다. 고정된 기본값에서는 보통 data가 1,024바이트 이상일 때 생성되므로 이를 시험하려면 payload를 키우거나 `gossipsub.params.iDontWantMessageThreshold`를 낮추십시오.
+
 ## 집계 범위, 내보내기, 모니터링
 
 새 요약은 `definition: "session-window-v1"`을 사용합니다. 발행은 `fields.measurementDefinition`과 `fields.deliveryWindow`를 기록합니다. 저장된 세션 증거, 발행·수신 시각, 원본 sequence로 같은 계산을 재구성합니다.

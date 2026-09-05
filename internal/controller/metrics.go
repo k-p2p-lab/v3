@@ -18,6 +18,10 @@ type controllerMetrics struct {
 	registry          *prometheus.Registry
 	events            *prometheus.CounterVec
 	messageBytes      *prometheus.CounterVec
+	controlRPCs       *prometheus.CounterVec
+	controlEntries    *prometheus.CounterVec
+	controlMessageIDs *prometheus.CounterVec
+	controlPXRecords  *prometheus.CounterVec
 	operationFailures *prometheus.CounterVec
 	droppedEvents     *prometheus.CounterVec
 	initializedAgents sync.Map
@@ -33,6 +37,18 @@ func newControllerMetrics(s *state) *controllerMetrics {
 		messageBytes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "kpl_message_bytes_total", Help: "PubSub data bytes reported by publish and deliver events; excludes libp2p transport framing.",
 		}, []string{"run_id", "agent_id", "topic", "direction", "encoding"}),
+		controlRPCs: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "kpl_gossipsub_control_rpcs_total", Help: "GossipSub RPCs containing each control type observed by direction.",
+		}, []string{"run_id", "agent_id", "direction", "control_type"}),
+		controlEntries: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "kpl_gossipsub_control_entries_total", Help: "GossipSub protobuf control entries carried by observed RPCs.",
+		}, []string{"run_id", "agent_id", "direction", "control_type"}),
+		controlMessageIDs: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "kpl_gossipsub_control_message_ids_total", Help: "Message-ID references carried by observed GossipSub IHAVE, IWANT, and IDONTWANT entries; references are not deduplicated.",
+		}, []string{"run_id", "agent_id", "direction", "control_type"}),
+		controlPXRecords: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "kpl_gossipsub_control_peer_exchange_records_total", Help: "Peer exchange records carried by observed GossipSub PRUNE entries.",
+		}, []string{"run_id", "agent_id", "direction", "control_type"}),
 		operationFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "kpl_operation_failures_total", Help: "Phase operation failures recorded by the continue policy.",
 		}, []string{"run_id", "agent_id", "action"}),
@@ -40,7 +56,7 @@ func newControllerMetrics(s *state) *controllerMetrics {
 			Name: "kpl_telemetry_dropped_events_total", Help: "Peer telemetry queue drops reported to the Controller.",
 		}, []string{"run_id", "agent_id"}),
 	}
-	m.registry.MustRegister(m.events, m.messageBytes, m.operationFailures, m.droppedEvents, newRunMetricsCollector(s),
+	m.registry.MustRegister(m.events, m.messageBytes, m.controlRPCs, m.controlEntries, m.controlMessageIDs, m.controlPXRecords, m.operationFailures, m.droppedEvents, newRunMetricsCollector(s),
 		newControllerStateCollector(s), newNetworkCollector(s), collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	return m
 }
@@ -57,6 +73,15 @@ func (m *controllerMetrics) initNode(node model.Node) {
 		// before disconnects to expose their first increase to Prometheus.
 		for _, eventType := range []string{"add_peer", "remove_peer"} {
 			m.events.WithLabelValues(node.RunID, node.AgentID, eventType, "")
+		}
+		for _, direction := range []string{"send", "recv", "drop"} {
+			for _, controlType := range []string{"ihave", "iwant", "idontwant", "graft", "prune"} {
+				labels := []string{node.RunID, node.AgentID, direction, controlType}
+				m.controlRPCs.WithLabelValues(labels...)
+				m.controlEntries.WithLabelValues(labels...)
+				m.controlMessageIDs.WithLabelValues(labels...)
+				m.controlPXRecords.WithLabelValues(labels...)
+			}
 		}
 	}
 	topics := nodeTopics(node)
@@ -89,6 +114,19 @@ func (m *controllerMetrics) initNode(node model.Node) {
 
 func (m *controllerMetrics) observeEvent(event model.TraceEvent) {
 	m.events.WithLabelValues(event.RunID, event.AgentID, event.Type, event.Topic).Inc()
+	if key, ok := gossipSubControlEvent(event.Type); ok {
+		labels := []string{event.RunID, event.AgentID, key.direction, key.controlType}
+		m.controlRPCs.WithLabelValues(labels...).Inc()
+		if count, ok := nonnegativeMetricCount(event.Fields["controlEntries"]); ok {
+			m.controlEntries.WithLabelValues(labels...).Add(count)
+		}
+		if count, ok := nonnegativeMetricCount(event.Fields["messageIdCount"]); ok {
+			m.controlMessageIDs.WithLabelValues(labels...).Add(count)
+		}
+		if count, ok := nonnegativeMetricCount(event.Fields["peerExchangeCount"]); ok {
+			m.controlPXRecords.WithLabelValues(labels...).Add(count)
+		}
+	}
 	switch event.Type {
 	case "publish", "deliver":
 		encoding, _ := event.Fields["payloadEncoding"].(string)
@@ -137,6 +175,11 @@ func nonnegativeMetricNumber(value any) (float64, bool) {
 		return 0, false
 	}
 	return number, number >= 0 && !math.IsNaN(number) && !math.IsInf(number, 0)
+}
+
+func nonnegativeMetricCount(value any) (float64, bool) {
+	number, ok := nonnegativeMetricNumber(value)
+	return number, ok && math.Trunc(number) == number
 }
 
 type controllerStateCollector struct {

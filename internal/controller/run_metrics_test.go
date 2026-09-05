@@ -24,6 +24,39 @@ func cohortDuplicate(id, node, eventID string) model.TraceEvent {
 	return model.TraceEvent{RunID: "run", EventID: eventID, NodeID: node, Type: "duplicate", MessageID: id, Topic: "topic", Timestamp: time.Unix(11, 0)}
 }
 
+func TestRunMetricsPreserveGossipSubControlBreakdownAcrossExportRebuild(t *testing.T) {
+	events := []model.TraceEvent{
+		{RunID: "run", NodeID: "one", EventID: "one", Type: "send_ihave", Fields: map[string]any{"controlEntries": 2, "messageIdCount": 8}},
+		{RunID: "run", NodeID: "two", EventID: "two", Type: "send_ihave", Fields: map[string]any{"controlEntries": 1, "messageIdCount": 3}},
+		{RunID: "run", NodeID: "one", EventID: "three", Type: "recv_iwant", Fields: map[string]any{"controlEntries": 1, "messageIdCount": 2}},
+		{RunID: "run", NodeID: "one", EventID: "four", Type: "drop_prune", Fields: map[string]any{"controlEntries": 2, "messageIdCount": 0, "peerExchangeCount": 4}},
+		{RunID: "run", AgentID: "agent-b", NodeID: "five", EventID: "five", Type: "send_ihave", Fields: map[string]any{"controlEntries": 1, "messageIdCount": 5}},
+	}
+	accumulator := newRunMetricAccumulator()
+	var log bytes.Buffer
+	for _, event := range events {
+		accumulator.observe(event)
+		accumulator.observe(event)
+		if err := json.NewEncoder(&log).Encode(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	live, _ := accumulator.summarize("run")
+	rebuilt, err := summarizeRunEvents("run", &log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []model.GossipSubControlMetric{
+		{Direction: "send", ControlType: "ihave", RPCs: 2, Entries: 3, MessageIDs: 11},
+		{Direction: "recv", ControlType: "iwant", RPCs: 1, Entries: 1, MessageIDs: 2},
+		{Direction: "drop", ControlType: "prune", RPCs: 1, Entries: 2, MessageIDs: 0, PeerExchangeRecords: 4},
+		{AgentID: "agent-b", Direction: "send", ControlType: "ihave", RPCs: 1, Entries: 1, MessageIDs: 5},
+	}
+	if !reflect.DeepEqual(live.GossipSubControl, want) || !reflect.DeepEqual(rebuilt.GossipSubControl, want) {
+		t.Fatalf("control metrics live=%+v rebuilt=%+v", live.GossipSubControl, rebuilt.GossipSubControl)
+	}
+}
+
 func TestChurnMetricsFreezeCohortAndUseFirstRemoteDelivery(t *testing.T) {
 	a := newRunMetricAccumulator()
 	// Delivery/duplicate batches arrive before the publication batch.

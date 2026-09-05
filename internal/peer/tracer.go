@@ -1,6 +1,7 @@
 package peer
 
 import (
+	"sort"
 	"time"
 
 	"github.com/k-p2p-lab/v3/internal/model"
@@ -73,10 +74,133 @@ func (t *gossipTracer) Trace(event *pubsubpb.TraceEvent) {
 		trace.Type = "prune"
 		trace.Topic = event.Prune.GetTopic()
 		trace.RemotePeerID = peerID(event.Prune.PeerID)
+	case pubsubpb.TraceEvent_SEND_RPC:
+		if event.SendRPC != nil {
+			t.traceControlRPC(trace, "send", event.SendRPC.GetSendTo(), event.SendRPC.GetMeta())
+		}
+		return
+	case pubsubpb.TraceEvent_RECV_RPC:
+		if event.RecvRPC != nil {
+			t.traceControlRPC(trace, "recv", event.RecvRPC.GetReceivedFrom(), event.RecvRPC.GetMeta())
+		}
+		return
+	case pubsubpb.TraceEvent_DROP_RPC:
+		if event.DropRPC != nil {
+			t.traceControlRPC(trace, "drop", event.DropRPC.GetSendTo(), event.DropRPC.GetMeta())
+		}
+		return
 	default:
 		return
 	}
 	t.telemetry.emit(trace)
+}
+
+// traceControlRPC preserves v2's useful distinction between an RPC containing
+// a control type and the number of logical message IDs carried by that type.
+// Unlike the v2 parser, each type in a mixed RPC is emitted independently and
+// IDONTWANT is included. One event represents one RPC/control-type pair.
+func (t *gossipTracer) traceControlRPC(trace model.TraceEvent, direction string, remote []byte, meta *pubsubpb.TraceEvent_RPCMeta) {
+	if meta == nil || meta.GetControl() == nil {
+		return
+	}
+	trace.RemotePeerID = peerID(remote)
+	control := meta.GetControl()
+
+	ihaveEntries, ihaveIDs := 0, 0
+	ihaveTopicEntries, ihaveTopicIDs := make(map[string]int), make(map[string]int)
+	for _, entry := range control.GetIhave() {
+		if entry == nil {
+			continue
+		}
+		ihaveEntries++
+		ihaveIDs += len(entry.GetMessageIDs())
+		addControlTopicCounts(ihaveTopicEntries, ihaveTopicIDs, entry.GetTopic(), len(entry.GetMessageIDs()))
+	}
+	t.emitControlRPC(trace, direction, "ihave", ihaveEntries, ihaveIDs, ihaveTopicEntries, ihaveTopicIDs, 0)
+
+	iwantEntries, iwantIDs := 0, 0
+	for _, entry := range control.GetIwant() {
+		if entry == nil {
+			continue
+		}
+		iwantEntries++
+		iwantIDs += len(entry.GetMessageIDs())
+	}
+	t.emitControlRPC(trace, direction, "iwant", iwantEntries, iwantIDs, nil, nil, 0)
+
+	idontwantEntries, idontwantIDs := 0, 0
+	for _, entry := range control.GetIdontwant() {
+		if entry == nil {
+			continue
+		}
+		idontwantEntries++
+		idontwantIDs += len(entry.GetMessageIDs())
+	}
+	t.emitControlRPC(trace, direction, "idontwant", idontwantEntries, idontwantIDs, nil, nil, 0)
+
+	graftEntries := 0
+	graftTopicEntries := make(map[string]int)
+	for _, entry := range control.GetGraft() {
+		if entry == nil {
+			continue
+		}
+		graftEntries++
+		addControlTopicCounts(graftTopicEntries, nil, entry.GetTopic(), 0)
+	}
+	t.emitControlRPC(trace, direction, "graft", graftEntries, 0, graftTopicEntries, nil, 0)
+
+	pruneEntries, peerExchangeEntries := 0, 0
+	pruneTopicEntries := make(map[string]int)
+	for _, entry := range control.GetPrune() {
+		if entry == nil {
+			continue
+		}
+		pruneEntries++
+		peerExchangeEntries += len(entry.GetPeers())
+		addControlTopicCounts(pruneTopicEntries, nil, entry.GetTopic(), 0)
+	}
+	t.emitControlRPC(trace, direction, "prune", pruneEntries, 0, pruneTopicEntries, nil, peerExchangeEntries)
+}
+
+func (t *gossipTracer) emitControlRPC(trace model.TraceEvent, direction, controlType string, entries, messageIDs int, topicEntries, topicMessageIDs map[string]int, peerExchangeEntries int) {
+	if entries == 0 {
+		return
+	}
+	trace.Type = direction + "_" + controlType
+	trace.Topic = ""
+	trace.Fields = map[string]any{
+		"direction":      direction,
+		"controlType":    controlType,
+		"rpcCount":       1,
+		"controlEntries": entries,
+		"messageIdCount": messageIDs,
+	}
+	if peerExchangeEntries > 0 {
+		trace.Fields["peerExchangeCount"] = peerExchangeEntries
+	}
+	if len(topicEntries) > 0 {
+		topics := make([]string, 0, len(topicEntries))
+		for topic := range topicEntries {
+			topics = append(topics, topic)
+		}
+		sort.Strings(topics)
+		trace.Fields["topics"] = topics
+		trace.Fields["topicEntryCounts"] = topicEntries
+	}
+	if len(topicMessageIDs) > 0 {
+		trace.Fields["topicMessageIdCounts"] = topicMessageIDs
+	}
+	t.telemetry.emit(trace)
+}
+
+func addControlTopicCounts(entries, messageIDs map[string]int, topic string, idCount int) {
+	if topic == "" {
+		return
+	}
+	entries[topic]++
+	if messageIDs != nil {
+		messageIDs[topic] += idCount
+	}
 }
 
 // messageTracer observes duplicate copies without changing validation, routing,

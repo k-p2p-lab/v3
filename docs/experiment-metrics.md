@@ -117,6 +117,22 @@ The duplicate average divides observed extra copies within the same delivery win
 
 Envelope events share the application message ID. Raw events use `pubsub-<hex native message ID>`, distinguishing separate publications of identical bytes. `fields.pubsubMessageId` preserves the native ID. Wire format and PubSub's origin-plus-sequence message-ID algorithm are unchanged; the telemetry source sequence is a different counter. Event IDs survive retries so the Controller stores and counts each event once.
 
+## GossipSub control traffic
+
+KPL observes the control metadata attached to GossipSub `SEND_RPC`, `RECV_RPC`, and `DROP_RPC` traces. For every RPC and every control type present in it, the Peer emits one `send_*`, `recv_*`, or `drop_*` event. The supported suffixes are `ihave`, `iwant`, `idontwant`, `graft`, and `prune`. A mixed RPC containing both IHAVE and IWANT therefore contributes to both series.
+
+Three counts have deliberately different units:
+
+- **RPCs** count envelopes containing a given control type. Summing across types can count one mixed envelope more than once.
+- **Entries** count repeated protobuf control entries inside those RPCs.
+- **Message IDs** count ID references inside IHAVE, IWANT, and IDONTWANT entries. Repeated references remain repeated; this is neither a unique-message count nor a delivery count.
+
+PRUNE peer-exchange records are counted separately. IHAVE, GRAFT, and PRUNE carry topic fields, so raw events retain sorted `fields.topics`, `fields.topicEntryCounts`, and, for IHAVE, `fields.topicMessageIdCounts`. The top-level event topic stays empty because one RPC can span several topics and IWANT/IDONTWANT have no wire topic. Prometheus therefore exposes these counters by run, Agent, direction, and control type without a topic label. The downloaded `metrics.json` contains the same per-Agent breakdown rebuilt from its exact `events.jsonl` boundary.
+
+`send` means the local outbound queue accepted the RPC; it does not prove a stream write or remote receipt. `recv` is an inbound observation before later router admission and flood-limit decisions. Adding both directions can count the two endpoint observations of one transfer and must not be treated as a unique wire-RPC total. `drop` is a local pre-send discard such as queue saturation or an oversized RPC, not a packet dropped by `netem`. The existing plain `graft` and `prune` events describe local mesh transitions and remain separate from wire `send_graft`/`recv_graft` and `send_prune`/`recv_prune` events.
+
+This keeps v2's useful split between RPC occurrences and logical ID references while fixing its mixed-RPC `if/else-if` loss and adding IDONTWANT and dropped RPCs. IDONTWANT also depends on GossipSub v1.2 support and message size. With the pinned defaults it is normally produced only for data at least 1,024 bytes; use a larger payload or lower `gossipsub.params.iDontWantMessageThreshold` when an experiment is intended to exercise it.
+
 ## Scope, export, and monitoring
 
 New summaries use `definition: "session-window-v1"`. A publication records `fields.measurementDefinition` and `fields.deliveryWindow`. The stored session evidence, publication and receipt times, and source sequences allow the same calculation from the raw log.

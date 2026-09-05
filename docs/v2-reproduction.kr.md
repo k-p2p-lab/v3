@@ -82,7 +82,8 @@ raw 메시지는 SHA-256으로 발행·수신을 연결합니다. 메시지 내�
 ## 관측과 남은 차이
 
 - `wait-ready`는 초기화/API 준비를 뜻하며 mesh 수렴을 보장하지 않습니다. 예제는 별도의 안정화 대기를 둡니다.
-- [dashboard 토폴로지](topology.kr.md)는 현재 Peer 상태를 바탕으로 transport, Kademlia 라우팅 테이블, topic별 GossipSub mesh를 별도로 표시합니다. `TopicPeers`는 구독 Peer 수이며 mesh 차수가 아닙니다. 과거 분석에는 저장된 `graft`/`prune`, `add_peer`/`remove_peer`, `join`/`leave` 이벤트를 함께 사용하고 telemetry 누락을 고려해야 합니다. 결과에는 routing·mesh snapshot의 전체 이력이나 완전한 v2 Parser/RPC 분석기는 포함하지 않습니다.
+- [dashboard 토폴로지](topology.kr.md)는 현재 Peer 상태를 바탕으로 transport, Kademlia 라우팅 테이블, topic별 GossipSub mesh를 별도로 표시합니다. `TopicPeers`는 구독 Peer 수이며 mesh 차수가 아닙니다. 과거 분석에는 저장된 `graft`/`prune`, `add_peer`/`remove_peer`, `join`/`leave` 이벤트를 함께 사용하고 telemetry 누락을 고려해야 합니다. 결과에는 routing·mesh snapshot의 전체 이력이 포함되지 않습니다.
+- v3의 타입별 RPC 수는 v2의 physical IHAVE/IWANT counter, 메시지 ID 참조 수는 logical counter에 대응합니다. v3는 protobuf entry 수, IDONTWANT, 로컬 송신 전 drop, PRUNE peer-exchange record, 혼합 RPC 안의 모든 타입도 보존합니다. v2는 이 경우들을 누락하고 IHAVE topic 정보도 버렸습니다. 기존 단순 `graft`/`prune` 이벤트는 로컬 mesh 전이이므로 wire traffic은 별도 `send_*`, `recv_*`, `drop_*` 제어 이벤트와 비교하십시오. [제어 트래픽 정의](experiment-metrics.kr.md#gossipsub-제어-트래픽)를 참고하십시오.
 - interval/lifetime/base delay 샘플은 seed로 재현할 수 있으나 run ID를 포함한 Peer ID, 네트워크 타이밍, 커널 패킷 난수는 동일하지 않습니다. 노드 metadata에 `seed`, `networkRequested`, 실제 `network`를 남기며 Agent의 Peer config 파일에도 실효 설정을 저장합니다.
 - 기본 연결 상한 55와 주요 worker DHT/GossipSub 파라미터는 일치합니다. 그러나 v2 custom PubSub fork 경로의 소스가 제공된 디렉터리에 없어 fork 내부까지 동등성을 검증할 수 없습니다. v3는 공식 라이브러리이며 HopWave는 지원 범위 밖입니다.
 - dashboard 메시지 지표는 최근 이벤트 버퍼와 독립적으로 누적되지만 Controller 재시작 시 초기화되며 telemetry 누락의 영향을 받습니다. 오프라인 분석에는 `runs/<run-id>/events.jsonl`을 사용하고, v2 지표와 직접 동일시하지 말고 [명시된 churn 대상 집합 정의](experiment-metrics.kr.md)를 적용하십시오.

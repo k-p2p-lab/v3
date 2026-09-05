@@ -3,6 +3,7 @@ package peer
 import (
 	"encoding/hex"
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -11,6 +12,99 @@ import (
 	pubsubpb "github.com/libp2p/go-libp2p-pubsub/pb"
 	corepeer "github.com/libp2p/go-libp2p/core/peer"
 )
+
+func TestGossipTracerAggregatesEveryControlTypeInMixedRPC(t *testing.T) {
+	nodes := bootstrapTestNodes(t, 1)
+	remote, err := corepeer.Decode(nodes[0].PeerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	topicA, topicB := "topic-a", "topic-b"
+	timestamp := time.Now().Add(-time.Second).UnixNano()
+	telemetry := &telemetry{node: model.Node{ID: "node", RunID: "run"}, events: make(chan model.TraceEvent, 10)}
+	tracer := &gossipTracer{telemetry: telemetry, peerID: "local"}
+	tracer.Trace(&pubsubpb.TraceEvent{
+		Type: pubsubpb.TraceEvent_SEND_RPC.Enum(), Timestamp: &timestamp,
+		SendRPC: &pubsubpb.TraceEvent_SendRPC{SendTo: []byte(remote), Meta: &pubsubpb.TraceEvent_RPCMeta{Control: &pubsubpb.TraceEvent_ControlMeta{
+			Ihave: []*pubsubpb.TraceEvent_ControlIHaveMeta{
+				{Topic: &topicB, MessageIDs: [][]byte{[]byte("one"), []byte("two")}},
+				{Topic: &topicA, MessageIDs: [][]byte{[]byte("three")}},
+			},
+			Iwant:     []*pubsubpb.TraceEvent_ControlIWantMeta{{MessageIDs: [][]byte{[]byte("one"), []byte("three")}}},
+			Idontwant: []*pubsubpb.TraceEvent_ControlIDontWantMeta{{MessageIDs: [][]byte{[]byte("two")}}},
+			Graft:     []*pubsubpb.TraceEvent_ControlGraftMeta{{Topic: &topicA}, {Topic: &topicB}},
+			Prune:     []*pubsubpb.TraceEvent_ControlPruneMeta{{Topic: &topicA, Peers: [][]byte{[]byte("px-1"), []byte("px-2")}}},
+		}}},
+	})
+
+	events := make(map[string]model.TraceEvent)
+	for range 5 {
+		select {
+		case event := <-telemetry.events:
+			events[event.Type] = event
+		default:
+			t.Fatalf("only %d mixed control events were emitted", len(events))
+		}
+	}
+	if len(events) != 5 {
+		t.Fatalf("mixed RPC events = %v", events)
+	}
+	for eventType, event := range events {
+		if event.RemotePeerID != remote.String() || event.Timestamp.UnixNano() != timestamp || event.RunID != "run" || event.EventID == "" {
+			t.Fatalf("%s metadata=%+v", eventType, event)
+		}
+	}
+	ihave := events["send_ihave"]
+	if ihave.Topic != "" || ihave.Fields["controlEntries"] != 2 || ihave.Fields["messageIdCount"] != 3 || !reflect.DeepEqual(ihave.Fields["topics"], []string{topicA, topicB}) ||
+		!reflect.DeepEqual(ihave.Fields["topicEntryCounts"], map[string]int{topicA: 1, topicB: 1}) || !reflect.DeepEqual(ihave.Fields["topicMessageIdCounts"], map[string]int{topicA: 1, topicB: 2}) {
+		t.Fatalf("IHAVE aggregation=%+v", ihave)
+	}
+	if event := events["send_iwant"]; event.Fields["controlEntries"] != 1 || event.Fields["messageIdCount"] != 2 {
+		t.Fatalf("IWANT aggregation=%+v", event)
+	}
+	if event := events["send_idontwant"]; event.Fields["controlEntries"] != 1 || event.Fields["messageIdCount"] != 1 {
+		t.Fatalf("IDONTWANT aggregation=%+v", event)
+	}
+	if event := events["send_graft"]; event.Fields["controlEntries"] != 2 || event.Fields["messageIdCount"] != 0 {
+		t.Fatalf("GRAFT aggregation=%+v", event)
+	}
+	if event := events["send_prune"]; event.Topic != "" || event.Fields["controlEntries"] != 1 || event.Fields["peerExchangeCount"] != 2 {
+		t.Fatalf("PRUNE aggregation=%+v", event)
+	}
+}
+
+func TestGossipTracerSeparatesReceivedAndDroppedControlRPCs(t *testing.T) {
+	nodes := bootstrapTestNodes(t, 1)
+	remote, err := corepeer.Decode(nodes[0].PeerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	topic := "topic"
+	meta := &pubsubpb.TraceEvent_RPCMeta{Control: &pubsubpb.TraceEvent_ControlMeta{
+		Ihave: []*pubsubpb.TraceEvent_ControlIHaveMeta{{Topic: &topic, MessageIDs: [][]byte{[]byte("one")}}},
+	}}
+	for _, test := range []struct {
+		name, want string
+		event      pubsubpb.TraceEvent
+	}{
+		{"receive", "recv_ihave", pubsubpb.TraceEvent{Type: pubsubpb.TraceEvent_RECV_RPC.Enum(), RecvRPC: &pubsubpb.TraceEvent_RecvRPC{ReceivedFrom: []byte(remote), Meta: meta}}},
+		{"drop", "drop_ihave", pubsubpb.TraceEvent{Type: pubsubpb.TraceEvent_DROP_RPC.Enum(), DropRPC: &pubsubpb.TraceEvent_DropRPC{SendTo: []byte(remote), Meta: meta}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			telemetry := &telemetry{node: model.Node{RunID: "run"}, events: make(chan model.TraceEvent, 1)}
+			(&gossipTracer{telemetry: telemetry}).Trace(&test.event)
+			event := <-telemetry.events
+			if event.Type != test.want || event.Topic != "" || event.Fields["rpcCount"] != 1 || event.Fields["direction"] != test.want[:len(test.want)-len("_ihave")] || !reflect.DeepEqual(event.Fields["topics"], []string{topic}) {
+				t.Fatalf("event=%+v", event)
+			}
+		})
+	}
+	telemetry := &telemetry{events: make(chan model.TraceEvent, 1)}
+	(&gossipTracer{telemetry: telemetry}).Trace(&pubsubpb.TraceEvent{Type: pubsubpb.TraceEvent_SEND_RPC.Enum(), SendRPC: &pubsubpb.TraceEvent_SendRPC{}})
+	if len(telemetry.events) != 0 {
+		t.Fatal("an RPC without control metadata produced telemetry")
+	}
+}
 
 func TestGossipTracerPreservesPeerAndTopicLifecycle(t *testing.T) {
 	nodes := bootstrapTestNodes(t, 1)

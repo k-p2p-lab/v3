@@ -34,13 +34,19 @@ type messageMetric struct {
 type runMetricAccumulator struct {
 	seen                             map[string]struct{}
 	messages                         map[messageMetricKey]*messageMetric
+	control                          map[gossipSubControlKey]*model.GossipSubControlMetric
 	published, delivered, duplicates int
 	window                           sessionWindowAccumulator
 }
 
 func newRunMetricAccumulator() *runMetricAccumulator {
-	return &runMetricAccumulator{seen: make(map[string]struct{}), messages: make(map[messageMetricKey]*messageMetric)}
+	return &runMetricAccumulator{
+		seen: make(map[string]struct{}), messages: make(map[messageMetricKey]*messageMetric),
+		control: make(map[gossipSubControlKey]*model.GossipSubControlMetric),
+	}
 }
+
+type gossipSubControlKey struct{ agentID, direction, controlType string }
 
 func eventIdentity(event model.TraceEvent) string {
 	if event.SessionID != "" && event.Sequence > 0 {
@@ -68,6 +74,7 @@ func (a *runMetricAccumulator) observe(event model.TraceEvent) bool {
 		a.seen[id] = struct{}{}
 	}
 	a.window.observe(event)
+	a.observeGossipSubControl(event)
 	if event.Type != "publish" && event.Type != "deliver" && event.Type != "duplicate" {
 		return true
 	}
@@ -181,14 +188,77 @@ type propagationSample struct {
 }
 
 func (a *runMetricAccumulator) summarize(runID string, asOf ...time.Time) (model.Metrics, []propagationSample) {
+	var result model.Metrics
+	var samples []propagationSample
 	if a.window.enabled {
 		boundary := time.Now().UTC()
 		if len(asOf) > 0 {
 			boundary = asOf[0]
 		}
-		return a.window.summarize(runID, boundary, a.published, a.delivered, a.duplicates)
+		result, samples = a.window.summarize(runID, boundary, a.published, a.delivered, a.duplicates)
+	} else {
+		result, samples = a.summarizeLegacy(runID)
 	}
-	return a.summarizeLegacy(runID)
+	result.GossipSubControl = a.summarizeGossipSubControl()
+	return result, samples
+}
+
+func gossipSubControlEvent(eventType string) (gossipSubControlKey, bool) {
+	for _, direction := range []string{"send", "recv", "drop"} {
+		for _, controlType := range []string{"ihave", "iwant", "idontwant", "graft", "prune"} {
+			if eventType == direction+"_"+controlType {
+				return gossipSubControlKey{direction: direction, controlType: controlType}, true
+			}
+		}
+	}
+	return gossipSubControlKey{}, false
+}
+
+func (a *runMetricAccumulator) observeGossipSubControl(event model.TraceEvent) {
+	key, ok := gossipSubControlEvent(event.Type)
+	if !ok {
+		return
+	}
+	key.agentID = event.AgentID
+	metric := a.control[key]
+	if metric == nil {
+		metric = &model.GossipSubControlMetric{AgentID: key.agentID, Direction: key.direction, ControlType: key.controlType}
+		a.control[key] = metric
+	}
+	metric.RPCs++
+	metric.Entries += nonnegativeEventCount(event.Fields, "controlEntries")
+	metric.MessageIDs += nonnegativeEventCount(event.Fields, "messageIdCount")
+	metric.PeerExchangeRecords += nonnegativeEventCount(event.Fields, "peerExchangeCount")
+}
+
+func nonnegativeEventCount(fields map[string]any, key string) int {
+	number, ok := nonnegativeMetricCount(fields[key])
+	if !ok || number > float64(1<<31-1) {
+		return 0
+	}
+	return int(number)
+}
+
+func (a *runMetricAccumulator) summarizeGossipSubControl() []model.GossipSubControlMetric {
+	if len(a.control) == 0 {
+		return nil
+	}
+	result := make([]model.GossipSubControlMetric, 0, len(a.control))
+	for _, metric := range a.control {
+		result = append(result, *metric)
+	}
+	directionOrder := map[string]int{"send": 0, "recv": 1, "drop": 2}
+	typeOrder := map[string]int{"ihave": 0, "iwant": 1, "idontwant": 2, "graft": 3, "prune": 4}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].AgentID != result[j].AgentID {
+			return result[i].AgentID < result[j].AgentID
+		}
+		if directionOrder[result[i].Direction] != directionOrder[result[j].Direction] {
+			return directionOrder[result[i].Direction] < directionOrder[result[j].Direction]
+		}
+		return typeOrder[result[i].ControlType] < typeOrder[result[j].ControlType]
+	})
+	return result
 }
 
 func (a *runMetricAccumulator) summarizeLegacy(runID string) (model.Metrics, []propagationSample) {

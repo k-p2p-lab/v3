@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -748,6 +749,7 @@ func TestResultMetricsUseTheSamePersistedSnapshotAsExportedEvents(t *testing.T) 
 	initial := model.EventBatch{Events: []model.TraceEvent{
 		cohortDelivery("first", "topic", "receiver", 12),
 		cohortPublish("first", "topic", []string{"receiver"}),
+		{RunID: "run", AgentID: "agent-a", NodeID: "sender", EventID: "control-first", Type: "send_ihave", Fields: map[string]any{"controlEntries": 2, "messageIdCount": 6}},
 	}}
 	if err := server.state.appendEvents(initial); err != nil {
 		t.Fatal(err)
@@ -763,6 +765,7 @@ func TestResultMetricsUseTheSamePersistedSnapshotAsExportedEvents(t *testing.T) 
 	}
 	if err := server.state.appendEvents(model.EventBatch{Events: []model.TraceEvent{
 		cohortPublish("later", "topic", []string{"receiver", "departed"}),
+		{RunID: "run", AgentID: "agent-a", NodeID: "sender", EventID: "control-later", Type: "recv_iwant", Fields: map[string]any{"controlEntries": 1, "messageIdCount": 2}},
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -778,6 +781,9 @@ func TestResultMetricsUseTheSamePersistedSnapshotAsExportedEvents(t *testing.T) 
 	if exported.Published != 1 || exported.ExpectedDeliveries != 1 || exported.EligibleDeliveries != 1 || exported.AverageLatencyMS != 12 {
 		t.Fatalf("exported metrics included later telemetry: %+v", exported)
 	}
+	if want := []model.GossipSubControlMetric{{AgentID: "agent-a", Direction: "send", ControlType: "ihave", RPCs: 1, Entries: 2, MessageIDs: 6}}; !reflect.DeepEqual(exported.GossipSubControl, want) {
+		t.Fatalf("exported control metrics crossed the snapshot boundary: %+v", exported.GossipSubControl)
+	}
 	rebuilt, err := summarizeRunEvents("run", bytes.NewReader(files["events.jsonl"]))
 	if err != nil {
 		t.Fatal(err)
@@ -789,7 +795,7 @@ func TestResultMetricsUseTheSamePersistedSnapshotAsExportedEvents(t *testing.T) 
 	server.state.mu.RLock()
 	live, _ := server.state.runMetrics["run"].summarize("run")
 	server.state.mu.RUnlock()
-	if live.Published != 2 || live.ExpectedDeliveries != 3 {
+	if live.Published != 2 || live.ExpectedDeliveries != 3 || len(live.GossipSubControl) != 2 {
 		t.Fatalf("later telemetry was not processed independently: %+v", live)
 	}
 }

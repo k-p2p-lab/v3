@@ -413,6 +413,21 @@ test('recent events preserve node IDs when no matching experiment prefix exists'
   assert.ok(!eventList.innerHTML.includes('event-run-id'));
 });
 
+test('recent events show aggregated GossipSub control units and direction', () => {
+  const eventList = {};
+  const api = context({$: () => eventList});
+  api.renderEvents([{
+    timestamp:'2026-09-05T03:04:05Z',type:'send_ihave',runId:'run-a',nodeId:'peer-a',remotePeerId:'remote-peer-id',
+    fields:{direction:'send',controlType:'ihave',controlEntries:2,messageIdCount:17},
+  }, {
+    timestamp:'2026-09-05T03:04:06Z',type:'drop_prune',runId:'run-a',nodeId:'peer-a',remotePeerId:'remote-peer-id',
+    fields:{direction:'drop',controlType:'prune',controlEntries:1,messageIdCount:0,peerExchangeCount:3},
+  }]);
+  assert.match(eventList.innerHTML, /remote-pee · 2 entries · 17 message IDs/);
+  assert.match(eventList.innerHTML, /⇢ remote-pee · 1 entry · 3 PX records/);
+  assert.match(eventList.innerHTML, /→ remote-pee/);
+});
+
 function uiFixture({reducedMotion=false}={}) {
   const ids=new Map();
   const frames={queue:new Map(),nextID:1,maximumQueued:0};

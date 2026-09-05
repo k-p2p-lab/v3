@@ -179,6 +179,20 @@ type Metrics struct {
 	StableCoverageAvailable             bool     `json:"stableCoverageAvailable"`
 	LegacyPublications                  int      `json:"legacyPublications"`
 	MeasurementIncomplete               bool     `json:"measurementIncomplete"`
+
+	GossipSubControl []GossipSubControlMetric `json:"gossipsubControl,omitempty"`
+}
+
+// GossipSubControlMetric separates wire RPC occurrences from the protobuf
+// control entries and logical message-ID references carried by those RPCs.
+type GossipSubControlMetric struct {
+	AgentID             string `json:"agentId,omitempty"`
+	Direction           string `json:"direction"`
+	ControlType         string `json:"controlType"`
+	RPCs                int    `json:"rpcs"`
+	Entries             int    `json:"entries"`
+	MessageIDs          int    `json:"messageIds"`
+	PeerExchangeRecords int    `json:"peerExchangeRecords"`
 }
 
 type Snapshot struct {
