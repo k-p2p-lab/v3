@@ -57,7 +57,7 @@ worker network는 `scope: p2p`, 지연 25ms, jitter 2ms, 설정 packet loss 0.5%
 
 실행 창 **Run** 옆 **Runs**를 1~100으로 설정하면 전체 시나리오를 순차 반복하고 회차별 결과를 남깁니다. **Stop batch** 또는 회차 실패는 남은 반복을 취소하며 명시된 seed는 재사용합니다. [반복 실행과 지표 정의](experiment-metrics.kr.md)를 참고하십시오.
 
-Control Room에서는 ready Peer 수, Agent 점유량, 실험·job 상태와 이벤트를 확인합니다. Grafana의 **KP2PLab Experiment Analysis**에서 **Run**에 실행한 `swarm-churn-random-publish`를 선택하고 **Agent**, **Topic**으로 필터링하십시오. 종료 후에는 시간 범위를 실험 구간으로 맞춥니다.
+대시보드에서는 ready Peer 수, Agent 점유량, 실험·job 상태와 이벤트를 확인합니다. Grafana의 **KP2PLab Experiment Analysis**에서 **Run**에 실행한 `swarm-churn-random-publish`를 선택하고 **Agent**, **Topic**으로 필터링하십시오. 종료 후에는 시간 범위를 실험 구간으로 맞춥니다.
 
 | 관측 항목 | 데이터 |
 |---|---|

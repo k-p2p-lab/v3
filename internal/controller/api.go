@@ -92,6 +92,7 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(s.state.metrics.registry, promhttp.HandlerOpts{}))
 	mux.HandleFunc("/api/v1/health", s.handleHealth)
+	mux.HandleFunc("/api/v1/ui-config", s.handleUIConfig)
 	mux.HandleFunc("/api/v1/snapshot", s.handleSnapshot)
 	mux.HandleFunc("/api/v1/agents", s.handleAgents)
 	mux.HandleFunc("/api/v1/agents/register", s.handleAgentRegister)
@@ -111,6 +112,20 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 	mux.HandleFunc("/api/v1/stream", s.handleStream)
 	mux.Handle("/", http.FileServer(http.FS(webui.FS())))
 	return s.withMiddleware(mux)
+}
+
+func (s *Server) handleUIConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		PrometheusPort int `json:"prometheusPort"`
+		GrafanaPort    int `json:"grafanaPort"`
+	}{
+		PrometheusPort: s.config.PrometheusPort,
+		GrafanaPort:    s.config.GrafanaPort,
+	})
 }
 
 func (s *Server) withMiddleware(next http.Handler) http.Handler {

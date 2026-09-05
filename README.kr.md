@@ -2,7 +2,7 @@
 
 [English](README.md) | 한국어
 
-K-P2PLab v3는 하나 이상의 Linux 호스트에서 재현 가능한 libp2p Kademlia 및 PubSub 실험을 실행합니다. Controller가 시나리오를 스케줄링하고 호스트마다 Agent 하나가 동작하며, 각 Peer는 독립된 Docker 컨테이너와 네트워크 네임스페이스에서 실행됩니다. 웹 Control Room과 기본 제공 Prometheus/Grafana 스택에서 토폴로지, churn, 전파와 저장 결과를 확인할 수 있습니다.
+K-P2PLab v3는 하나 이상의 Linux 호스트에서 재현 가능한 libp2p Kademlia 및 PubSub 실험을 실행합니다. Controller가 시나리오를 스케줄링하고 호스트마다 Agent 하나가 동작하며, 각 Peer는 독립된 Docker 컨테이너와 네트워크 네임스페이스에서 실행됩니다. 웹 대시보드와 기본 제공 Prometheus/Grafana 스택에서 토폴로지, churn, 전파와 저장 결과를 확인할 수 있습니다.
 
 코드, UI와 문서의 기본 언어는 영어이며 한국어 문서는 대응하는 `.kr.md` 파일로 유지합니다.
 
@@ -34,7 +34,7 @@ sh scripts/check-linux.sh
 docker compose up -d --no-build
 ```
 
-[Control Room](http://localhost:8080), [Grafana](http://localhost:3000/d/kpl-experiments), [Prometheus](http://localhost:9090)를 여십시오. Control Room에서 기본 시나리오를 실행할 수 있습니다. 종료할 때는 `make stop`을 사용하십시오.
+[Dashboard](http://localhost:8080), [Grafana](http://localhost:3000/d/kpl-experiments), [Prometheus](http://localhost:9090)를 여십시오. 대시보드에서 기본 시나리오를 실행할 수 있습니다. 종료할 때는 `make stop`을 사용하십시오.
 
 ## Swarm 빠른 시작
 

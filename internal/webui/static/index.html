@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Monitor K-P2PLab Agents and GossipSub network experiments in real time.">
-  <title>K-P2PLab Control Room</title>
+  <title>K-P2PLab Dashboard</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -13,9 +13,14 @@
       <img class="brand-mark" src="/kpl-logo.jpg" alt="" width="42" height="42">
       <div>
         <h1>K-P2PLab</h1>
-        <p>Control Room</p>
+        <p>Dashboard</p>
       </div>
     </div>
+    <nav class="service-nav" aria-label="Primary navigation">
+      <a href="/" aria-current="page">Dashboard</a>
+      <a id="prometheusLink" href="http://localhost:9090/" target="_blank" rel="noopener noreferrer">Prometheus<span class="visually-hidden"> (opens in a new tab)</span></a>
+      <a id="grafanaLink" href="http://localhost:3000/d/kpl-experiments" target="_blank" rel="noopener noreferrer">Grafana<span class="visually-hidden"> (opens in a new tab)</span></a>
+    </nav>
     <div class="top-actions">
       <span class="connection-state" id="connectionState"><i></i> Connecting</span>
       <time id="updatedAt">—</time>
@@ -255,6 +260,7 @@
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/navigation.js" defer></script>
   <script src="/topology-layout.js" defer></script>
   <script src="/app.js" defer></script>
 </body>

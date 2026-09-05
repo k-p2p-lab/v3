@@ -43,6 +43,7 @@ button:disabled { cursor: not-allowed; opacity: 0.65; }
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 1rem;
   min-height: 5rem;
   padding: 0.9rem clamp(1rem, 3vw, 2.5rem);
   border-bottom: 1px solid var(--line-soft);
@@ -69,6 +70,10 @@ button:disabled { cursor: not-allowed; opacity: 0.65; }
 h1, h2, p { margin: 0; }
 h1 { font-size: 1.1rem; letter-spacing: -0.025em; }
 .brand-block p { margin-top: 0.14rem; color: var(--muted); font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; }
+.service-nav { display: flex; align-items: center; gap: 0.3rem; margin-left: auto; }
+.service-nav a { display: inline-flex; align-items: center; min-height: 2.2rem; padding: 0.42rem 0.7rem; border: 1px solid transparent; border-radius: 0.5rem; color: var(--muted); font-size: 0.78rem; font-weight: 650; text-decoration: none; white-space: nowrap; }
+.service-nav a:hover { color: var(--text); border-color: var(--line); background: rgba(17, 36, 49, 0.72); }
+.service-nav a[aria-current="page"] { color: var(--cyan); background: rgba(57, 214, 208, 0.08); }
 .top-actions { gap: 1rem; }
 .top-actions time { color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
 .connection-state { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--muted); font-size: 0.85rem; }
@@ -326,6 +331,8 @@ dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
 }
 
 @media (max-width: 860px) {
+  .topbar { flex-wrap: wrap; }
+  .service-nav { order: 3; width: 100%; margin-left: 0; overflow-x: auto; }
   #scenarioForm { height: auto; overflow-y: auto; grid-template-rows: none; }
   .scenario-workspace { grid-template-columns: 1fr; }
   .scenario-library { max-height: 15rem; }

@@ -57,7 +57,7 @@ The worker network profile applies `scope: p2p`, 25ms delay, 2ms jitter, and 0.5
 
 ## Observe and Save Results
 
-In the Control Room, watch ready Peers, Agent occupancy, experiment/job state, and events. In Grafana, open **KP2PLab Experiment Analysis**, choose your `swarm-churn-random-publish` run in **Run**, and filter **Agent** and **Topic**. After completion, set the time range to the experiment window.
+In the Dashboard, watch ready Peers, Agent occupancy, experiment/job state, and events. In Grafana, open **KP2PLab Experiment Analysis**, choose your `swarm-churn-random-publish` run in **Run**, and filter **Agent** and **Topic**. After completion, set the time range to the experiment window.
 
 | Observe | Data |
 |---|---|

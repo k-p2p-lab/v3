@@ -2,7 +2,7 @@
 
 English | [Korean](README.kr.md)
 
-K-P2PLab v3 runs reproducible libp2p Kademlia and PubSub experiments across one or more Linux hosts. A Controller schedules scenarios, one Agent manages each host, and every Peer runs in its own Docker container and network namespace. The web Control Room and the bundled Prometheus/Grafana stack expose topology, churn, propagation, and saved results.
+K-P2PLab v3 runs reproducible libp2p Kademlia and PubSub experiments across one or more Linux hosts. A Controller schedules scenarios, one Agent manages each host, and every Peer runs in its own Docker container and network namespace. The web Dashboard and the bundled Prometheus/Grafana stack expose topology, churn, propagation, and saved results.
 
 English is the default language for code, the UI, and documentation. Korean documentation is maintained in matching `.kr.md` files.
 
@@ -34,7 +34,7 @@ sh scripts/check-linux.sh
 docker compose up -d --no-build
 ```
 
-Open the [Control Room](http://localhost:8080), [Grafana](http://localhost:3000/d/kpl-experiments), or [Prometheus](http://localhost:9090). Run the default scenario from the Control Room. Stop cleanly with `make stop`.
+Open the [Dashboard](http://localhost:8080), [Grafana](http://localhost:3000/d/kpl-experiments), or [Prometheus](http://localhost:9090). Run the default scenario from the Dashboard. Stop cleanly with `make stop`.
 
 ## Swarm quick start
 

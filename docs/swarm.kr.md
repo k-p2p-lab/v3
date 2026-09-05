@@ -50,7 +50,7 @@ sh scripts/swarm.sh credentials
 
 `deploy`는 이미지를 확정하고 선택한 노드에 label을 추가하며, 필요하면 attachable Peer overlay를 생성한 뒤 배포 검사와 stack 배포를 접수합니다. 모든 서비스와 Agent가 준비되기 전에 반환합니다. `check`는 불러온 설정으로 구성·네트워크·배치 사전 검사를 다시 수행하며, 실제 서버 간 통신이나 모든 worker의 커널 규칙 설치를 검증하지 않습니다. `status`는 Docker 서비스·task·노드 상태이며 Controller 등록 상태는 아닙니다.
 
-`access`가 출력한 Controller URL을 여십시오. 포트는 명령을 실행하는 manager와 다를 수 있는 지정된 **control 노드**에 게시됩니다. 해당 주소에 접근할 수 있는 기기에서 Control Room의 **Online Agents가 2 이상**이 될 때까지 기다리십시오. **Agent status**에서는 `online` 행만 확인합니다. **Peers**는 점유량 / 용량이며, 용량에서 점유량을 뺀 여유 슬롯의 합계가 **6 이상**이어야 합니다. 요약의 **Available slots**에는 offline Agent도 포함될 수 있으므로 이 조건은 표로 확인하십시오. Swarm task가 실행 중이라는 사실만으로 등록까지 확인되지는 않습니다. 시작에 문제가 있으면 `sh scripts/swarm.sh logs agent` 또는 `sh scripts/swarm.sh logs controller`를 확인하십시오.
+`access`가 출력한 Controller URL을 여십시오. 포트는 명령을 실행하는 manager와 다를 수 있는 지정된 **control 노드**에 게시됩니다. 해당 주소에 접근할 수 있는 기기에서 대시보드의 **Online Agents가 2 이상**이 될 때까지 기다리십시오. **Agent status**에서는 `online` 행만 확인합니다. **Peers**는 점유량 / 용량이며, 용량에서 점유량을 뺀 여유 슬롯의 합계가 **6 이상**이어야 합니다. 요약의 **Available slots**에는 offline Agent도 포함될 수 있으므로 이 조건은 표로 확인하십시오. Swarm task가 실행 중이라는 사실만으로 등록까지 확인되지는 않습니다. 시작에 문제가 있으면 `sh scripts/swarm.sh logs agent` 또는 `sh scripts/swarm.sh logs controller`를 확인하십시오.
 
 `credentials`는 설정된 API 토큰과 Grafana 로그인 정보를 명시적으로 평문 출력합니다. API 토큰은 Controller에, 별도 Grafana 계정과 비밀번호는 `access`의 Grafana URL에 사용합니다. 기존 Grafana volume은 관리자 비밀번호를 보존하므로 설정 변경만으로 그 비밀번호가 초기화되지는 않습니다.
 
@@ -61,11 +61,11 @@ sh scripts/swarm.sh credentials
 sh scripts/swarm.sh scenario
 ```
 
-Control Room에서 **Run experiment**를 누르고 **YAML scenario** 전체를 출력된 YAML로 교체한 다음 API 토큰을 입력하고 **Run**을 누르십시오. 웹 폼의 기본 시나리오는 다른 smoke 실험이며 Swarm 예제를 자동으로 불러오지 않습니다.
+대시보드에서 **Run experiment**를 누르고 **YAML scenario** 전체를 출력된 YAML로 교체한 다음 API 토큰을 입력하고 **Run**을 누르십시오. 웹 폼의 기본 시나리오는 다른 smoke 실험이며 Swarm 예제를 자동으로 불러오지 않습니다.
 
 예제는 boot Peer 한 개와 worker 다섯 개를 만듭니다. worker에는 25ms 지연, 2ms jitter, 0.5% loss를 적용합니다. readiness 확인과 20초 대기 후 `payloadSize: 4096`으로 메시지 50개를 발행하고, 수집을 위해 1분 기다린 뒤 `stop-all`을 실행합니다. 용량이 같고 다른 부하가 없는 Agent들에서는 balanced 배치가 Peer를 분산합니다. 서로 다른 Agent에 Peer가 나타나고 publish/deliver 이벤트가 기록되는지 확인하십시오. readiness는 프로세스 초기화 완료 기준이며 GossipSub mesh 수렴을 보장하지 않습니다. 전달 수는 실제 조건에 따라 달라집니다.
 
-분석하려면 Grafana URL에서 로그인하고 **KP2PLab Experiment Analysis**의 **Run**에 해당 실험을 선택하십시오. **Agent**와 **Topic**으로 서버와 트래픽을 비교합니다. Control Room 요약은 최근 이벤트를 사용하므로 Grafana 누적 counter 및 저장 이벤트 로그와 집계 범위가 다릅니다. [모니터링 가이드](monitoring.kr.md)를 참고하십시오.
+분석하려면 Grafana URL에서 로그인하고 **KP2PLab Experiment Analysis**의 **Run**에 해당 실험을 선택하십시오. **Agent**와 **Topic**으로 서버와 트래픽을 비교합니다. 대시보드 요약은 최근 이벤트를 사용하므로 Grafana 누적 counter 및 저장 이벤트 로그와 집계 범위가 다릅니다. [모니터링 가이드](monitoring.kr.md)를 참고하십시오.
 
 ### 4. 결과 다운로드 후 철거
 
@@ -243,7 +243,7 @@ Agent update/rollback은 `stop-first`입니다. `start-first`로 바꾸면 같�
 
 노드 drain은 Swarm 서비스 task에 적용됩니다. v3 Peer는 standalone 컨테이너이므로 Swarm이 직접 이전하지 않습니다. 정상 Agent 종료에서 Peer를 정리하고, 비정상 종료 후에는 동일 Agent ID·Peer network name으로 같은 노드에서 재시작할 때 잔존 컨테이너를 회수합니다. 노드 재가입, stack/service 이름 변경 또는 네트워크 이름 변경 시 이전 소유 범위의 잔존 Peer는 해당 서버에서 label을 확인해 별도로 정리해야 합니다. 전체 호스트 정지·네트워크 단절을 다른 서버의 Peer 재생성으로 숨기지 않습니다.
 
-Controller는 단일 인스턴스이며 공유 DB/leader election을 구현하지 않았습니다. `replicas: 1`을 유지하십시오. control 노드 장애 시 자동으로 빈 로컬 volume을 쓰는 다른 노드로 이동하지 않으며, 백업 복원과 새 Node ID 지정이 필요합니다. Controller는 실시간 실험 상태·counter를 시작 시 메모리에 복원하거나 실행 중 실험을 자동 재개하지 않습니다. 보존된 파일은 재시작 후에도 Control Room의 **Saved results**와 [결과 다운로드 API](monitoring.kr.md#실험-결과-다운로드)에서 받을 수 있습니다. 이전에 실행 중이었던 기록은 `interrupted`로 표시하지만 Peer 정리를 확인한 상태는 아닙니다. Controller crash만으로 Agent의 Peer가 종료되지는 않습니다. 계획된 업데이트 전 시나리오의 `stop-all` 또는 활성 run 취소로 정리하고 잔존 Peer를 확인하십시오. 이미 completed이지만 `stop-all`을 생략한 run의 Peer는 Controller 종료만으로 정리되지 않습니다.
+Controller는 단일 인스턴스이며 공유 DB/leader election을 구현하지 않았습니다. `replicas: 1`을 유지하십시오. control 노드 장애 시 자동으로 빈 로컬 volume을 쓰는 다른 노드로 이동하지 않으며, 백업 복원과 새 Node ID 지정이 필요합니다. Controller는 실시간 실험 상태·counter를 시작 시 메모리에 복원하거나 실행 중 실험을 자동 재개하지 않습니다. 보존된 파일은 재시작 후에도 대시보드의 **Saved results**와 [결과 다운로드 API](monitoring.kr.md#실험-결과-다운로드)에서 받을 수 있습니다. 이전에 실행 중이었던 기록은 `interrupted`로 표시하지만 Peer 정리를 확인한 상태는 아닙니다. Controller crash만으로 Agent의 Peer가 종료되지는 않습니다. 계획된 업데이트 전 시나리오의 `stop-all` 또는 활성 run 취소로 정리하고 잔존 Peer를 확인하십시오. 이미 completed이지만 `stop-all`을 생략한 run의 Peer는 Controller 종료만으로 정리되지 않습니다.
 
 전체 철거에는 `sh scripts/swarm.sh remove`를 사용하십시오. Controller 정지만으로 종료되지 않는 Peer도 이후 Agent 종료 단계에서 정리합니다.
 

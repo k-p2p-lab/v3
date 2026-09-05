@@ -12,18 +12,20 @@ The local SQLite database uses WAL mode. Both the database and WAL files are ret
 
 | Interface | Default address |
 |---|---|
-| KPL Control Room | http://localhost:8080 |
+| KPL Dashboard | http://localhost:8080 |
 | Grafana experiment analysis | http://localhost:3000/d/kpl-experiments |
 | Prometheus queries and target status | http://localhost:9090 |
 | Controller metrics endpoint | http://localhost:8080/metrics |
 
 Grafana allows anonymous, read-only access for local analysis. Administrator credentials come from `GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD` in `.env`. In this workspace, a random administrator password was generated and saved in the Git-ignored `.env` file. For a new installation, configure these values using `.env.example`. Without `.env`, the initial administrator credentials are Grafana's default `admin`/`admin`. Changing environment variables alone does not update the password in an existing Grafana data volume.
 
-Prometheus and Grafana ports are published only on `127.0.0.1`. Set `PROMETHEUS_PORT` and `GRAFANA_PORT` in `.env` to change their default ports. Set `GRAFANA_ANONYMOUS_ENABLED=false` to disable anonymous viewing.
+Docker Compose publishes the Prometheus and Grafana ports only on `127.0.0.1`; Swarm publishes them on the control node. Set `PROMETHEUS_PORT` and `GRAFANA_PORT` in `.env` to change their default ports. Set `GRAFANA_ANONYMOUS_ENABLED=false` to disable anonymous viewing.
+
+The Dashboard header links to Prometheus and Grafana in new tabs. It combines the current Dashboard host with the configured published ports, so the links follow either an SSH tunnel or the Swarm control-node address used to open the Dashboard.
 
 ## Run and analyze an experiment
 
-1. Use **Run experiment** in the Control Room to run [`examples/monitoring.yaml`](../examples/monitoring.yaml). This small experiment includes both envelope and raw publications.
+1. Use **Run experiment** in the Dashboard to run [`examples/monitoring.yaml`](../examples/monitoring.yaml). This small experiment includes both envelope and raw publications.
    Set **Runs** beside **Run** to 1–100 for sequential iterations. Each gets a separate result; failure or **Stop batch** cancels the remainder. See [repetition and metric definitions](experiment-metrics.md).
 2. Select **Run** (`run_id`), **Agent**, and **Topic** in Grafana. Selecting multiple runs aggregates their traffic and latency samples; network configuration time series identify each run in their legends.
 3. After an experiment finishes, set the time range to its execution window to view the recorded series. The default refresh interval is 5 seconds.
@@ -32,7 +34,7 @@ Prometheus scrapes `/metrics` on the Controller and both Agents every 5 seconds.
 
 ## Download experiment results
 
-In the Control Room, choose **Download results** on an experiment or in **Saved results**. The saved list reads the Controller's data directory, so results remain accessible after a Controller restart. Use **Refresh** after restoring files from a backup. Running experiments offer **Download snapshot**. For inactive rows, the UI measures an unknown ZIP size in the background and then displays it; running and queued rows omit the size because their files change frequently. A later event or an elapsed delivery deadline can change the next snapshot and its size.
+In the Dashboard, choose **Download results** on an experiment or in **Saved results**. The saved list reads the Controller's data directory, so results remain accessible after a Controller restart. Use **Refresh** after restoring files from a backup. Running experiments offer **Download snapshot**. For inactive rows, the UI measures an unknown ZIP size in the background and then displays it; running and queued rows omit the size because their files change frequently. A later event or an elapsed delivery deadline can change the next snapshot and its size.
 
 Each ZIP contains:
 
@@ -97,7 +99,7 @@ Exports contain collected telemetry, including subscription-session start/checkp
 
 `kpl_network_configured_loss_ratio` is the configured packet loss ratio, not an observed loss rate. Configured delay is also distinct from measured RTT. The `graft`/`prune`/`remove_peer` events help analyze PubSub mesh changes; they are neither a TCP connection graph nor a complete mesh snapshot.
 
-For current relationships, the Control Room's [interactive topology](topology.md) uses Peer status snapshots to display transport, Kademlia routing-table, and GossipSub mesh layers independently. These live snapshots do not depend on the recent-event buffer and are not an exhaustive historical graph in Prometheus or result exports.
+For current relationships, the Dashboard's [interactive topology](topology.md) uses Peer status snapshots to display transport, Kademlia routing-table, and GossipSub mesh layers independently. These live snapshots do not depend on the recent-event buffer and are not an exhaustive historical graph in Prometheus or result exports.
 
 `session-window-v1` uses actual publication time and `publish.deliveryWindow` (default 10s, positive and at most 1h). Session evidence must prove subscription throughout that window for the primary conditional ratio. Departures before the deadline are excluded even after early success; they remain in the starting-cohort ratio. Later joins and publisher-local receipts are excluded from both. Disconnection or mesh changes do not remove a subscriber. Show stable bounds, starting-cohort bounds, coverage, pending messages, and uncertainty together. A missing sequence means unknown, not a confirmed miss; an absent availability proof is not a confirmed departure.
 

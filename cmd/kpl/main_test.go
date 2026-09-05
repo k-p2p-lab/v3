@@ -1,0 +1,35 @@
+package main
+
+import "testing"
+
+func TestParsePort(t *testing.T) {
+	tests := []struct {
+		name     string
+		raw      string
+		fallback int
+		want     int
+		wantErr  bool
+	}{
+		{name: "empty uses default", fallback: 9090, want: 9090},
+		{name: "whitespace uses default", raw: "  ", fallback: 3000, want: 3000},
+		{name: "minimum", raw: "1", fallback: 9090, want: 1},
+		{name: "maximum", raw: "65535", fallback: 9090, want: 65535},
+		{name: "custom", raw: "19090", fallback: 9090, want: 19090},
+		{name: "zero", raw: "0", fallback: 9090, wantErr: true},
+		{name: "negative", raw: "-1", fallback: 9090, wantErr: true},
+		{name: "too large", raw: "65536", fallback: 9090, wantErr: true},
+		{name: "not numeric", raw: "http", fallback: 9090, wantErr: true},
+		{name: "number with spaces", raw: " 9090 ", fallback: 3000, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parsePort(test.raw, test.fallback, "test")
+			if (err != nil) != test.wantErr {
+				t.Fatalf("parsePort(%q) error=%v, wantErr=%t", test.raw, err, test.wantErr)
+			}
+			if got != test.want {
+				t.Fatalf("parsePort(%q)=%d, want %d", test.raw, got, test.want)
+			}
+		})
+	}
+}

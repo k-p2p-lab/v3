@@ -7,6 +7,7 @@ The Controller exposes the following public and operational endpoints. When `KPL
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/v1/health` | Controller health and current UTC time used for Peer clock sampling |
+| `GET` | `/api/v1/ui-config` | Published Prometheus and Grafana ports used by Dashboard navigation |
 | `GET` | `/api/v1/snapshot` | Full dashboard snapshot, including node `peerScores` |
 | `GET` | `/api/v1/agents` | Agent state |
 | `GET` | `/api/v1/nodes` | Peer state, including inspected `peerScores` |
@@ -39,7 +40,7 @@ The scenario library endpoints store reusable editor inputs independently of exp
 
 Raw events are stored at `data/runs/<run-id>/events.jsonl`; the exact input is stored as `scenario.yaml` and experiment metadata as `experiment.json` in the same directory. In Compose/Swarm, the persistent `controller-data` volume is mounted at `/var/lib/kpl/data`, and each run's files are under `/var/lib/kpl/data/runs/<run-id>`.
 
-Use **Download results** in the Control Room to export a run as ZIP. **Saved results** also lists files retained from previous Controller sessions; **Refresh** reloads that list. Running experiments offer **Download snapshot**, which contains the records saved when the download starts. These exports include the full saved event log, independently of the 300-event recent buffer. See [result downloads](monitoring.md#download-experiment-results) for archive contents and collection limits.
+Use **Download results** in the Dashboard to export a run as ZIP. **Saved results** also lists files retained from previous Controller sessions; **Refresh** reloads that list. Running experiments offer **Download snapshot**, which contains the records saved when the download starts. These exports include the full saved event log, independently of the 300-event recent buffer. See [result downloads](monitoring.md#download-experiment-results) for archive contents and collection limits.
 
 The Agent exposes this internal operational endpoint for Controller-driven cleanup:
 

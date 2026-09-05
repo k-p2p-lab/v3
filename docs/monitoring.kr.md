@@ -12,18 +12,20 @@ Grafana는 최초 실행 시 SQLite 데이터베이스를 초기화하므로 디
 
 | 화면 | 기본 주소 |
 |---|---|
-| KPL Control Room | http://localhost:8080 |
+| KPL Dashboard | http://localhost:8080 |
 | Grafana 실험 분석 | http://localhost:3000/d/kpl-experiments |
 | Prometheus 쿼리/수집 상태 | http://localhost:9090 |
 | Controller 지표 원문 | http://localhost:8080/metrics |
 
 Grafana는 로컬 분석용 읽기 전용 익명 접속을 허용합니다. 관리자 계정은 `.env`의 `GRAFANA_ADMIN_USER`/`GRAFANA_ADMIN_PASSWORD`를 사용합니다. 이 작업 환경에서는 임의 관리자 비밀번호를 생성하여 Git에서 제외되는 `.env`에 저장했습니다. 신규 설치 시에는 `.env.example`을 참고하여 설정하십시오. `.env` 없이 실행할 경우 관리자 초기 계정은 Grafana 기본 `admin`/`admin`입니다. 이미 생성된 Grafana 데이터 볼륨의 비밀번호는 환경 변수만 바꾸어도 갱신되지 않습니다.
 
-Prometheus/Grafana 포트는 `127.0.0.1`에만 게시합니다. 기본 포트를 변경하려면 `.env`의 `PROMETHEUS_PORT`, `GRAFANA_PORT`를 설정합니다. 익명 열람을 끄려면 `GRAFANA_ANONYMOUS_ENABLED=false`로 지정합니다.
+Docker Compose는 Prometheus/Grafana 포트를 `127.0.0.1`에만 게시하고, Swarm은 control 노드에 게시합니다. 기본 포트를 변경하려면 `.env`의 `PROMETHEUS_PORT`, `GRAFANA_PORT`를 설정합니다. 익명 열람을 끄려면 `GRAFANA_ANONYMOUS_ENABLED=false`로 지정합니다.
+
+대시보드 상단 메뉴는 Prometheus와 Grafana를 새 탭으로 엽니다. 현재 대시보드에 접속한 호스트와 설정된 게시 포트를 결합하므로 SSH 터널의 `localhost`와 Swarm control 노드 주소를 모두 그대로 따릅니다.
 
 ## 실행과 분석
 
-1. Control Room의 **Run experiment**에서 [`examples/monitoring.yaml`](../examples/monitoring.yaml)을 실행합니다. envelope 발행과 raw 발행을 함께 확인하는 작은 실험입니다.
+1. 대시보드의 **Run experiment**에서 [`examples/monitoring.yaml`](../examples/monitoring.yaml)을 실행합니다. envelope 발행과 raw 발행을 함께 확인하는 작은 실험입니다.
 2. Grafana에서 **Run**(run_id), **Agent**, **Topic**을 선택합니다. 여러 run을 고르면 선택한 실험의 트래픽·지연을 합산하며, 네트워크 설정 시계열은 범례에서 run별로 구분합니다.
 3. 실험이 끝난 뒤에도 시간 범위를 해당 실행 구간으로 지정하면 시계열을 볼 수 있습니다. 기본 새로고침은 5초입니다.
 
@@ -31,7 +33,7 @@ Prometheus는 Controller와 두 Agent의 `/metrics`를 5초마다 수집합니�
 
 ## 실험 결과 다운로드
 
-Control Room의 실험 항목이나 **Saved results**에서 **Download results**를 선택합니다. 저장 목록은 Controller의 데이터 디렉터리를 읽으므로 Controller 재시작 후에도 결과에 접근할 수 있습니다. 백업 파일을 복원한 뒤에는 **Refresh**로 목록을 갱신합니다. 실행 중 실험에는 **Download snapshot**이 표시됩니다. 비활성 행의 ZIP 크기를 아직 모르면 UI가 백그라운드에서 측정한 뒤 표시합니다. 파일이 자주 바뀌는 실행·대기 중 행은 크기를 생략합니다. 이후 이벤트가 도착하거나 delivery deadline이 지나면 다음 snapshot과 크기가 달라질 수 있습니다.
+대시보드의 실험 항목이나 **Saved results**에서 **Download results**를 선택합니다. 저장 목록은 Controller의 데이터 디렉터리를 읽으므로 Controller 재시작 후에도 결과에 접근할 수 있습니다. 백업 파일을 복원한 뒤에는 **Refresh**로 목록을 갱신합니다. 실행 중 실험에는 **Download snapshot**이 표시됩니다. 비활성 행의 ZIP 크기를 아직 모르면 UI가 백그라운드에서 측정한 뒤 표시합니다. 파일이 자주 바뀌는 실행·대기 중 행은 크기를 생략합니다. 이후 이벤트가 도착하거나 delivery deadline이 지나면 다음 snapshot과 크기가 달라질 수 있습니다.
 
 ZIP에는 다음 파일이 들어 있습니다.
 
@@ -98,7 +100,7 @@ curl --fail --output run-results.zip \
 
 `kpl_network_configured_loss_ratio`는 설정한 패킷 손실률이며 실제 관측 손실률이 아닙니다. 설정 delay도 실제 RTT와 구분합니다. graft/prune/remove_peer 이벤트는 PubSub mesh 변화를 분석하는 자료이며 TCP 연결 그래프나 완전한 mesh snapshot을 뜻하지 않습니다.
 
-현재 관계는 Control Room의 [대화형 토폴로지](topology.kr.md)에서 Peer 상태 snapshot을 통해 transport, Kademlia 라우팅 테이블, GossipSub mesh를 독립적으로 확인하십시오. 이 live snapshot은 최근 이벤트 버퍼와 독립적이며 Prometheus나 결과 ZIP에 전체 그래프 이력을 저장하는 것은 아닙니다.
+현재 관계는 대시보드의 [대화형 토폴로지](topology.kr.md)에서 Peer 상태 snapshot을 통해 transport, Kademlia 라우팅 테이블, GossipSub mesh를 독립적으로 확인하십시오. 이 live snapshot은 최근 이벤트 버퍼와 독립적이며 Prometheus나 결과 ZIP에 전체 그래프 이력을 저장하는 것은 아닙니다.
 
 `session-window-v1`은 실제 발행 시각과 `publish.deliveryWindow`(기본 10초, 양수·최대 1시간)를 사용합니다. 주 조건부 도달률은 기간 전체의 구독을 세션 증거로 확인해야 합니다. 마감 전 이탈은 조기 성공했어도 제외하며 발행 시점 대상 도달률에는 유지합니다. 늦은 join과 발행자 로컬 수신은 양쪽 모두 제외합니다. 단절이나 mesh 변화로 구독자를 제거하지 않습니다. 안정 도달률 범위, 발행 시점 대상 범위, coverage, pending, 불명을 함께 보십시오. sequence 누락은 확인된 미도달이 아닌 unknown이며 가용성 증거 부재도 확정 이탈은 아닙니다.
 

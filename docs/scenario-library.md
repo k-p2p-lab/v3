@@ -2,9 +2,9 @@
 
 English | [Korean](scenario-library.kr.md)
 
-The Control Room stores reusable, validated YAML scenarios on the Controller. Library records are independent of experiment results: saving a scenario does not run it, running edited YAML does not save it automatically, and deleting either record does not delete the other.
+The Dashboard stores reusable, validated YAML scenarios on the Controller. Library records are independent of experiment results: saving a scenario does not run it, running edited YAML does not save it automatically, and deleting either record does not delete the other.
 
-## Use the library in the Control Room
+## Use the library in the Dashboard
 
 1. Open **Run experiment**. The **Saved scenarios** list is loaded from the current Controller.
 2. Enter a descriptive **Saved scenario name** and edit the YAML.

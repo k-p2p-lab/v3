@@ -25,9 +25,11 @@ import (
 )
 
 type ServerConfig struct {
-	Listen  string
-	DataDir string
-	Token   string
+	Listen         string
+	DataDir        string
+	Token          string
+	PrometheusPort int
+	GrafanaPort    int
 }
 
 type Server struct {
@@ -59,6 +61,12 @@ func New(config ServerConfig, logger *slog.Logger) *Server {
 	}
 	if config.DataDir == "" {
 		config.DataDir = "data"
+	}
+	if config.PrometheusPort == 0 {
+		config.PrometheusPort = 9090
+	}
+	if config.GrafanaPort == 0 {
+		config.GrafanaPort = 3000
 	}
 	if logger == nil {
 		logger = slog.Default()

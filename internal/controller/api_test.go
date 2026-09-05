@@ -59,6 +59,56 @@ func TestDashboardRESTSnapshotExposesAgentsNetworkAndJobs(t *testing.T) {
 	}
 }
 
+func TestUIConfigExposesMonitoringPorts(t *testing.T) {
+	server := New(ServerConfig{
+		DataDir:        t.TempDir(),
+		PrometheusPort: 19090,
+		GrafanaPort:    13000,
+	}, nil)
+	handler := server.Handler(context.Background())
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/ui-config", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("ui config status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if cacheControl := recorder.Header().Get("Cache-Control"); cacheControl != "no-store" {
+		t.Fatalf("ui config Cache-Control=%q, want no-store", cacheControl)
+	}
+	var config struct {
+		PrometheusPort int `json:"prometheusPort"`
+		GrafanaPort    int `json:"grafanaPort"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.PrometheusPort != 19090 || config.GrafanaPort != 13000 {
+		t.Fatalf("ui config=%+v", config)
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/ui-config", nil))
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST ui config status=%d, want 405", recorder.Code)
+	}
+}
+
+func TestUIConfigUsesDefaultMonitoringPorts(t *testing.T) {
+	server := New(ServerConfig{DataDir: t.TempDir()}, nil)
+	recorder := httptest.NewRecorder()
+	server.Handler(context.Background()).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/ui-config", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("ui config status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var config map[string]int
+	if err := json.Unmarshal(recorder.Body.Bytes(), &config); err != nil {
+		t.Fatal(err)
+	}
+	if config["prometheusPort"] != 9090 || config["grafanaPort"] != 3000 {
+		t.Fatalf("default ui config=%+v", config)
+	}
+}
+
 func TestBootstrapRegistryRequiresRunAndReturnsOnlyReadyBootNodesFromThatRun(t *testing.T) {
 	server := New(ServerConfig{DataDir: t.TempDir()}, nil)
 	server.state.mu.Lock()

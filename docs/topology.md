@@ -4,7 +4,7 @@ English | [Korean](topology.kr.md)
 
 ## Read the graph
 
-The Control Room shows a full-width interactive topology with equally sized, wedge-shaped sectors for Agents. Agent numbers match **Agent status → No.** Each Peer has a local display number inside its Agent's sector; select it to see the full node and Peer IDs. The number helps identify a Peer on screen and does not fix its position. Display numbers can be reused after a Peer departs; use the full IDs for persistent identity.
+The Dashboard shows a full-width interactive topology with equally sized, wedge-shaped sectors for Agents. Agent numbers match **Agent status → No.** Each Peer has a local display number inside its Agent's sector; select it to see the full node and Peer IDs. The number helps identify a Peer on screen and does not fix its position. Display numbers can be reused after a Peer departs; use the full IDs for persistent identity.
 
 Peers settle gradually within their Agent's sector. Visible links apply spring-like forces, while repulsion and collision handling spread nearby Peers apart. Peers stay inside their assigned sector as they move. Changes to Peers or visible relationships restart the layout briefly; it stops when settled instead of adding continuous random movement. Placement is a display aid and does not change protocol behavior or experiment results.
 

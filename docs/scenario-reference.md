@@ -2,7 +2,7 @@
 
 English | [Korean](scenario-reference.kr.md)
 
-This guide describes the version 2 YAML format, Peer profiles, protocol controls, network conditions, and background jobs. For saving reusable YAML in the Control Room, see the [scenario library](scenario-library.md).
+This guide describes the version 2 YAML format, Peer profiles, protocol controls, network conditions, and background jobs. For saving reusable YAML in the Dashboard, see the [scenario library](scenario-library.md).
 
 ## Node roles, types, and profiles
 

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -58,11 +59,38 @@ func runController(ctx context.Context, logger *slog.Logger, args []string) erro
 	listen := flags.String("listen", ":8080", "HTTP listen address")
 	dataDir := flags.String("data-dir", "data", "experiment data directory")
 	token := flags.String("token", os.Getenv("KPL_API_TOKEN"), "optional shared API token")
+	prometheusPort := flags.String("prometheus-port", os.Getenv("PROMETHEUS_PORT"), "public Prometheus port advertised to the Dashboard (default 9090)")
+	grafanaPort := flags.String("grafana-port", os.Getenv("GRAFANA_PORT"), "public Grafana port advertised to the Dashboard (default 3000)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	server := controller.New(controller.ServerConfig{Listen: *listen, DataDir: *dataDir, Token: *token}, logger)
+	parsedPrometheusPort, err := parsePort(*prometheusPort, 9090, "Prometheus")
+	if err != nil {
+		return err
+	}
+	parsedGrafanaPort, err := parsePort(*grafanaPort, 3000, "Grafana")
+	if err != nil {
+		return err
+	}
+	server := controller.New(controller.ServerConfig{
+		Listen:         *listen,
+		DataDir:        *dataDir,
+		Token:          *token,
+		PrometheusPort: parsedPrometheusPort,
+		GrafanaPort:    parsedGrafanaPort,
+	}, logger)
 	return server.Run(ctx)
+}
+
+func parsePort(raw string, fallback int, name string) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return fallback, nil
+	}
+	port, err := strconv.Atoi(raw)
+	if err != nil || port < 1 || port > 65535 {
+		return 0, fmt.Errorf("%s port must be an integer from 1 to 65535", name)
+	}
+	return port, nil
 }
 
 func runAgent(ctx context.Context, logger *slog.Logger, args []string) error {

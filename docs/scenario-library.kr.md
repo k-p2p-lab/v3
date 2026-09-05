@@ -2,9 +2,9 @@
 
 [English](scenario-library.md) | 한국어
 
-Control Room은 재사용할 검증된 YAML 시나리오를 Controller에 저장합니다. 라이브러리와 실험 결과는 서로 독립적입니다. 시나리오 저장만으로 실행되지 않고 편집한 YAML을 실행해도 자동 저장되지 않으며, 어느 한쪽을 삭제해도 다른 쪽은 삭제되지 않습니다.
+대시보드는 재사용할 검증된 YAML 시나리오를 Controller에 저장합니다. 라이브러리와 실험 결과는 서로 독립적입니다. 시나리오 저장만으로 실행되지 않고 편집한 YAML을 실행해도 자동 저장되지 않으며, 어느 한쪽을 삭제해도 다른 쪽은 삭제되지 않습니다.
 
-## Control Room에서 사용하기
+## 대시보드에서 사용하기
 
 1. **Run experiment**을 엽니다. 현재 Controller에서 **Saved scenarios** 목록을 불러옵니다.
 2. 알아보기 쉬운 **Saved scenario name**을 입력하고 YAML을 편집합니다.

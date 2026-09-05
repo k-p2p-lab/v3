@@ -8,6 +8,8 @@ services:
     command: [controller, --listen, ':8080', --data-dir, /var/lib/kpl/data]
     environment:
       KPL_API_TOKEN: "${KPL_API_TOKEN:?Set KPL_API_TOKEN}"
+      PROMETHEUS_PORT: "${PROMETHEUS_PORT:-9090}"
+      GRAFANA_PORT: "${GRAFANA_PORT:-3000}"
     volumes: [controller-data:/var/lib/kpl/data]
     networks: [peers, monitoring]
     ports:

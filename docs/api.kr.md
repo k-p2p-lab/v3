@@ -7,6 +7,7 @@ Controller는 아래 공개 및 운영 엔드포인트를 제공합니다. `KPL_
 | Method | Path | 설명 |
 |---|---|---|
 | `GET` | `/api/v1/health` | Controller 상태와 Peer 시계 측정에 쓰는 현재 UTC 시각 |
+| `GET` | `/api/v1/ui-config` | 대시보드 메뉴에 사용하는 Prometheus·Grafana 게시 포트 |
 | `GET` | `/api/v1/snapshot` | 노드 `peerScores`를 포함한 대시보드 전체 snapshot |
 | `GET` | `/api/v1/agents` | Agent 상태 |
 | `GET` | `/api/v1/nodes` | inspection으로 수집한 `peerScores`를 포함한 Peer 상태 |
@@ -39,7 +40,7 @@ curl -X POST http://localhost:8080/api/v1/experiments \
 
 원시 이벤트는 `data/runs/<run-id>/events.jsonl`, 실행 입력은 같은 디렉터리의 `scenario.yaml`, 실험 메타데이터는 `experiment.json`에 저장됩니다. Compose/Swarm에서는 영구 `controller-data` 볼륨을 `/var/lib/kpl/data`에 마운트하며, 실험별 파일은 그 아래 `runs/<run-id>`에 저장됩니다.
 
-Control Room의 **Download results**로 실험 결과를 ZIP으로 받을 수 있습니다. **Saved results**에는 이전 Controller 실행에서 보존된 결과도 표시되며, **Refresh**로 목록을 다시 읽습니다. 실행 중 실험의 **Download snapshot**은 다운로드 시작 시점까지 저장된 기록을 담습니다. 최근 300개 이벤트 버퍼와 별개로 저장된 전체 이벤트 로그를 내보냅니다. 파일 구성과 수집 한계는 [실험 결과 다운로드](monitoring.kr.md#실험-결과-다운로드)를 참고하십시오.
+대시보드의 **Download results**로 실험 결과를 ZIP으로 받을 수 있습니다. **Saved results**에는 이전 Controller 실행에서 보존된 결과도 표시되며, **Refresh**로 목록을 다시 읽습니다. 실행 중 실험의 **Download snapshot**은 다운로드 시작 시점까지 저장된 기록을 담습니다. 최근 300개 이벤트 버퍼와 별개로 저장된 전체 이벤트 로그를 내보냅니다. 파일 구성과 수집 한계는 [실험 결과 다운로드](monitoring.kr.md#실험-결과-다운로드)를 참고하십시오.
 
 Agent는 Controller가 cleanup에 사용하는 다음 내부 운영 endpoint를 제공합니다.
 
