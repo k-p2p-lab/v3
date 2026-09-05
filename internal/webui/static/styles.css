@@ -19,6 +19,7 @@
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
 
 body {
   margin: 0;
@@ -286,12 +287,15 @@ dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
 .scenario-library-toolbar .secondary-button, .scenario-item-actions button { min-height: 2rem; padding: 0.35rem 0.55rem; font-size: 0.72rem; }
 .scenario-library-status { padding: 0.7rem 0.9rem 0.1rem; color: var(--muted); font-size: 0.75rem; line-height: 1.45; }
 .scenario-library-status.error { color: var(--red); }
-.scenario-library-list { min-height: 4rem; margin: 0; padding: 0.55rem; overflow-y: auto; list-style: none; }
-.scenario-library-item { display: grid; gap: 0.55rem; padding: 0.7rem; border: 1px solid transparent; border-radius: 0.55rem; background: rgba(17, 36, 49, 0.52); }
+.scenario-library-list { min-height: 4rem; margin: 0; padding: 0.55rem; overflow-x: hidden; overflow-y: auto; list-style: none; }
+.scenario-library-item { display: grid; min-width: 0; gap: 0.55rem; padding: 0.7rem; border: 1px solid transparent; border-radius: 0.55rem; background: rgba(17, 36, 49, 0.52); }
 .scenario-library-item + .scenario-library-item { margin-top: 0.45rem; }
 .scenario-library-item.selected { border-color: rgba(57, 214, 208, 0.48); background: rgba(57, 214, 208, 0.07); }
+.scenario-item-summary, .scenario-item-actions { min-width: 0; }
 .scenario-library-item strong { display: block; overflow: hidden; font-size: 0.8rem; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
-.scenario-library-item small { display: block; margin-top: 0.22rem; overflow: hidden; color: var(--muted); font-size: 0.67rem; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.scenario-library-item small { color: var(--muted); font-size: 0.67rem; line-height: 1.4; }
+.scenario-item-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.28rem 0.45rem; margin-top: 0.22rem; }
+.scenario-item-id { display: inline-flex; flex: 0 0 auto; padding: 0.08rem 0.34rem; border: 1px solid var(--line-soft); border-radius: 999px; color: var(--cyan); background: rgba(57, 214, 208, 0.06); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.62rem; letter-spacing: 0.015em; }
 .scenario-item-actions { flex-wrap: wrap; }
 .scenario-item-actions .load-scenario-button { color: var(--cyan); }
 .scenario-item-actions .delete-scenario-button { margin-left: auto; color: var(--red); }

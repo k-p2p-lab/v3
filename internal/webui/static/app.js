@@ -612,6 +612,10 @@ function formatResultTime(value) {
   return date.toLocaleString("en-US", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+function formatScenarioID(value) {
+  return value.length > 10 ? `${value.slice(0, 10)}…` : value;
+}
+
 function validateSavedScenario(value, requireYAML = false) {
   if (!value || typeof value !== "object" || typeof value.id !== "string" || !value.id
       || typeof value.name !== "string" || (requireYAML && typeof value.yaml !== "string")) {
@@ -663,11 +667,12 @@ function renderSavedScenarios() {
     const confirmingDelete = item.id === state.pendingScenarioDeleteId;
     const isDeleting = item.id === state.scenarioDeletingId;
     const isLoading = item.id === state.scenarioLoadingId;
+    const updated = formatResultTime(item.updatedAt);
     const controls = confirmingDelete
       ? `<button class="secondary-button" type="button" data-cancel-scenario-delete="${escapeHTML(item.id)}" ${busy ? "disabled" : ""}>Cancel</button><button class="danger-button confirm-delete-scenario" type="button" data-confirm-scenario-delete="${escapeHTML(item.id)}" aria-label="${escapeHTML(`Confirm deletion of saved scenario: ${name}`)}" ${busy ? "disabled" : ""}>${isDeleting ? "Deleting…" : "Confirm delete"}</button>`
       : `<button class="secondary-button load-scenario-button" type="button" data-load-scenario="${escapeHTML(item.id)}" aria-label="${escapeHTML(`Load saved scenario: ${name}`)}" ${busy ? "disabled" : ""}>${isLoading ? "Loading…" : "Load"}</button><button class="secondary-button delete-scenario-button" type="button" data-delete-scenario="${escapeHTML(item.id)}" aria-label="${escapeHTML(`Delete saved scenario: ${name}`)}" ${busy ? "disabled" : ""}>Delete</button>`;
     return `<li class="scenario-library-item${isSelected ? " selected" : ""}"${isSelected ? ' aria-current="true"' : ""}>
-      <div><strong title="${escapeHTML(name)}">${escapeHTML(name)}</strong><small title="${escapeHTML(item.id)}">Updated ${escapeHTML(formatResultTime(item.updatedAt))} · ${escapeHTML(item.id)}</small></div>
+      <div class="scenario-item-summary"><strong title="${escapeHTML(name)}">${escapeHTML(name)}</strong><small class="scenario-item-meta"><span>Updated ${escapeHTML(updated)}</span><span class="scenario-item-id" title="${escapeHTML(`Scenario ID: ${item.id}`)}"><span aria-hidden="true">ID ${escapeHTML(formatScenarioID(item.id))}</span><span class="visually-hidden">Scenario ID: ${escapeHTML(item.id)}</span></span></small></div>
       <div class="scenario-item-actions">${controls}</div>
     </li>`;
   }).join("");
