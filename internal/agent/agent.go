@@ -37,6 +37,8 @@ type Config struct {
 	Name          string
 	Listen        string
 	AdvertiseURL  string
+	MetricsListen string
+	MetricsURL    string
 	SelfURL       string
 	ControllerURL string
 	Token         string
@@ -113,6 +115,9 @@ func New(config Config, logger *slog.Logger) (*Server, error) {
 	if config.ControllerURL == "" || config.AdvertiseURL == "" {
 		return nil, fmt.Errorf("controller url and advertise url are required")
 	}
+	if err := validateMetricsEndpoint(config.MetricsListen, config.MetricsURL); err != nil {
+		return nil, err
+	}
 	if config.Capacity <= 0 {
 		config.Capacity = 100
 	}
@@ -172,12 +177,21 @@ func New(config Config, logger *slog.Logger) (*Server, error) {
 
 func (s *Server) Run(ctx context.Context) (resultErr error) {
 	// Bind before reconciling: a duplicate local Agent must not remove the
-	// running Agent's peers and only then discover that its port is occupied.
+	// running Agent's peers and only then discover that one of its ports is
+	// occupied.
 	listener, err := net.Listen("tcp", s.config.Listen)
 	if err != nil {
-		return err
+		return fmt.Errorf("listen on Agent control API: %w", err)
 	}
 	defer listener.Close()
+	var metricsListener net.Listener
+	if s.config.MetricsListen != "" {
+		metricsListener, err = net.Listen("tcp", s.config.MetricsListen)
+		if err != nil {
+			return fmt.Errorf("listen on Agent metrics endpoint: %w", err)
+		}
+		defer metricsListener.Close()
+	}
 	if s.docker != nil {
 		checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		err := s.docker.check(checkCtx)
@@ -199,15 +213,31 @@ func (s *Server) Run(ctx context.Context) (resultErr error) {
 		WriteTimeout:      3 * time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
+	var metricsServer *http.Server
+	if metricsListener != nil {
+		metricsServer = &http.Server{
+			Handler:           s.metricsOnlyHandler(),
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       15 * time.Second,
+			WriteTimeout:      15 * time.Second,
+			IdleTimeout:       30 * time.Second,
+		}
+	}
 	// Continue forwarding Peer telemetry while shutdown waits for the Peers.
 	controlCtx, controlCancel := context.WithCancel(context.WithoutCancel(ctx))
 	controlDone := make(chan struct{})
 	shutdownRequested, requestShutdown := context.WithCancel(ctx)
 	shutdownDone := make(chan error, 1)
+	var metricsServeDone chan error
 	defer func() {
 		requestShutdown()
 		if err := <-shutdownDone; err != nil {
 			resultErr = errors.Join(resultErr, fmt.Errorf("Agent shutdown incomplete: %w", err))
+		}
+		if metricsServeDone != nil {
+			if err := <-metricsServeDone; err != nil && !errors.Is(err, http.ErrServerClosed) {
+				resultErr = errors.Join(resultErr, fmt.Errorf("serve Agent metrics endpoint: %w", err))
+			}
 		}
 		controlCancel()
 		<-controlDone
@@ -227,6 +257,12 @@ func (s *Server) Run(ctx context.Context) (resultErr error) {
 		cleanupErr := s.waitStopped(containerStopTimeout)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		if metricsServer != nil {
+			if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+				_ = metricsServer.Close()
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("finish metrics HTTP handlers: %w", err))
+			}
+		}
 		if err := server.Shutdown(shutdownCtx); err != nil {
 			_ = server.Close()
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("finish HTTP handlers: %w", err))
@@ -236,6 +272,17 @@ func (s *Server) Run(ctx context.Context) (resultErr error) {
 		s.closeTelemetry()
 		shutdownDone <- cleanupErr
 	}()
+	if metricsServer != nil {
+		metricsServeDone = make(chan error, 1)
+		go func() {
+			err := metricsServer.Serve(metricsListener)
+			metricsServeDone <- err
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				requestShutdown()
+			}
+		}()
+		s.logger.Info("agent metrics listening", "id", s.config.ID, "address", metricsListener.Addr(), "advertise", s.config.MetricsURL)
+	}
 	s.logger.Info("agent listening", "id", s.config.ID, "address", listener.Addr(), "advertise", s.config.AdvertiseURL)
 	err = server.Serve(listener)
 	if errors.Is(err, http.ErrServerClosed) {
@@ -295,6 +342,7 @@ func (s *Server) snapshot() model.AgentHeartbeat {
 			ID:          s.config.ID,
 			Name:        s.config.Name,
 			URL:         strings.TrimRight(s.config.AdvertiseURL, "/"),
+			MetricsURL:  s.config.MetricsURL,
 			Hostname:    hostname,
 			Version:     "v3-dev",
 			Capacity:    s.config.Capacity,

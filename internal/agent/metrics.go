@@ -1,7 +1,12 @@
 package agent
 
 import (
+	"fmt"
+	"net"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 
 	"github.com/k-p2p-lab/v3/internal/model"
 	"github.com/prometheus/client_golang/prometheus"
@@ -11,6 +16,78 @@ import (
 
 func (s *Server) metricsHandler() http.Handler {
 	return promhttp.HandlerFor(newAgentMetricsRegistry(s), promhttp.HandlerOpts{})
+}
+
+// metricsOnlyHandler deliberately exposes no Agent control or status routes.
+// Swarm may publish this listener on every worker while the full control API
+// remains reachable only over the private overlay network.
+func (s *Server) metricsOnlyHandler() http.Handler {
+	metrics := s.metricsHandler()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if r.URL.Path != "/metrics" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		metrics.ServeHTTP(w, r)
+	})
+}
+
+func validateMetricsEndpoint(listen, advertisedURL string) error {
+	if strings.TrimSpace(listen) != listen || strings.TrimSpace(advertisedURL) != advertisedURL {
+		return fmt.Errorf("metrics listen address and URL cannot have surrounding whitespace")
+	}
+	if (listen == "") != (advertisedURL == "") {
+		return fmt.Errorf("metrics listen address and URL must be configured together")
+	}
+	if advertisedURL == "" {
+		return nil
+	}
+	parsed, err := url.Parse(advertisedURL)
+	if err != nil || parsed.Opaque != "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
+		return fmt.Errorf("metrics URL must be an absolute HTTP(S) URL")
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("metrics URL cannot contain user information")
+	}
+	if !metricsHostIsReachable(parsed.Hostname()) {
+		return fmt.Errorf("metrics URL must use a remotely reachable host")
+	}
+	if parsed.Path != "/metrics" || parsed.RawPath != "" {
+		return fmt.Errorf("metrics URL path must be exactly /metrics")
+	}
+	if parsed.RawQuery != "" || parsed.ForceQuery {
+		return fmt.Errorf("metrics URL cannot contain a query")
+	}
+	if strings.Contains(advertisedURL, "#") || parsed.Fragment != "" || parsed.RawFragment != "" {
+		return fmt.Errorf("metrics URL cannot contain a fragment")
+	}
+	if strings.HasSuffix(parsed.Host, ":") {
+		return fmt.Errorf("metrics URL contains an empty port")
+	}
+	if rawPort := parsed.Port(); rawPort != "" {
+		port, parseErr := strconv.Atoi(rawPort)
+		if parseErr != nil || port < 1 || port > 65535 {
+			return fmt.Errorf("metrics URL port must be between 1 and 65535")
+		}
+	}
+	return nil
+}
+
+func metricsHostIsReachable(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if host == "localhost" || host == "localhost.localdomain" || strings.HasSuffix(host, ".localhost") {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+		return false
+	}
+	return true
 }
 
 func newAgentMetricsRegistry(s *Server) *prometheus.Registry {

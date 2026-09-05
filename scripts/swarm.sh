@@ -14,7 +14,7 @@ Usage: sh scripts/swarm.sh [--env-file PATH] COMMAND [NODE... | SELECTOR]
   login                Log in to the image registry interactively
   publish [--platforms CSV]  Build and push the configured image tag
   check                Check the loaded deployment configuration and cluster
-  access               Show Controller, Prometheus and Grafana URLs
+  access               Show control URLs and selected Agent metrics URLs
   logs [COMPONENT]     Show the last 100 timestamped service log lines
   scenario [FILE]      Print a scenario (default: examples/swarm-smoke.yaml)
   deploy [NODE... | SELECTOR]  Deploy; bare deploy reuses existing Agent labels
@@ -131,6 +131,7 @@ for number in "$docker_timeout" "$image_pull_timeout" "$image_build_timeout" "$i
     case "$number" in ''|0*|*[!0-9]*) fail 'Timeouts and KPL_MIN_AGENTS must be positive integers without leading zeros.' ;; esac
     [ "$number" -gt 0 ] 2>/dev/null || fail 'Integer is out of range.'
 done
+swarm_validate_port_conflicts
 export KPL_STACK_NAME KPL_PEER_NETWORK KPL_PEER_SUBNET KPL_MIN_AGENTS
 agent_label=kpl.$KPL_STACK_NAME.agent
 application=kp2plab-v3
@@ -223,16 +224,30 @@ case "$command_name" in
         : "${KPL_CONTROL_NODE_ID:?Set KPL_CONTROL_NODE_ID}"
         swarm_validate_setting KPL_CONTROL_NODE_ID "$KPL_CONTROL_NODE_ID"
         http_port=${KPL_HTTP_PORT:-8080}
+        agent_metrics_port=${KPL_AGENT_METRICS_PORT:-9091}
         prometheus_port=${PROMETHEUS_PORT:-9090}
         grafana_port=${GRAFANA_PORT:-3000}
         swarm_validate_setting KPL_HTTP_PORT "$http_port"
+        swarm_validate_setting KPL_AGENT_METRICS_PORT "$agent_metrics_port"
         swarm_validate_setting PROMETHEUS_PORT "$prometheus_port"
         swarm_validate_setting GRAFANA_PORT "$grafana_port"
         access_host=$(dock node inspect --format '{{.Status.Addr}}' "$KPL_CONTROL_NODE_ID") || fail 'Cannot inspect the control node address.'
         case "$access_host" in ''|*[!0-9a-fA-F:.]*) fail 'Docker returned an invalid control node address.' ;; esac
         case "$access_host" in *:*) access_host=[$access_host] ;; esac
         printf 'Controller: http://%s:%s\nPrometheus: http://%s:%s\nGrafana: http://%s:%s\n' "$access_host" "$http_port" "$access_host" "$prometheus_port" "$access_host" "$grafana_port"
-        printf '%s\n' 'These configured URLs use the control node address; reachability and service readiness are not checked.'
+        agent_nodes=$(dock node ls --quiet --filter "node.label=$agent_label=true") || fail 'Cannot list selected Agent nodes.'
+        if [ -n "$agent_nodes" ]; then
+            for agent_node in $agent_nodes; do
+                case "$agent_node" in ''|*[!a-zA-Z0-9]*) fail 'Docker returned an invalid Agent node ID.' ;; esac
+                agent_host=$(dock node inspect --format '{{.Status.Addr}}' "$agent_node") || fail "Cannot inspect Agent node $agent_node address."
+                case "$agent_host" in ''|*[!0-9a-fA-F:.]*) fail "Docker returned an invalid address for Agent node $agent_node." ;; esac
+                case "$agent_host" in *:*) agent_host=[$agent_host] ;; esac
+                printf 'Agent metrics (%s): http://%s:%s/metrics\n' "$agent_node" "$agent_host" "$agent_metrics_port"
+            done
+        else
+            printf '%s\n' 'Agent metrics: no nodes are selected for this stack.'
+        fi
+        printf '%s\n' 'These configured URLs use Swarm node addresses; reachability, firewall rules and service readiness are not checked.'
         exit 0
         ;;
 esac

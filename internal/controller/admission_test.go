@@ -147,6 +147,27 @@ func TestRegistrationSnapshotFencesQueuedOlderHeartbeat(t *testing.T) {
 	}
 }
 
+func TestAgentMetricsURLSurvivesSparseSameInstanceReports(t *testing.T) {
+	s := newState(t.TempDir())
+	started := time.Now().Add(-time.Hour)
+	metricsURL := "http://worker.example:9091/metrics"
+	if _, err := s.registerAgent(model.Agent{ID: "a", URL: "http://a", MetricsURL: metricsURL, StartedAt: started}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.heartbeat(model.AgentHeartbeat{Agent: model.Agent{ID: "a", StartedAt: started, LastSeen: started.Add(time.Second)}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.agents["a"].MetricsURL; got != metricsURL {
+		t.Fatalf("heartbeat metrics URL=%q, want %q", got, metricsURL)
+	}
+	if _, err := s.registerAgent(model.Agent{ID: "a", URL: "http://a", StartedAt: started}); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.agents["a"].MetricsURL; got != metricsURL {
+		t.Fatalf("same-instance registration metrics URL=%q, want %q", got, metricsURL)
+	}
+}
+
 func TestAgentReRegistrationPreservesReservationsAndFencesOldInstance(t *testing.T) {
 	server := newLifecycleTestController(t)
 	s := server.state

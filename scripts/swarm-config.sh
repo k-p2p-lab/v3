@@ -1,6 +1,6 @@
 #!/bin/sh
 # Trusted configuration helpers, sourced by swarm.sh. Configuration is never sourced.
-swarm_config_keys='KPL_STACK_NAME KPL_CONTROL_NODE_ID KPL_PEER_NETWORK KPL_PEER_SUBNET KPL_IMAGE KPL_AGENT_CAPACITY KPL_API_TOKEN GRAFANA_ADMIN_USER GRAFANA_ADMIN_PASSWORD KPL_HTTP_PORT PROMETHEUS_PORT GRAFANA_PORT KPL_MIN_AGENTS KPL_DOCKER_TIMEOUT KPL_IMAGE_BUILD_TIMEOUT KPL_IMAGE_PUSH_TIMEOUT KPL_IMAGE_PULL_TIMEOUT KPL_CONTROLLER_STOP_TIMEOUT KPL_AGENT_STOP_TIMEOUT'
+swarm_config_keys='KPL_STACK_NAME KPL_CONTROL_NODE_ID KPL_PEER_NETWORK KPL_PEER_SUBNET KPL_IMAGE KPL_AGENT_CAPACITY KPL_AGENT_METRICS_PORT KPL_API_TOKEN GRAFANA_ADMIN_USER GRAFANA_ADMIN_PASSWORD KPL_HTTP_PORT PROMETHEUS_PORT GRAFANA_PORT KPL_MIN_AGENTS KPL_DOCKER_TIMEOUT KPL_IMAGE_BUILD_TIMEOUT KPL_IMAGE_PUSH_TIMEOUT KPL_IMAGE_PULL_TIMEOUT KPL_CONTROLLER_STOP_TIMEOUT KPL_AGENT_STOP_TIMEOUT'
 
 swarm_config_key() {
     case "$1" in ''|*[!A-Z0-9_]*) return 1 ;; esac
@@ -60,7 +60,7 @@ swarm_validate_setting() {
                     if (address != int(address/block)*block) exit 1
                 }
             ' || fail 'KPL_PEER_SUBNET must be a canonical IPv4 network CIDR with prefix 1 through 30.' ;;
-        KPL_HTTP_PORT|PROMETHEUS_PORT|GRAFANA_PORT)
+        KPL_HTTP_PORT|KPL_AGENT_METRICS_PORT|PROMETHEUS_PORT|GRAFANA_PORT)
             case "$2" in ''|0*|*[!0-9]*) fail "$1 must be a port between 1 and 65535." ;; esac
             [ "$2" -le 65535 ] 2>/dev/null || fail "$1 must be a port between 1 and 65535." ;;
         KPL_AGENT_CAPACITY|KPL_MIN_AGENTS|KPL_DOCKER_TIMEOUT|KPL_IMAGE_BUILD_TIMEOUT|KPL_IMAGE_PUSH_TIMEOUT|KPL_IMAGE_PULL_TIMEOUT|KPL_CONTROLLER_STOP_TIMEOUT|KPL_AGENT_STOP_TIMEOUT)
@@ -89,12 +89,29 @@ swarm_validate_setting() {
     esac
 }
 
+swarm_validate_port_conflicts() {
+    sc_http_port=${KPL_HTTP_PORT:-8080}
+    sc_agent_metrics_port=${KPL_AGENT_METRICS_PORT:-9091}
+    sc_prometheus_port=${PROMETHEUS_PORT:-9090}
+    sc_grafana_port=${GRAFANA_PORT:-3000}
+    swarm_validate_setting KPL_HTTP_PORT "$sc_http_port"
+    swarm_validate_setting KPL_AGENT_METRICS_PORT "$sc_agent_metrics_port"
+    swarm_validate_setting PROMETHEUS_PORT "$sc_prometheus_port"
+    swarm_validate_setting GRAFANA_PORT "$sc_grafana_port"
+    case "$sc_agent_metrics_port" in
+        "$sc_http_port") fail 'KPL_AGENT_METRICS_PORT conflicts with KPL_HTTP_PORT.' ;;
+        "$sc_prometheus_port") fail 'KPL_AGENT_METRICS_PORT conflicts with PROMETHEUS_PORT.' ;;
+        "$sc_grafana_port") fail 'KPL_AGENT_METRICS_PORT conflicts with GRAFANA_PORT.' ;;
+        2377|7946) fail 'KPL_AGENT_METRICS_PORT conflicts with a Docker Swarm TCP port (2377 or 7946).' ;;
+    esac
+}
+
 swarm_config_defaults() {
     export KPL_STACK_NAME=${KPL_STACK_NAME:-kpl}
     export KPL_PEER_NETWORK=${KPL_PEER_NETWORK:-$KPL_STACK_NAME-peers}
     export KPL_AGENT_CAPACITY=${KPL_AGENT_CAPACITY:-20} KPL_MIN_AGENTS=${KPL_MIN_AGENTS:-1}
     export GRAFANA_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
-    export KPL_HTTP_PORT=${KPL_HTTP_PORT:-8080} PROMETHEUS_PORT=${PROMETHEUS_PORT:-9090} GRAFANA_PORT=${GRAFANA_PORT:-3000}
+    export KPL_HTTP_PORT=${KPL_HTTP_PORT:-8080} KPL_AGENT_METRICS_PORT=${KPL_AGENT_METRICS_PORT:-9091} PROMETHEUS_PORT=${PROMETHEUS_PORT:-9090} GRAFANA_PORT=${GRAFANA_PORT:-3000}
     export KPL_DOCKER_TIMEOUT=${KPL_DOCKER_TIMEOUT:-60}
     export KPL_IMAGE_BUILD_TIMEOUT=${KPL_IMAGE_BUILD_TIMEOUT:-1800} KPL_IMAGE_PUSH_TIMEOUT=${KPL_IMAGE_PUSH_TIMEOUT:-600} KPL_IMAGE_PULL_TIMEOUT=${KPL_IMAGE_PULL_TIMEOUT:-300}
     export KPL_CONTROLLER_STOP_TIMEOUT=${KPL_CONTROLLER_STOP_TIMEOUT:-480} KPL_AGENT_STOP_TIMEOUT=${KPL_AGENT_STOP_TIMEOUT:-240}
@@ -145,6 +162,7 @@ swarm_config_command() (
     for sc_key in $swarm_config_keys; do
         if swarm_setting_value "$sc_key"; then swarm_validate_setting "$sc_key" "$sc_value"; fi
     done
+    swarm_validate_port_conflicts
     if [ "$sc_command" = init ]; then
         command -v docker >/dev/null 2>&1 || fail 'Docker CLI is required.'
         command -v timeout >/dev/null 2>&1 || fail 'Linux timeout (coreutils) is required.'

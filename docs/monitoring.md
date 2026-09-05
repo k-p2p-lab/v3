@@ -19,7 +19,7 @@ The local SQLite database uses WAL mode. Both the database and WAL files are ret
 
 Grafana allows anonymous, read-only access for local analysis. Administrator credentials come from `GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD` in `.env`. In this workspace, a random administrator password was generated and saved in the Git-ignored `.env` file. For a new installation, configure these values using `.env.example`. Without `.env`, the initial administrator credentials are Grafana's default `admin`/`admin`. Changing environment variables alone does not update the password in an existing Grafana data volume.
 
-Docker Compose publishes the Prometheus and Grafana ports only on `127.0.0.1`; Swarm publishes them on the control node. Set `PROMETHEUS_PORT` and `GRAFANA_PORT` in `.env` to change their default ports. Set `GRAFANA_ANONYMOUS_ENABLED=false` to disable anonymous viewing.
+Docker Compose publishes the Prometheus and Grafana ports only on `127.0.0.1`; Swarm publishes them on the control node. Swarm also publishes each Agent's dedicated metrics listener on its own node at `KPL_AGENT_METRICS_PORT` (default `9091`). Set `PROMETHEUS_PORT` and `GRAFANA_PORT` in Compose `.env`, or use `scripts/swarm.sh configure` for Swarm ports. Set `GRAFANA_ANONYMOUS_ENABLED=false` to disable anonymous viewing in Compose.
 
 The Dashboard header links to Prometheus and Grafana in new tabs. It combines the current Dashboard host with the configured published ports, so the links follow either an SSH tunnel or the Swarm control-node address used to open the Dashboard.
 
@@ -30,7 +30,7 @@ The Dashboard header links to Prometheus and Grafana in new tabs. It combines th
 2. Select **Run** (`run_id`), **Agent**, and **Topic** in Grafana. Selecting multiple runs aggregates their traffic and latency samples; network configuration time series identify each run in their legends.
 3. After an experiment finishes, set the time range to its execution window to view the recorded series. The default refresh interval is 5 seconds.
 
-Prometheus scrapes `/metrics` on the Controller and both Agents every 5 seconds. It does not scrape Peers directly or add exporters to individual Peer containers. The Controller aggregates the existing telemetry stream, so telemetry loss under `scope: all` also affects these metrics. Monitoring services use a separate Docker network; Peers receive no additional networks or permissions.
+Prometheus scrapes `/metrics` on the Controller and Agents every 5 seconds. Compose uses its two static Agent service names. In Swarm, the Controller returns the metrics URLs of registered Agents through HTTP service discovery; Prometheus then reaches each Agent's host-mode port directly instead of a service VIP. It does not scrape Peers directly or add exporters to individual Peer containers. The Controller aggregates the existing Peer telemetry stream, so telemetry loss under `scope: all` still affects Controller-derived Peer metrics. Monitoring services use a separate Docker network; Peers receive no additional networks or permissions.
 
 ## Download experiment results
 
@@ -133,7 +133,7 @@ Heartbeat processing also initializes zero baselines for `add_peer` and `remove_
 
 Prometheus time series are stored in the `prometheus-data` named volume, and Grafana settings in `grafana-data`. Both survive ordinary container recreation. Prometheus retention is set to 15 days or 5 GB, whichever limit is reached first. The 5 GB setting is not a hard ceiling on disk usage: WAL, head data, and compaction require additional space. See the [Prometheus storage documentation](https://prometheus.io/docs/prometheus/latest/storage/).
 
-With Compose bind mounts, edits to dashboard JSON files in `monitoring/grafana/dashboards` are applied at 30-second intervals. Swarm configs are immutable: redeploy the stack with the versioned dashboard config reference to apply this update. The provisioned originals are managed as files. To save a separate dashboard, sign in as an administrator and work with a copy. See the [Grafana provisioning documentation](https://grafana.com/docs/grafana/latest/administration/provisioning/).
+With Compose bind mounts, edits to dashboard JSON files in `monitoring/grafana/dashboards` are applied at 30-second intervals. Swarm configs are immutable: Prometheus and dashboard configuration changes use versioned config references and require a stack redeployment. The provisioned originals are managed as files. To save a separate dashboard, sign in as an administrator and work with a copy. See the [Grafana provisioning documentation](https://grafana.com/docs/grafana/latest/administration/provisioning/).
 
 ```bash
 # Check scrape target status.
@@ -147,6 +147,6 @@ docker compose ps
 docker compose logs --tail=100 prometheus grafana
 ```
 
-When distributing Agents across hosts, change the Agent targets in `monitoring/prometheus/prometheus.yml` to reachable `/metrics` addresses. Local Compose network names do not discover remote hosts.
+The Compose file intentionally uses static Agent service names and does not discover remote hosts. The supplied Swarm stack instead discovers registered targets from `GET /api/v1/prometheus/agent-targets`. Use `sh scripts/swarm.sh access` to inspect the advertised URLs, ensure the configured port is free on every selected Agent node, and permit TCP traffic from the control node. If operators open an Agent metrics link directly, permit their browser's trusted management network as well; block untrusted sources. `up{job="kpl-agent"}` distinguishes successful scrapes from registered targets that are unreachable through a firewall or an incorrect Swarm `NodeAddr`.
 
 Image versions are pinned to Prometheus `v3.13.2` and Grafana `13.2.1`. When upgrading, consult the official [Prometheus downloads](https://prometheus.io/download/) and [Grafana Docker installation guide](https://grafana.com/docs/grafana/latest/setup-grafana/installation/docker/), then revalidate the configuration and dashboards.

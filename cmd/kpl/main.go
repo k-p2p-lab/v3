@@ -99,6 +99,8 @@ func runAgent(ctx context.Context, logger *slog.Logger, args []string) error {
 	name := flags.String("name", "", "human-readable agent name")
 	listen := flags.String("listen", ":8090", "HTTP listen address")
 	advertiseURL := flags.String("advertise-url", "", "controller-reachable agent URL")
+	metricsListen := flags.String("metrics-listen", "", "optional metrics-only HTTP listen address")
+	metricsURL := flags.String("metrics-url", "", "public metrics URL advertised to the Controller")
 	selfURL := flags.String("self-url", "", "agent URL reachable from peer containers (defaults to advertise-url in Docker mode)")
 	controllerURL := flags.String("controller-url", "http://127.0.0.1:8080", "controller URL")
 	capacity := flags.Int("capacity", 100, "maximum active peers")
@@ -115,7 +117,8 @@ func runAgent(ctx context.Context, logger *slog.Logger, args []string) error {
 		return err
 	}
 	server, err := agent.New(agent.Config{
-		ID: *id, Name: *name, Listen: *listen, AdvertiseURL: *advertiseURL, SelfURL: *selfURL,
+		ID: *id, Name: *name, Listen: *listen, AdvertiseURL: *advertiseURL,
+		MetricsListen: *metricsListen, MetricsURL: *metricsURL, SelfURL: *selfURL,
 		ControllerURL: *controllerURL, Capacity: *capacity, DataDir: *dataDir, Token: *token,
 		PeerAPIPort: *peerAPIPort, PeerP2PPort: *peerP2PPort, Labels: parseLabels(*labels),
 		Runtime: *runtime, DockerBinary: *dockerBinary, DockerImage: *dockerImage, DockerNetwork: *dockerNetwork,

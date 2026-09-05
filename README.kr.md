@@ -50,7 +50,7 @@ sh scripts/swarm.sh credentials
 sh scripts/swarm.sh scenario
 ```
 
-manager에도 Agent를 실행해야 한다면 `--workers` 대신 `--all`을 사용합니다. `access`가 출력한 Controller 주소를 열고 `scenario` 출력 내용을 붙여 넣은 다음 `credentials`가 출력한 API token을 사용하십시오. helper는 배포 시점의 이미지 digest를 확인해 고정하므로 tag를 갱신할 때 SHA를 직접 수정할 필요가 없습니다. 운영 클러스터를 관리하거나 철거하기 전에 [전체 Swarm 절차](docs/swarm.kr.md)를 확인하십시오.
+manager에도 Agent를 실행해야 한다면 `--workers` 대신 `--all`을 사용합니다. `access`가 출력한 Controller 주소를 열고 `scenario` 출력 내용을 붙여 넣은 다음 `credentials`가 출력한 API token을 사용하십시오. `access`는 선택된 각 Agent 노드의 metrics URL도 표시합니다. TCP `KPL_AGENT_METRICS_PORT`(기본 `9091`)는 control 노드에서 허용하고, 운영자가 해당 링크를 직접 열 때에는 운영자 브라우저가 속한 신뢰 관리망에서도 허용하십시오. helper는 배포 시점의 이미지 digest를 확인해 고정하므로 tag를 갱신할 때 SHA를 직접 수정할 필요가 없습니다. 운영 클러스터를 관리하거나 철거하기 전에 [전체 Swarm 절차](docs/swarm.kr.md)를 확인하십시오.
 
 ## 문서
 

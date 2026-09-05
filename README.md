@@ -50,7 +50,7 @@ sh scripts/swarm.sh credentials
 sh scripts/swarm.sh scenario
 ```
 
-Use `--all` instead of `--workers` when the manager must also run an Agent. Open the Controller URL printed by `access`, paste the scenario printed by `scenario`, and use the API token printed by `credentials`. The helper resolves and pins the current image digest during deployment, so tag updates do not require manual SHA edits. Read the [complete Swarm workflow](docs/swarm.md) before operating or removing a production cluster.
+Use `--all` instead of `--workers` when the manager must also run an Agent. Open the Controller URL printed by `access`, paste the scenario printed by `scenario`, and use the API token printed by `credentials`. `access` also lists the metrics URL on every selected Agent node. Allow TCP `KPL_AGENT_METRICS_PORT` (default `9091`) from the control node and, when operators open those links directly, from their trusted management network. The helper resolves and pins the current image digest during deployment, so tag updates do not require manual SHA edits. Read the [complete Swarm workflow](docs/swarm.md) before operating or removing a production cluster.
 
 ## Documentation
 

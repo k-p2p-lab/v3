@@ -8,12 +8,11 @@ scrape_configs:
     static_configs:
       - targets: [controller:8080]
   - job_name: kpl-agent
-    # This service alias is scoped to the stack's private monitoring overlay.
-    # Resolve every task instead of scraping a load-balanced service VIP.
-    dns_sd_configs:
-      - names: [tasks.agent]
-        type: A
-        port: 8090
+    # The Controller returns each registered Agent's node-address metrics URL.
+    # This avoids the Swarm service VIP and keeps the control API unpublished.
+    honor_labels: true
+    http_sd_configs:
+      - url: http://controller:8080/api/v1/prometheus/agent-targets
         refresh_interval: 5s
   - job_name: prometheus
     static_configs:

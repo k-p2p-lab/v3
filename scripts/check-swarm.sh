@@ -14,9 +14,11 @@ capacity=${KPL_AGENT_CAPACITY:-20}
 stack_name=${KPL_STACK_NAME:-kpl}
 minimum_agents=${KPL_MIN_AGENTS:-2}
 image_pull_timeout=${KPL_IMAGE_PULL_TIMEOUT:-300}
+agent_metrics_port=${KPL_AGENT_METRICS_PORT:-9091}
 swarm_validate_setting KPL_PEER_SUBNET "${KPL_PEER_SUBNET:-}"
 swarm_validate_setting KPL_IMAGE_BUILD_TIMEOUT "${KPL_IMAGE_BUILD_TIMEOUT:-1800}"
 swarm_validate_setting KPL_IMAGE_PUSH_TIMEOUT "${KPL_IMAGE_PUSH_TIMEOUT:-600}"
+swarm_validate_port_conflicts
 
 case "$image_pull_timeout" in
     ''|0*|*[!0-9]*) fail 'KPL_IMAGE_PULL_TIMEOUT must be a positive decimal integer without leading zeros.' ;;
@@ -101,5 +103,5 @@ agents=$(docker node inspect --format '{{.Description.Platform.OS}} {{.Status.St
 eligible=$(printf '%s\n' "$agents" | awk '$1 == "linux" && $2 == "ready" && $3 == "active" { n++ } END { print n+0 }')
 [ "$eligible" -ge "$minimum_agents" ] || fail "At least $minimum_agents $agent_label=true Linux, Ready, Active nodes are required."
 
-printf 'PASS: Swarm manager, pinned control node, attachable overlay, %s eligible Agents for stack %s, image reference and capacity %s.\n' "$eligible" "$stack_name" "$capacity"
-printf '%s\n' 'This checks deployment settings only; it does not validate registry access, physical-node kernels, VXLAN connectivity or capacity under load.'
+printf 'PASS: Swarm manager, pinned control node, attachable overlay, %s eligible Agents for stack %s, image reference, capacity %s and Agent metrics port %s.\n' "$eligible" "$stack_name" "$capacity" "$agent_metrics_port"
+printf '%s\n' 'This checks deployment settings only; it does not validate registry access, physical-node kernels, VXLAN connectivity, host-port availability, firewall reachability or capacity under load.'

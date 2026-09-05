@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"io"
+	"log/slog"
+	"strings"
+	"testing"
+)
 
 func TestParsePort(t *testing.T) {
 	tests := []struct {
@@ -31,5 +37,15 @@ func TestParsePort(t *testing.T) {
 				t.Fatalf("parsePort(%q)=%d, want %d", test.raw, got, test.want)
 			}
 		})
+	}
+}
+
+func TestRunAgentPassesMetricsEndpointFlagsToConfiguration(t *testing.T) {
+	err := runAgent(context.Background(), slog.New(slog.NewTextHandler(io.Discard, nil)), []string{
+		"--id", "agent", "--advertise-url", "http://agent:8090", "--controller-url", "http://controller:8080",
+		"--runtime", "process", "--metrics-listen", ":9091", "--metrics-url", "http://worker.example:9091/wrong",
+	})
+	if err == nil || !strings.Contains(err.Error(), "path must be exactly /metrics") {
+		t.Fatalf("metrics flags were not validated by Agent configuration: %v", err)
 	}
 }

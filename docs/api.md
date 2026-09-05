@@ -8,6 +8,7 @@ The Controller exposes the following public and operational endpoints. When `KPL
 |---|---|---|
 | `GET` | `/api/v1/health` | Controller health and current UTC time used for Peer clock sampling |
 | `GET` | `/api/v1/ui-config` | Published Prometheus and Grafana ports used by Dashboard navigation |
+| `GET` | `/api/v1/prometheus/agent-targets` | Prometheus HTTP service-discovery groups for online Agents with advertised metrics URLs |
 | `GET` | `/api/v1/snapshot` | Full dashboard snapshot, including node `peerScores` |
 | `GET` | `/api/v1/agents` | Agent state |
 | `GET` | `/api/v1/nodes` | Peer state, including inspected `peerScores` |
@@ -25,7 +26,7 @@ The Controller exposes the following public and operational endpoints. When `KPL
 | `POST` | `/api/v1/experiments` | Run YAML once, or JSON `{scenario, repetitions}` for 1–100 sequential runs |
 | `POST` | `/api/v1/experiments/{id}/stop` | Cancel a running experiment, then perform bounded job shutdown and generation-fenced Peer cleanup |
 
-The `runId` query parameter on `/api/v1/bootstrap` is required. The registry returns only ready `boot` nodes with usable identity and address data from that run, so concurrent experiments cannot discover one another's bootstrap peers. `/api/v1/discovery` requires all three shown query parameters, excludes the requester, and returns configured topic participants rather than observed delivery or mesh outcomes.
+The `runId` query parameter on `/api/v1/bootstrap` is required. The registry returns only ready `boot` nodes with usable identity and address data from that run, so concurrent experiments cannot discover one another's bootstrap peers. `/api/v1/discovery` requires all three shown query parameters, excludes the requester, and returns configured topic participants rather than observed delivery or mesh outcomes. `/api/v1/prometheus/agent-targets` is a read-only operational endpoint used by the supplied Swarm Prometheus configuration; it omits offline Agents and Agents without a valid metrics URL.
 
 From the repository root:
 

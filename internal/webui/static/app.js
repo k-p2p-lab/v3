@@ -965,7 +965,7 @@ async function confirmResultDeletion() {
 function renderAgents(agents) {
   rememberAgents(agents.map((agent) => agent.id));
   if (!agents.length) {
-    $("#agentRows").innerHTML = '<tr><td colspan="7" class="empty-cell">No Agents registered.</td></tr>';
+    $("#agentRows").innerHTML = '<tr><td colspan="8" class="empty-cell">No Agents registered.</td></tr>';
     return;
   }
   $("#agentRows").innerHTML = [...agents].sort((a, b) => agentNumber(a.id) - agentNumber(b.id)).map((agent) => {
@@ -978,8 +978,30 @@ function renderAgents(agents) {
       <td>${formatNumber(agent.activeNodes)} / ${formatNumber(agent.capacity)}</td>
       <td><div class="usage"><div class="usage-track"><i style="width:${usage}%"></i></div><span>${usage}%</span></div></td>
       <td>${escapeHTML(relativeTime(agent.lastSeen))}</td>
+      <td>${agentMetricsLink(agent)}</td>
     </tr>`;
   }).join("");
+}
+
+function safeAgentMetricsURL(value) {
+  if (typeof value !== "string" || !value || value.trim() !== value) return "";
+  try {
+    const url = new URL(value);
+    const port = url.port ? Number(url.port) : (url.protocol === "https:" ? 443 : 80);
+    const host = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
+    const localHost = host === "localhost" || host === "localhost.localdomain" || host.endsWith(".localhost") || host === "0.0.0.0" || host === "::" || host === "::1" || host.startsWith("127.") || host.startsWith("::ffff:7f");
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || !url.hostname || localHost || url.pathname !== "/metrics" || url.search || url.hash || value.includes("#") || !Number.isInteger(port) || port < 1 || port > 65535) return "";
+    return url.href;
+  } catch {
+    return "";
+  }
+}
+
+function agentMetricsLink(agent) {
+  const href = safeAgentMetricsURL(agent?.metricsUrl);
+  if (!href) return "";
+  const name = agent.name || agent.id || "Agent";
+  return `<a class="agent-metrics-link" href="${escapeHTML(href)}" target="_blank" rel="noopener noreferrer" title="${escapeHTML(`Open ${name} metrics in a new tab`)}">Metrics<span class="visually-hidden"> for ${escapeHTML(name)} (opens in a new tab)</span></a>`;
 }
 
 function renderEvents(events) {

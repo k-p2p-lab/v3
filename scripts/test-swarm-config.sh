@@ -28,7 +28,7 @@ reject() { if run "$@"; then printf 'Unexpected acceptance: %s\n' "$1" >&2; exit
 # First-time setup persists all requested values and independently generated secrets.
 run init KPL_IMAGE=registry.example:5000/team/kpl:v3 KPL_AGENT_CAPACITY=40 KPL_MIN_AGENTS=2 KPL_PEER_SUBNET=10.11.0.0/24
 [ "$(stat -c '%a' "$config_path")" = 600 ]
-for line in KPL_IMAGE=registry.example:5000/team/kpl:v3 KPL_CONTROL_NODE_ID=manager1 KPL_AGENT_CAPACITY=40 KPL_MIN_AGENTS=2 KPL_PEER_SUBNET=10.11.0.0/24; do
+for line in KPL_IMAGE=registry.example:5000/team/kpl:v3 KPL_CONTROL_NODE_ID=manager1 KPL_AGENT_CAPACITY=40 KPL_AGENT_METRICS_PORT=9091 KPL_MIN_AGENTS=2 KPL_PEER_SUBNET=10.11.0.0/24; do
     grep -Fxq "$line" "$config_path"
 done
 grep -Eq '^KPL_API_TOKEN=[a-f0-9]{64}$' "$config_path"
@@ -55,10 +55,11 @@ grep -Fxq "GRAFANA_ADMIN_PASSWORD=$password" "$scratch/output"
 
 # Saved changes preserve unrelated file values despite conflicting exported values.
 export KPL_IMAGE=registry.example/team/kpl:environment KPL_AGENT_CAPACITY=999 KPL_API_TOKEN=environment-token
-run configure KPL_IMAGE=registry.example/team/kpl:updated KPL_PEER_SUBNET=
+run configure KPL_IMAGE=registry.example/team/kpl:updated KPL_PEER_SUBNET= KPL_AGENT_METRICS_PORT=19091
 grep -Fxq 'KPL_IMAGE=registry.example/team/kpl:updated' "$config_path"
 grep -Fxq 'KPL_PEER_SUBNET=' "$config_path"
 grep -Fxq 'KPL_AGENT_CAPACITY=40' "$config_path"
+grep -Fxq 'KPL_AGENT_METRICS_PORT=19091' "$config_path"
 grep -Fxq "KPL_API_TOKEN=$token" "$config_path"
 grep -Fxq "GRAFANA_ADMIN_PASSWORD=$password" "$config_path"
 [ "$(stat -c '%a' "$config_path")" = 600 ]
@@ -70,10 +71,18 @@ unset KPL_IMAGE KPL_AGENT_CAPACITY KPL_API_TOKEN
 
 # A malformed edit is transactional: file contents, mode, and Docker calls stay unchanged.
 cp "$config_path" "$scratch/original"
-for setting in UNKNOWN=value KPL_IMAGE=registry.example/kpl KPL_IMAGE=https://registry.example/kpl:v3 KPL_AGENT_CAPACITY=0 KPL_IMAGE_BUILD_TIMEOUT=08 KPL_IMAGE_PUSH_TIMEOUT=-1 KPL_HTTP_PORT=65536 KPL_STACK_NAME=Bad KPL_CONTROL_NODE_ID=bad/id KPL_API_TOKEN=; do
+for setting in UNKNOWN=value KPL_IMAGE=registry.example/kpl KPL_IMAGE=https://registry.example/kpl:v3 KPL_AGENT_CAPACITY=0 KPL_AGENT_METRICS_PORT=0 KPL_AGENT_METRICS_PORT=09091 KPL_AGENT_METRICS_PORT=65536 KPL_IMAGE_BUILD_TIMEOUT=08 KPL_IMAGE_PUSH_TIMEOUT=-1 KPL_HTTP_PORT=65536 KPL_STACK_NAME=Bad KPL_CONTROL_NODE_ID=bad/id KPL_API_TOKEN=; do
     reject configure KPL_AGENT_CAPACITY=50 "$setting"
     cmp "$config_path" "$scratch/original"
 done
+for conflicting_port in 8080 9090 3000 2377 7946; do
+    reject configure "KPL_AGENT_METRICS_PORT=$conflicting_port"
+    grep -q 'KPL_AGENT_METRICS_PORT conflicts' "$scratch/output"
+    cmp "$config_path" "$scratch/original"
+done
+reject configure KPL_AGENT_METRICS_PORT=18080 KPL_HTTP_PORT=18080
+grep -q 'KPL_AGENT_METRICS_PORT conflicts with KPL_HTTP_PORT' "$scratch/output"
+cmp "$config_path" "$scratch/original"
 reject configure KPL_HTTP_PORT=8000 KPL_HTTP_PORT=8001
 reject configure 'KPL_API_TOKEN GRAFANA_ADMIN_USER=must-not-be-exported'
 if grep -q 'must-not-be-exported' "$scratch/output"; then exit 1; fi
@@ -135,7 +144,19 @@ reject init
 [ "$(wc -l < "$KPL_CONFIG_TEST_CALLS")" -eq "$calls" ]
 unset KPL_API_TOKEN
 
+# Initialization rejects every Agent metrics port collision before consulting
+# Docker or creating a configuration file.
+for conflicting_port in 8080 9090 3000 2377 7946; do
+    config_path="$scratch/conflicting-$conflicting_port.env"
+    calls_before=$(wc -l < "$KPL_CONFIG_TEST_CALLS")
+    reject init "KPL_AGENT_METRICS_PORT=$conflicting_port"
+    grep -q 'KPL_AGENT_METRICS_PORT conflicts' "$scratch/output"
+    [ ! -e "$config_path" ]
+    [ "$(wc -l < "$KPL_CONFIG_TEST_CALLS")" -eq "$calls_before" ]
+done
+
 # Explicit initialization settings can come from the environment as before runtime commands.
+config_path="$scratch/environment.env"
 export KPL_IMAGE=registry.example/kpl:environment KPL_AGENT_CAPACITY=12
 run init
 grep -Fxq 'KPL_IMAGE=registry.example/kpl:environment' "$config_path"

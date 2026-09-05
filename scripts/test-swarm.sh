@@ -184,7 +184,13 @@ case "$1 ${2:-}" in
             case "$format" in
                 '{{.ID}}') printf '%s\n' "$node" ;;
                 '{{.Status.State}}') printf '%s\n' "$state" ;;
-                '{{.Status.Addr}}') printf '%s\n' "${KPL_TEST_CONTROL_ADDR:-10.20.0.7}" ;;
+                '{{.Status.Addr}}')
+                    case "$node" in
+                        control1) printf '%s\n' "${KPL_TEST_CONTROL_ADDR:-10.20.0.7}" ;;
+                        worker1) printf '%s\n' "${KPL_TEST_WORKER1_ADDR:-10.20.0.11}" ;;
+                        worker2) printf '%s\n' "${KPL_TEST_WORKER2_ADDR:-fd00::12}" ;;
+                        *) printf '%s\n' "${KPL_TEST_CONTROL_ADDR:-10.20.0.7}" ;;
+                    esac ;;
                 '{{.Description.Platform.OS}} {{.Status.State}}') printf '%s %s\n' "$os" "$state" ;;
                 '{{.Description.Platform.OS}} {{.Status.State}} {{.Spec.Availability}}') printf '%s %s %s\n' "$os" "$state" "$availability" ;;
                 '{{.ID}} {{.Description.Platform.OS}} {{.Status.State}} {{.Spec.Availability}}') printf '%s %s %s %s\n' "$node" "$os" "$state" "$availability" ;;
@@ -282,7 +288,7 @@ reset_case() {
     export KPL_TEST_REPO_ROOT=$root
     unset KPL_TEST_FOREIGN KPL_TEST_FOREIGN_STACK KPL_TEST_DOWN_NODE KPL_TEST_CONTROLLER_STOP KPL_TEST_AGENT_STOP KPL_TEST_EMPTY_STACK KPL_TEST_NO_NETWORK KPL_MIN_AGENTS KPL_TEST_FINAL_LIST_FAIL KPL_TEST_INSPECT_FAIL KPL_TEST_EMPTY_HISTORY KPL_TEST_OLD_FAILED KPL_TEST_PENDING_STATE KPL_TEST_PENDING_CONTAINER KPL_TEST_PULL_DIGEST KPL_TEST_PULL_FAULT KPL_IMAGE_PULL_TIMEOUT DOCKER_DEFAULT_PLATFORM
     unset KPL_TEST_SELF_ID KPL_TEST_NODE_IDS KPL_TEST_LABEL_NODES KPL_TEST_NODE_LS_FAIL KPL_TEST_NODE_INSPECT_FAIL
-    unset KPL_PEER_SUBNET KPL_IMAGE_BUILD_TIMEOUT KPL_IMAGE_PUSH_TIMEOUT KPL_TEST_BUILD_FAIL KPL_TEST_PUSH_FAIL KPL_TEST_EXPECT_CONTEXT DOCKER_CONTEXT KPL_TEST_NETWORK_SUBNET KPL_TEST_CONTROL_ADDR KPL_HTTP_PORT PROMETHEUS_PORT GRAFANA_PORT
+    unset KPL_PEER_SUBNET KPL_IMAGE_BUILD_TIMEOUT KPL_IMAGE_PUSH_TIMEOUT KPL_TEST_BUILD_FAIL KPL_TEST_PUSH_FAIL KPL_TEST_EXPECT_CONTEXT DOCKER_CONTEXT KPL_TEST_NETWORK_SUBNET KPL_TEST_CONTROL_ADDR KPL_TEST_WORKER1_ADDR KPL_TEST_WORKER2_ADDR KPL_HTTP_PORT KPL_AGENT_METRICS_PORT PROMETHEUS_PORT GRAFANA_PORT
 }
 run() { sh "$root/scripts/swarm.sh" --env-file "$scratch/config.env" "$@" > "$KPL_TEST_STATE/output" 2>&1; }
 reject() {
@@ -520,6 +526,24 @@ for invalid_timeout in 0 -1 1.5 08 999999999999999999999999999; do
     [ ! -s "$KPL_TEST_STATE/calls" ]
 done
 
+# Public check and deploy reject host-port conflicts before any Docker query or
+# deployment mutation, including conflicts introduced by multiple overrides.
+for command in check deploy; do
+    reset_case
+    export KPL_AGENT_METRICS_PORT=9090
+    reject "$command"
+    grep -q 'KPL_AGENT_METRICS_PORT conflicts with PROMETHEUS_PORT' "$KPL_TEST_STATE/output"
+    no_mutation
+    [ ! -s "$KPL_TEST_STATE/calls" ]
+
+    reset_case
+    export KPL_AGENT_METRICS_PORT=18080 KPL_HTTP_PORT=18080
+    reject "$command"
+    grep -q 'KPL_AGENT_METRICS_PORT conflicts with KPL_HTTP_PORT' "$KPL_TEST_STATE/output"
+    no_mutation
+    [ ! -s "$KPL_TEST_STATE/calls" ]
+done
+
 reset_case
 unset KPL_API_TOKEN
 literal='$(touch "'"$scratch"'/executed")'
@@ -699,9 +723,12 @@ if grep -q '^service ls' "$KPL_TEST_STATE/calls"; then exit 1; fi
 no_mutation
 
 reset_case
-export KPL_TEST_EMPTY_STACK=1 KPL_HTTP_PORT=18080 PROMETHEUS_PORT=19090 GRAFANA_PORT=13000
+export KPL_TEST_EMPTY_STACK=1 KPL_HTTP_PORT=18080 KPL_AGENT_METRICS_PORT=19091 PROMETHEUS_PORT=19090 GRAFANA_PORT=13000
 run access
 for port in 18080 19090 13000; do grep -Fq "http://10.20.0.7:$port" "$KPL_TEST_STATE/output"; done
+grep -Fq 'Agent metrics (worker1): http://10.20.0.11:19091/metrics' "$KPL_TEST_STATE/output"
+grep -Fq 'Agent metrics (worker2): http://[fd00::12]:19091/metrics' "$KPL_TEST_STATE/output"
+grep -Fq 'firewall rules' "$KPL_TEST_STATE/output"
 if grep -Fq "$KPL_API_TOKEN" "$KPL_TEST_STATE/output" || grep -Fq "$GRAFANA_ADMIN_PASSWORD" "$KPL_TEST_STATE/output"; then exit 1; fi
 if grep -q '^service ls' "$KPL_TEST_STATE/calls"; then exit 1; fi
 no_mutation

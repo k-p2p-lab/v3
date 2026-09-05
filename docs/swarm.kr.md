@@ -10,7 +10,7 @@ Linux 서버들이 이미 같은 Swarm에 가입되어 있고, rootful Docker와
 
 Swarm 가입은 이미지 registry 생성을 의미하지 않습니다. manager와 모든 대상 노드에서 접근할 수 있는 registry가 필요하며, 필요한 인증과 HTTPS 신뢰 설정은 미리 준비해야 합니다. helper는 registry를 설치하거나 Docker daemon의 전역 TLS/insecure-registry 설정을 변경하지 않습니다. 예를 들어 기존 registry가 있다면 아래 이미지 대신 `172.20.4.171:5000/kpl-v3:v3`를 사용할 수 있습니다. HTTP registry라면 관련 Docker daemon이 이를 사용하도록 사전에 설정되어 있어야 합니다.
 
-서버 간 TCP 2377(manager), TCP/UDP 7946, UDP 4789 통신이 필요합니다. VXLAN은 신뢰하는 클러스터 내부로 제한하고 VPN·클라우드망에서는 underlay MTU와 VXLAN overhead를 확인하십시오. smoke 실험에는 네트워크 조건 적용을 위한 커널 지원도 필요합니다. [Docker overlay 요구사항](https://docs.docker.com/engine/network/drivers/overlay/)
+서버 간 TCP 2377(manager), TCP/UDP 7946, UDP 4789 통신이 필요합니다. control 노드의 Prometheus가 선택된 모든 Agent 노드 주소의 TCP `KPL_AGENT_METRICS_PORT`(기본 `9091`)에도 접근할 수 있어야 합니다. 운영자가 Agent metrics 링크를 직접 열 경우 운영자 브라우저가 속한 신뢰 관리망에서도 이 포트를 허용하십시오. VXLAN과 metrics 접근은 신뢰하는 네트워크 안으로 제한하고 VPN·클라우드망에서는 underlay MTU와 VXLAN overhead를 확인하십시오. smoke 실험에는 네트워크 조건 적용을 위한 커널 지원도 필요합니다. [Docker overlay 요구사항](https://docs.docker.com/engine/network/drivers/overlay/)
 
 분산 smoke 검증에는 Agent를 실행할 노드가 최소 두 대 필요합니다. manager 한 대와 worker 두 대이면 `--workers`로 manager를 실험에서 제외합니다. manager 한 대와 worker 한 대이면 대신 `--all`을 사용해 두 노드에 Agent를 배치하십시오. 이 경우 manager도 실험과 CPU·메모리를 공유합니다. 전체 과정에서 같은 사용자와 Docker context를 사용하십시오. Docker 접근에 sudo가 필요하다면 `init`, `login`, `publish`, 배포 명령을 포함해 일관되게 `sudo sh scripts/swarm.sh ...`로 실행합니다.
 
@@ -50,7 +50,7 @@ sh scripts/swarm.sh credentials
 
 `deploy`는 이미지를 확정하고 선택한 노드에 label을 추가하며, 필요하면 attachable Peer overlay를 생성한 뒤 배포 검사와 stack 배포를 접수합니다. 모든 서비스와 Agent가 준비되기 전에 반환합니다. `check`는 불러온 설정으로 구성·네트워크·배치 사전 검사를 다시 수행하며, 실제 서버 간 통신이나 모든 worker의 커널 규칙 설치를 검증하지 않습니다. `status`는 Docker 서비스·task·노드 상태이며 Controller 등록 상태는 아닙니다.
 
-`access`가 출력한 Controller URL을 여십시오. 포트는 명령을 실행하는 manager와 다를 수 있는 지정된 **control 노드**에 게시됩니다. 해당 주소에 접근할 수 있는 기기에서 대시보드의 **Online Agents가 2 이상**이 될 때까지 기다리십시오. **Agent status**에서는 `online` 행만 확인합니다. **Peers**는 점유량 / 용량이며, 용량에서 점유량을 뺀 여유 슬롯의 합계가 **6 이상**이어야 합니다. 요약의 **Available slots**에는 offline Agent도 포함될 수 있으므로 이 조건은 표로 확인하십시오. Swarm task가 실행 중이라는 사실만으로 등록까지 확인되지는 않습니다. 시작에 문제가 있으면 `sh scripts/swarm.sh logs agent` 또는 `sh scripts/swarm.sh logs controller`를 확인하십시오.
+`access`가 출력한 Controller URL을 여십시오. Controller, Prometheus, Grafana 포트는 명령을 실행하는 manager와 다를 수 있는 지정된 **control 노드**에 게시됩니다. 같은 명령은 선택된 각 Agent 노드의 host-mode metrics URL도 표시합니다. 브라우저에서 Agent 링크를 열려면 운영자 기기의 신뢰 관리망에서 각 Agent 노드로 직접 접근할 수 있어야 합니다. control 노드에 접근할 수 있는 기기에서 대시보드의 **Online Agents가 2 이상**이 될 때까지 기다리십시오. **Agent status**에서는 `online` 행만 확인합니다. **Peers**는 점유량 / 용량이며, 용량에서 점유량을 뺀 여유 슬롯의 합계가 **6 이상**이어야 합니다. 요약의 **Available slots**에는 offline Agent도 포함될 수 있으므로 이 조건은 표로 확인하십시오. Swarm task가 실행 중이라는 사실만으로 등록까지 확인되지는 않습니다. 시작에 문제가 있으면 `sh scripts/swarm.sh logs agent` 또는 `sh scripts/swarm.sh logs controller`를 확인하십시오.
 
 `credentials`는 설정된 API 토큰과 Grafana 로그인 정보를 명시적으로 평문 출력합니다. API 토큰은 Controller에, 별도 Grafana 계정과 비밀번호는 `access`의 Grafana URL에 사용합니다. 기존 Grafana volume은 관리자 비밀번호를 보존하므로 설정 변경만으로 그 비밀번호가 초기화되지는 않습니다.
 
@@ -88,7 +88,7 @@ worker가 계속 들어오고 수명에 따라 나가는 더 긴 실험은 [chur
 일반적인 설정 변경은 helper를 사용합니다.
 
 ```sh
-sh scripts/swarm.sh configure KPL_AGENT_CAPACITY=20 KPL_MIN_AGENTS=2
+sh scripts/swarm.sh configure KPL_AGENT_CAPACITY=20 KPL_MIN_AGENTS=2 KPL_AGENT_METRICS_PORT=9091
 # 선택 사항: Peer overlay를 생성하기 전에 사용하지 않는 subnet을 지정합니다.
 sh scripts/swarm.sh configure KPL_PEER_SUBNET=10.11.0.0/24
 sh scripts/swarm.sh config
@@ -102,7 +102,7 @@ sh scripts/swarm.sh config
 
 helper는 `.env.swarm`의 허용된 `KEY=VALUE` 항목을 **문자 그대로** 읽으며 파일을 source하거나 셸 표현식을 실행하지 않습니다. 바깥쪽 한 쌍의 따옴표는 제거하지만 변수·명령 치환·escape를 확장하지 않습니다. export된 환경변수가 파일보다 우선하므로 파일 변경이 적용되지 않은 것 같으면 `config`를 확인하십시오. `sudo`는 환경변수를 제거할 수 있으므로 같은 계정을 사용하고 일상 설정은 helper 파일에 보관합니다. 다른 파일은 `sh scripts/swarm.sh --env-file /path/to/lab.env config`로 선택합니다. Compose의 `.env`는 읽지 않습니다.
 
-Agent는 배치된 노드의 로컬 Docker socket만 사용하며 manager API 접근이 필요 없습니다. `{{.Service.Name}}-{{.Node.ID}}`로 ID를 만들고 자신의 task가 연결된 Peer overlay IPv4를 `advertise-url`과 `self-url`로 사용합니다. 서비스 VIP나 공통 DNSRR 주소는 개별 Agent를 안정적으로 식별할 수 없습니다. Agent는 시작 시 실제 로컬 image ID를 확인하여 Peer 생성에 사용하므로 같은 노드의 Agent·Peer 바이너리가 일치합니다. [Swarm global 서비스와 템플릿](https://docs.docker.com/engine/swarm/services/)
+Agent는 배치된 노드의 로컬 Docker socket만 사용하며 manager API 접근이 필요 없습니다. `{{.Service.Name}}-{{.Node.ID}}`로 ID를 만들고 자신의 task가 연결된 Peer overlay IPv4를 `advertise-url`과 `self-url`로 사용합니다. 해당 daemon의 Swarm `NodeAddr`를 읽어 host-mode 포트를 통한 별도 metrics URL도 알립니다. control API는 overlay 내부 TCP 8090에 유지되고 게시되지 않으며 Peer control 및 libp2p 포트도 게시하지 않습니다. 서비스 VIP나 공통 DNSRR 주소는 개별 Agent를 안정적으로 식별할 수 없습니다. Agent는 시작 시 실제 로컬 image ID를 확인하여 Peer 생성에 사용하므로 같은 노드의 Agent·Peer 바이너리가 일치합니다. [Swarm global 서비스와 템플릿](https://docs.docker.com/engine/swarm/services/)
 
 ## 동일 태그로 이미지 업데이트
 
@@ -162,7 +162,7 @@ Makefile은 `NODES`를 그대로 전달하므로 `make swarm-add-node NODES='--w
 | `sh scripts/swarm.sh login` | 설정된 이미지에서 추론한 registry에 대화형 로그인 |
 | `sh scripts/swarm.sh publish [--platforms CSV]` | 설정 태그로 빌드·push. 플랫폼 지정 시 기존 Buildx builder 사용 |
 | `sh scripts/swarm.sh check` | 불러온 설정으로 배포 사전 검사 재실행 |
-| `sh scripts/swarm.sh access` | control 노드 URL 출력. 접근 가능 여부나 서비스 readiness는 검사하지 않음 |
+| `sh scripts/swarm.sh access` | control 노드 URL과 선택된 각 Agent 노드의 metrics URL 출력. 접근 가능 여부나 서비스 readiness는 검사하지 않음 |
 | `sh scripts/swarm.sh logs [COMPONENT]` | 타임스탬프가 있는 최근 100줄 표시. 기본 controller, 또는 agent·prometheus·grafana |
 | `sh scripts/swarm.sh scenario [FILE]` | 웹 폼에 넣을 YAML 출력. 기본은 분산 smoke 예제이며 실행 요청은 하지 않음 |
 | `sh scripts/swarm.sh add-node worker-c` | 기존 서비스에 Agent 배치 노드 추가. Linux·Ready·Active 상태 필요 |
@@ -224,7 +224,7 @@ Peer는 Agent로 향하는 경로의 overlay IPv4만 libp2p에 광고합니다. 
 
 ## 분석과 운영
 
-Prometheus는 private monitoring overlay의 `tasks.agent`를 DNS로 조회하여 각 Agent를 개별 수집합니다. 서버 추가·task 재시작 시 5초 간격으로 탐색합니다. Grafana는 기존 KP2PLab 대시보드를 자동 구성합니다. 다음 항목을 함께 확인하십시오.
+Prometheus는 5초마다 Controller의 HTTP service-discovery endpoint에 등록된 Agent metrics URL을 요청합니다. 각 Agent는 자신의 Swarm node 주소와 설정된 host-mode metrics 포트를 알리므로 수집이 service VIP를 통과하지 않습니다. task가 Controller에 등록된 뒤에만 target이 됩니다. Grafana는 KP2PLab 대시보드를 자동 구성합니다. 다음 항목을 함께 확인하십시오.
 
 - `up{job="kpl-agent"}` 대상 수와 실제 Agent task 수
 - Controller의 `kpl_agent_active_nodes`, `kpl_agent_capacity`, `kpl_agent_up`
@@ -233,7 +233,7 @@ Prometheus는 private monitoring overlay의 `tasks.agent`를 DNS로 조회하여
 
 Go process 지표는 Controller·Agent 자체만 나타내며 Peer 전체의 자원 사용량이 아닙니다. 호스트 모니터링 또는 별도 container exporter로 Peer 부하를 확인하십시오. 전체 노드 상태 보고·Controller 저장/집계·중앙 HTTP 수집, Docker CLI의 생성/삭제 비용도 확장 한계입니다. 종료된 노드 기록과 실행별 Prometheus series가 유지되므로 긴 churn 실험은 메모리와 수집 지연을 함께 측정해야 합니다.
 
-Swarm의 published port는 Compose의 `127.0.0.1` 바인딩과 다릅니다. 이 stack은 host mode로 control 노드의 8080·9090·3000을 게시합니다. 관리망 방화벽이나 인증 reverse proxy로 접근을 제한하십시오. `KPL_API_TOKEN`은 변경 API만 보호하고 GET 조회는 보호하지 않습니다. Grafana 익명 접속은 이 stack에서 비활성화했습니다. [Swarm host mode 게시](https://docs.docker.com/engine/swarm/services/#publish-ports)
+Swarm의 published port는 Compose의 `127.0.0.1` 바인딩과 다릅니다. 이 stack은 host mode로 control 노드의 8080·9090·3000과 선택된 모든 Agent 노드의 `KPL_AGENT_METRICS_PORT`(기본 9091)를 게시합니다. Agent metrics 포트는 모든 대상 노드에서 비어 있어야 하며 같은 노드를 공유하는 별도 stack에는 서로 다른 포트를 지정해야 합니다. 또한 `KPL_HTTP_PORT`, `PROMETHEUS_PORT`, `GRAFANA_PORT` 및 Swarm TCP 포트 2377·7946과 달라야 하며 config helper와 배포 사전검사가 이러한 충돌을 거부합니다. control 노드와, 직접 브라우저 접근이 필요한 경우 운영자의 신뢰 관리망에서 이 포트를 허용하십시오. metrics endpoint는 읽기 전용이지만 인증되지 않으므로 신뢰하지 않는 출발지는 차단해야 합니다. Agent control API 8090과 Peer 포트는 내부에 유지하며 게시하지 않습니다. control 노드 포트는 관리망 방화벽이나 인증 reverse proxy로 접근을 제한하십시오. `KPL_API_TOKEN`은 변경 API만 보호하고 GET 조회는 보호하지 않습니다. Grafana 익명 접속은 이 stack에서 비활성화했습니다. [Swarm host mode 게시](https://docs.docker.com/engine/swarm/services/#publish-ports)
 
 모니터링 설정은 Swarm configs로 전달하므로 모든 서버에 저장소를 복사할 필요가 없습니다. Swarm config는 immutable이므로 설정 파일 변경 시 `stack.swarm.yaml`의 config key와 해당 참조를 함께 버전명으로 바꾸어 새 config를 배포하십시오. 데이터 volume은 같은 control Node ID에서 유지됩니다.
 

@@ -17,6 +17,7 @@ type Agent struct {
 	ID          string            `json:"id"`
 	Name        string            `json:"name"`
 	URL         string            `json:"url"`
+	MetricsURL  string            `json:"metricsUrl,omitempty"`
 	Hostname    string            `json:"hostname"`
 	Version     string            `json:"version"`
 	Capacity    int               `json:"capacity"`

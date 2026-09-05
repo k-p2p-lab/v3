@@ -10,7 +10,7 @@ Start with Linux servers already joined to the same Swarm, using rootful Docker 
 
 Swarm membership does not create an image registry. You need a registry reachable from the manager and every target node, with authentication and HTTPS trust already configured where required. The helper does not install a registry or change the Docker daemons' global TLS/insecure-registry settings. For example, `172.20.4.171:5000/kpl-v3:v3` can replace the example image below if that is your existing registry; an HTTP registry requires the relevant Docker daemons to be configured for it beforehand.
 
-Servers need TCP 2377 for managers, TCP/UDP 7946, and UDP 4789 between cluster nodes. Keep VXLAN access within the trusted cluster and check underlay MTU/VXLAN overhead on VPNs or cloud networks. The smoke experiment also requires kernel support for network shaping. [Docker overlay requirements](https://docs.docker.com/engine/network/drivers/overlay/)
+Servers need TCP 2377 for managers, TCP/UDP 7946, and UDP 4789 between cluster nodes. Prometheus on the control node also needs TCP `KPL_AGENT_METRICS_PORT` (default `9091`) to every selected Agent node address. If operators open the Agent metrics links directly, permit that port from their browser's trusted management network as well. Keep both VXLAN and metrics access within trusted networks, and check underlay MTU/VXLAN overhead on VPNs or cloud networks. The smoke experiment also requires kernel support for network shaping. [Docker overlay requirements](https://docs.docker.com/engine/network/drivers/overlay/)
 
 For the distributed smoke test, use at least two Agent nodes. With one manager and two workers, `--workers` keeps experiments off the manager. With one manager and one worker, use `--all` instead so both nodes run an Agent; the manager then shares CPU and memory with experiments. Keep the same user and Docker context throughout. If Docker requires sudo, use `sudo sh scripts/swarm.sh ...` consistently, including `init`, `login`, `publish`, and deployment commands.
 
@@ -50,7 +50,7 @@ sh scripts/swarm.sh credentials
 
 `deploy` resolves the image, labels the selected nodes, creates the attachable Peer overlay if needed, runs deployment checks, and submits the stack. It returns before every service and Agent is ready. `check` reruns the configuration/network/placement preflight using the loaded settings; it does not verify cross-host traffic or install kernel rules on every worker. `status` shows Docker service/task/node state, not Controller registration.
 
-Open the Controller URL printed by `access`. Ports are published on the configured **control node**, which may differ from the manager running the command. From a machine that can reach that address, wait until the Dashboard shows **at least 2 Online Agents**. In **Agent status**, consider only `online` rows: **Peers** displays occupied / capacity, and the sum of capacity minus occupied must be **at least 6**. The summary's **Available slots** can include offline Agents, so use the table for this check. A running Swarm task alone does not prove registration. If startup fails, inspect `sh scripts/swarm.sh logs agent` or `sh scripts/swarm.sh logs controller`.
+Open the Controller URL printed by `access`. The Controller, Prometheus, and Grafana ports are published on the configured **control node**, which may differ from the manager running the command. The same command lists a host-mode metrics URL for every selected Agent node. Opening those Agent links in a browser also requires direct access from the operator's trusted management network. From a machine that can reach the control node, wait until the Dashboard shows **at least 2 Online Agents**. In **Agent status**, consider only `online` rows: **Peers** displays occupied / capacity, and the sum of capacity minus occupied must be **at least 6**. The summary's **Available slots** can include offline Agents, so use the table for this check. A running Swarm task alone does not prove registration. If startup fails, inspect `sh scripts/swarm.sh logs agent` or `sh scripts/swarm.sh logs controller`.
 
 `credentials` explicitly prints the configured API token and Grafana login in plaintext. Use its API token in the Controller and its separate Grafana username/password for the Grafana URL from `access`. An existing Grafana volume retains its administrator password; changing the configuration alone does not reset that password.
 
@@ -88,7 +88,7 @@ For a longer experiment with workers continuously joining and expiring, follow [
 Use helper commands for ordinary configuration changes:
 
 ```sh
-sh scripts/swarm.sh configure KPL_AGENT_CAPACITY=20 KPL_MIN_AGENTS=2
+sh scripts/swarm.sh configure KPL_AGENT_CAPACITY=20 KPL_MIN_AGENTS=2 KPL_AGENT_METRICS_PORT=9091
 # Optional: select an unused subnet before the Peer overlay is created.
 sh scripts/swarm.sh configure KPL_PEER_SUBNET=10.11.0.0/24
 sh scripts/swarm.sh config
@@ -102,7 +102,7 @@ Keep `KPL_CONTROL_NODE_ID` pinned to the **exact Node ID of the node retaining t
 
 The helper reads allowed `KEY=VALUE` entries in `.env.swarm` **literally**, without sourcing it or executing shell expressions. One matching pair of outer quotes is removed; variables, command substitutions, and escapes are not expanded. Exported environment variables take precedence over file values, so check `config` if a file change seems ineffective. `sudo` may filter environment variables; use the same account throughout and keep routine settings in the helper's file. Select another file with `sh scripts/swarm.sh --env-file /path/to/lab.env config`. Compose's `.env` is not loaded.
 
-Agents use only their local node's Docker socket and do not require access to the manager API. Each Agent derives its ID from `{{.Service.Name}}-{{.Node.ID}}` and uses its own task's Peer overlay IPv4 for `advertise-url` and `self-url`. A service VIP or shared DNSRR address cannot identify an individual Agent reliably. At startup, an Agent resolves its actual local image ID for Peer creation, keeping Agent and Peer binaries identical on that node. [Swarm global services and templates](https://docs.docker.com/engine/swarm/services/)
+Agents use only their local node's Docker socket and do not require access to the manager API. Each Agent derives its ID from `{{.Service.Name}}-{{.Node.ID}}` and uses its own task's Peer overlay IPv4 for `advertise-url` and `self-url`. It reads that daemon's Swarm `NodeAddr` to advertise a separate metrics URL through the host-mode port. The control API remains on TCP 8090 inside the overlays and is not published; Peer control and libp2p ports are not published either. A service VIP or shared DNSRR address cannot identify an individual Agent reliably. At startup, an Agent resolves its actual local image ID for Peer creation, keeping Agent and Peer binaries identical on that node. [Swarm global services and templates](https://docs.docker.com/engine/swarm/services/)
 
 ## Update an image using the same tag
 
@@ -162,7 +162,7 @@ Makefile targets forward `NODES` unchanged, so `make swarm-add-node NODES='--wor
 | `sh scripts/swarm.sh login` | Log in interactively to the registry inferred from the configured image |
 | `sh scripts/swarm.sh publish [--platforms CSV]` | Build and push the configured tag; optional platforms use the existing Buildx builder |
 | `sh scripts/swarm.sh check` | Rerun deployment preflight with loaded settings |
-| `sh scripts/swarm.sh access` | Print control-node URLs; does not test reachability or service readiness |
+| `sh scripts/swarm.sh access` | Print control-node URLs and every selected Agent node's metrics URL; does not test reachability or service readiness |
 | `sh scripts/swarm.sh logs [COMPONENT]` | Show the last 100 timestamped lines; controller by default, or agent, prometheus, grafana |
 | `sh scripts/swarm.sh scenario [FILE]` | Print YAML for the web form; defaults to the distributed smoke example and does not submit it |
 | `sh scripts/swarm.sh add-node worker-c` | Add an Agent placement node to the existing service. Requires Linux, Ready, and Active status |
@@ -224,7 +224,7 @@ Peers advertise only the overlay IPv4 address on their route to the Agent throug
 
 ## Monitoring and Operations
 
-Prometheus resolves `tasks.agent` on the private monitoring overlay to scrape each Agent separately. Discovery runs every five seconds to pick up added servers and restarted tasks. Grafana provisions the existing KP2PLab dashboard automatically. Check these together:
+Prometheus asks the Controller's HTTP service-discovery endpoint for registered Agent metrics URLs every five seconds. Each Agent advertises its own Swarm node address and the configured host-mode metrics port, so collection does not pass through a service VIP. A task must register with the Controller before it becomes a target. Grafana provisions the KP2PLab dashboard automatically. Check these together:
 
 - The number of `up{job="kpl-agent"}` targets and the actual Agent task count
 - The Controller's `kpl_agent_active_nodes`, `kpl_agent_capacity`, and `kpl_agent_up`
@@ -233,7 +233,7 @@ Prometheus resolves `tasks.agent` on the private monitoring overlay to scrape ea
 
 Go process metrics describe only the Controller and Agent processes, not total Peer resource consumption. Use host monitoring or a separate container exporter to measure Peer load. Full node-status reports, Controller persistence and aggregation, central HTTP collection, and Docker CLI creation/deletion costs also limit scale. Records of terminated nodes and per-run Prometheus series are retained, so long churn experiments need measurements of both memory use and collection delays.
 
-Swarm published ports differ from Compose's `127.0.0.1` bindings. This stack publishes ports 8080, 9090, and 3000 in host mode on the control node. Restrict access with a management-network firewall or an authenticated reverse proxy. `KPL_API_TOKEN` protects only mutation APIs, not GET requests. Anonymous Grafana access is disabled in this stack. [Publishing ports in Swarm host mode](https://docs.docker.com/engine/swarm/services/#publish-ports)
+Swarm published ports differ from Compose's `127.0.0.1` bindings. This stack publishes ports 8080, 9090, and 3000 in host mode on the control node, plus `KPL_AGENT_METRICS_PORT` (default 9091) on every selected Agent node. The latter must be free on all those nodes; separate stacks sharing a node need distinct Agent metrics ports. It must also differ from `KPL_HTTP_PORT`, `PROMETHEUS_PORT`, `GRAFANA_PORT`, and Swarm TCP ports 2377 and 7946; the configuration helper and deployment preflight reject these conflicts. Permit it from the control node and, when direct browser access is needed, from the operators' trusted management network. Block untrusted sources because the metrics endpoint is read-only but unauthenticated. The Agent control API on 8090 and Peer ports remain internal and unpublished. Restrict the control-node ports with a management-network firewall or an authenticated reverse proxy. `KPL_API_TOKEN` protects only mutation APIs, not GET requests. Anonymous Grafana access is disabled in this stack. [Publishing ports in Swarm host mode](https://docs.docker.com/engine/swarm/services/#publish-ports)
 
 Monitoring configuration is distributed through Swarm configs, so the repository does not need to be copied to every server. Swarm configs are immutable. When configuration files change, give the config keys and their references in `stack.swarm.yaml` new versioned names to deploy new configs. Data volumes remain on the same control Node ID.
 

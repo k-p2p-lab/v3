@@ -252,6 +252,9 @@ tbody tr:last-child td { border-bottom: 0; }
 .agent-name { display: block; color: var(--text); font-weight: 650; }
 .agent-number { color: var(--cyan); font-weight: 750; font-variant-numeric: tabular-nums; }
 .agent-id { display: block; margin-top: 0.18rem; color: var(--muted); font-size: 0.7rem; }
+.agent-metrics-link { color: var(--cyan); font-size: 0.78rem; font-weight: 650; text-decoration: none; text-underline-offset: 0.2em; }
+.agent-metrics-link:hover { color: #62e4df; text-decoration: underline; }
+.agent-metrics-link:focus-visible { border-radius: 0.2rem; outline: 2px solid var(--cyan); outline-offset: 0.2rem; }
 .state-dot { display: inline-flex; align-items: center; gap: 0.4rem; }
 .state-dot::before { content: ""; width: 0.45rem; height: 0.45rem; border-radius: 50%; background: var(--red); }
 .state-dot.online::before { background: var(--green); }

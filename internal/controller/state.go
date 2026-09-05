@@ -83,6 +83,7 @@ func (s *state) registerAgent(agent model.Agent) (model.Agent, error) {
 		}
 		delete(s.agentSnapshots, agent.ID)
 	} else if exists {
+		agent.MetricsURL = firstNonEmpty(agent.MetricsURL, previous.MetricsURL)
 		agent.ActiveNodes = max(agent.ActiveNodes, previous.ActiveNodes)
 	} else {
 		for _, agentID := range s.reservations {
@@ -141,6 +142,7 @@ func (s *state) heartbeat(h model.AgentHeartbeat) error {
 		s.agentSnapshots[h.Agent.ID] = reportedAt
 	}
 	h.Agent.URL = firstNonEmpty(h.Agent.URL, previous.URL)
+	h.Agent.MetricsURL = firstNonEmpty(h.Agent.MetricsURL, previous.MetricsURL)
 	h.Agent.Name = firstNonEmpty(h.Agent.Name, previous.Name)
 	h.Agent.Hostname = firstNonEmpty(h.Agent.Hostname, previous.Hostname)
 	h.Agent.Version = firstNonEmpty(h.Agent.Version, previous.Version)

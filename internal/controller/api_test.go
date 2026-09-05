@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -106,6 +107,73 @@ func TestUIConfigUsesDefaultMonitoringPorts(t *testing.T) {
 	}
 	if config["prometheusPort"] != 9090 || config["grafanaPort"] != 3000 {
 		t.Fatalf("default ui config=%+v", config)
+	}
+}
+
+func TestPrometheusAgentTargetsExposeOnlyValidOnlineAgentMetricsEndpoints(t *testing.T) {
+	server := New(ServerConfig{DataDir: t.TempDir()}, nil)
+	now := time.Now().UTC()
+	agents := []model.Agent{
+		{ID: "agent-b", Name: "Worker B", MetricsURL: "https://[2001:db8::7]/metrics", State: model.AgentOnline, LastSeen: now},
+		{ID: "agent-a", Name: "Worker A", MetricsURL: "http://10.20.0.8:18090/metrics", State: model.AgentOnline, LastSeen: now, Labels: map[string]string{"swarmNodeId": "node-a"}},
+		{ID: "agent-stale", Name: "Stale", MetricsURL: "http://10.20.0.9:18090/metrics", State: model.AgentOnline, LastSeen: now.Add(-agentStaleAfter - time.Second)},
+		{ID: "agent-offline", Name: "Offline", MetricsURL: "http://10.20.0.10:18090/metrics", State: model.AgentOffline, LastSeen: now},
+		{ID: "agent-bad-scheme", MetricsURL: "file://10.20.0.11/metrics", State: model.AgentOnline, LastSeen: now},
+		{ID: "agent-credentials", MetricsURL: "http://user:secret@10.20.0.12:18090/metrics", State: model.AgentOnline, LastSeen: now},
+		{ID: "agent-query", MetricsURL: "http://10.20.0.13:18090/metrics?token=secret", State: model.AgentOnline, LastSeen: now},
+		{ID: "agent-fragment", MetricsURL: "http://10.20.0.14:18090/metrics#section", State: model.AgentOnline, LastSeen: now},
+		{ID: "agent-empty-fragment", MetricsURL: "http://10.20.0.14:18090/metrics#", State: model.AgentOnline, LastSeen: now},
+		{ID: "agent-wrong-path", MetricsURL: "http://10.20.0.15:18090/status", State: model.AgentOnline, LastSeen: now},
+		{ID: "agent-encoded-path", MetricsURL: "http://10.20.0.16:18090/%6detrics", State: model.AgentOnline, LastSeen: now},
+		{ID: "agent-port", MetricsURL: "http://10.20.0.17:65536/metrics", State: model.AgentOnline, LastSeen: now},
+		{ID: "agent-whitespace", MetricsURL: " http://10.20.0.18:18090/metrics", State: model.AgentOnline, LastSeen: now},
+		{ID: "agent-localhost", MetricsURL: "http://localhost:18090/metrics", State: model.AgentOnline, LastSeen: now},
+		{ID: "agent-loopback", MetricsURL: "http://127.0.0.1:18090/metrics", State: model.AgentOnline, LastSeen: now},
+		{ID: "agent-unspecified", MetricsURL: "http://[::]:18090/metrics", State: model.AgentOnline, LastSeen: now},
+	}
+	server.state.mu.Lock()
+	for _, agent := range agents {
+		server.state.agents[agent.ID] = agent
+	}
+	server.state.mu.Unlock()
+
+	handler := server.Handler(context.Background())
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/prometheus/agent-targets", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("agent targets status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if recorder.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("agent targets Cache-Control=%q, want no-store", recorder.Header().Get("Cache-Control"))
+	}
+	var groups []prometheusTargetGroup
+	if err := json.Unmarshal(recorder.Body.Bytes(), &groups); err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("agent targets=%+v, want two valid online Agents", groups)
+	}
+	if len(groups[0].Targets) != 1 || groups[0].Targets[0] != "10.20.0.8:18090" {
+		t.Fatalf("first target=%+v, want sorted agent-a target", groups[0])
+	}
+	wantFirstLabels := map[string]string{"agent_id": "agent-a", "agent_name": "Worker A", "swarm_node_id": "node-a"}
+	if !maps.Equal(groups[0].Labels, wantFirstLabels) {
+		t.Fatalf("first labels=%v, want %v", groups[0].Labels, wantFirstLabels)
+	}
+	if len(groups[1].Targets) != 1 || groups[1].Targets[0] != "[2001:db8::7]:443" {
+		t.Fatalf("second target=%+v, want IPv6 HTTPS target", groups[1])
+	}
+	wantSecondLabels := map[string]string{"agent_id": "agent-b", "agent_name": "Worker B", "__scheme__": "https"}
+	if !maps.Equal(groups[1].Labels, wantSecondLabels) {
+		t.Fatalf("second labels=%v, want %v", groups[1].Labels, wantSecondLabels)
+	}
+
+	for _, method := range []string{http.MethodHead, http.MethodPost} {
+		recorder = httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(method, "/api/v1/prometheus/agent-targets", nil))
+		if recorder.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s agent targets status=%d, want 405", method, recorder.Code)
+		}
 	}
 }
 

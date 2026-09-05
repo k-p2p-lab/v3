@@ -55,13 +55,15 @@ export PATH="$scratch/bin:$PATH"
 export KPL_CONTROL_NODE_ID=control1
 export KPL_IMAGE=registry.example/kpl:v3@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 export KPL_API_TOKEN=must-not-appear-in-output
-unset KPL_PEER_NETWORK KPL_PEER_SUBNET KPL_AGENT_CAPACITY KPL_STACK_NAME KPL_MIN_AGENTS KPL_IMAGE_PULL_TIMEOUT KPL_IMAGE_BUILD_TIMEOUT KPL_IMAGE_PUSH_TIMEOUT
+unset KPL_PEER_NETWORK KPL_PEER_SUBNET KPL_AGENT_CAPACITY KPL_AGENT_METRICS_PORT KPL_STACK_NAME KPL_MIN_AGENTS KPL_IMAGE_PULL_TIMEOUT KPL_IMAGE_BUILD_TIMEOUT KPL_IMAGE_PUSH_TIMEOUT
 
 sh "$root/scripts/check-swarm.sh" > "$scratch/output"
 grep -q '2 eligible Agents' "$scratch/output"
 grep -q 'capacity 20' "$scratch/output"
+grep -q 'Agent metrics port 9091' "$scratch/output"
 grep -q 'for stack kpl' "$scratch/output"
 grep -q 'does not validate' "$scratch/output"
+grep -q 'host-port availability' "$scratch/output"
 [ "$(wc -l < "$KPL_TEST_CALLS")" -eq 5 ]
 grep -q 'node.label=kpl.kpl.agent=true' "$KPL_TEST_CALLS"
 if grep -q "$KPL_API_TOKEN" "$scratch/output" "$KPL_TEST_CALLS"; then exit 1; fi
@@ -100,6 +102,25 @@ for invalid_minimum in 0 -1 1.5 08 999999999999999999999999999; do
     grep -q 'KPL_MIN_AGENTS' "$scratch/output"
     [ "$(wc -l < "$KPL_TEST_CALLS")" -eq "$calls_before" ]
 done
+for invalid_port in 0 -1 1.5 09091 65536 999999999999999999999999999; do
+    calls_before=$(wc -l < "$KPL_TEST_CALLS")
+    reject "KPL_AGENT_METRICS_PORT=$invalid_port"
+    grep -q 'KPL_AGENT_METRICS_PORT' "$scratch/output"
+    [ "$(wc -l < "$KPL_TEST_CALLS")" -eq "$calls_before" ]
+done
+for conflicting_port in 8080 9090 3000 2377 7946; do
+    calls_before=$(wc -l < "$KPL_TEST_CALLS")
+    reject "KPL_AGENT_METRICS_PORT=$conflicting_port"
+    grep -q 'KPL_AGENT_METRICS_PORT conflicts' "$scratch/output"
+    [ "$(wc -l < "$KPL_TEST_CALLS")" -eq "$calls_before" ]
+done
+calls_before=$(wc -l < "$KPL_TEST_CALLS")
+reject KPL_AGENT_METRICS_PORT=18080 KPL_HTTP_PORT=18080
+grep -q 'KPL_AGENT_METRICS_PORT conflicts with KPL_HTTP_PORT' "$scratch/output"
+[ "$(wc -l < "$KPL_TEST_CALLS")" -eq "$calls_before" ]
+calls_before=$(wc -l < "$KPL_TEST_CALLS")
+env KPL_AGENT_METRICS_PORT=19091 sh "$root/scripts/check-swarm.sh" --config-only > "$scratch/output"
+[ "$(wc -l < "$KPL_TEST_CALLS")" -eq "$calls_before" ]
 reject KPL_CONTROL_NODE_ID=
 reject KPL_TEST_CONTROL='different1 linux ready active'
 reject KPL_TEST_CONTROL='control1 linux ready drain'

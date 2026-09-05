@@ -40,10 +40,16 @@ services:
       KPL_SWARM_NODE_HOSTNAME: '{{.Node.Hostname}}'
       KPL_PEER_NETWORK: "${KPL_PEER_NETWORK:-kpl-swarm-peers}"
       KPL_AGENT_CAPACITY: "${KPL_AGENT_CAPACITY:-20}"
+      KPL_AGENT_METRICS_PORT: "${KPL_AGENT_METRICS_PORT:-9091}"
       KPL_CONTROLLER_URL: http://${KPL_STACK_NAME:-kpl}_controller:8080
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks: [peers, monitoring]
+    ports:
+      - target: 9091
+        published: ${KPL_AGENT_METRICS_PORT:-9091}
+        protocol: tcp
+        mode: host
     stop_grace_period: 4m
     deploy:
       labels:
@@ -64,7 +70,7 @@ services:
       - --storage.tsdb.retention.time=15d
       - --storage.tsdb.retention.size=5GB
     configs:
-      - source: prometheus
+      - source: prometheus-agent-http-sd-v2
         target: /etc/prometheus/prometheus.yml
     volumes: [prometheus-data:/prometheus]
     networks: [monitoring]
@@ -120,7 +126,7 @@ volumes:
   grafana-data:
 
 configs:
-  prometheus:
+  prometheus-agent-http-sd-v2:
     file: ./monitoring/prometheus/swarm.yml
   grafana-datasource:
     file: ./monitoring/grafana/provisioning/datasources/prometheus.yaml

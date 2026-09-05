@@ -1,5 +1,6 @@
 .git
 .gitignore
+.codex-*
 .env
 .env.*
 .tmp

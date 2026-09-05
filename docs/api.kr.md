@@ -8,6 +8,7 @@ Controller는 아래 공개 및 운영 엔드포인트를 제공합니다. `KPL_
 |---|---|---|
 | `GET` | `/api/v1/health` | Controller 상태와 Peer 시계 측정에 쓰는 현재 UTC 시각 |
 | `GET` | `/api/v1/ui-config` | 대시보드 메뉴에 사용하는 Prometheus·Grafana 게시 포트 |
+| `GET` | `/api/v1/prometheus/agent-targets` | metrics URL을 알린 online Agent의 Prometheus HTTP service-discovery group |
 | `GET` | `/api/v1/snapshot` | 노드 `peerScores`를 포함한 대시보드 전체 snapshot |
 | `GET` | `/api/v1/agents` | Agent 상태 |
 | `GET` | `/api/v1/nodes` | inspection으로 수집한 `peerScores`를 포함한 Peer 상태 |
@@ -25,7 +26,7 @@ Controller는 아래 공개 및 운영 엔드포인트를 제공합니다. `KPL_
 | `POST` | `/api/v1/experiments` | YAML 1회 실행 또는 JSON `{scenario, repetitions}`로 1~100회 순차 실행 |
 | `POST` | `/api/v1/experiments/{id}/stop` | 실행을 취소한 뒤 제한 시간 내 job 종료와 generation-fenced Peer cleanup 수행 |
 
-`/api/v1/bootstrap`의 `runId` query parameter는 필수입니다. registry는 해당 run에서 준비 상태이고 유효한 identity와 address 정보가 있는 `boot` 노드만 반환하므로 동시에 실행되는 실험끼리 bootstrap peer를 발견하지 않습니다. `/api/v1/discovery`에는 표시된 query 세 개가 모두 필요하며 요청자 자신을 제외하고 실제 전달·mesh 결과가 아닌 설정상 topic 참가자를 반환합니다.
+`/api/v1/bootstrap`의 `runId` query parameter는 필수입니다. registry는 해당 run에서 준비 상태이고 유효한 identity와 address 정보가 있는 `boot` 노드만 반환하므로 동시에 실행되는 실험끼리 bootstrap peer를 발견하지 않습니다. `/api/v1/discovery`에는 표시된 query 세 개가 모두 필요하며 요청자 자신을 제외하고 실제 전달·mesh 결과가 아닌 설정상 topic 참가자를 반환합니다. `/api/v1/prometheus/agent-targets`는 기본 Swarm Prometheus 설정이 사용하는 읽기 전용 운영 endpoint이며 offline Agent와 유효한 metrics URL이 없는 Agent는 제외합니다.
 
 저장소 루트에서 실행하는 예시입니다.
 

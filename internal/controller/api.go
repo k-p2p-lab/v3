@@ -10,7 +10,9 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -93,6 +95,7 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 	mux.Handle("/metrics", promhttp.HandlerFor(s.state.metrics.registry, promhttp.HandlerOpts{}))
 	mux.HandleFunc("/api/v1/health", s.handleHealth)
 	mux.HandleFunc("/api/v1/ui-config", s.handleUIConfig)
+	mux.HandleFunc("/api/v1/prometheus/agent-targets", s.handlePrometheusAgentTargets)
 	mux.HandleFunc("/api/v1/snapshot", s.handleSnapshot)
 	mux.HandleFunc("/api/v1/agents", s.handleAgents)
 	mux.HandleFunc("/api/v1/agents/register", s.handleAgentRegister)
@@ -112,6 +115,93 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 	mux.HandleFunc("/api/v1/stream", s.handleStream)
 	mux.Handle("/", http.FileServer(http.FS(webui.FS())))
 	return s.withMiddleware(mux)
+}
+
+type prometheusTargetGroup struct {
+	Targets []string          `json:"targets"`
+	Labels  map[string]string `json:"labels"`
+}
+
+func (s *Server) handlePrometheusAgentTargets(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	type candidate struct {
+		id, name, metricsURL, swarmNodeID string
+	}
+	now := time.Now()
+	candidates := make([]candidate, 0)
+	s.state.mu.RLock()
+	for _, agent := range s.state.agents {
+		if !agentIsOnline(agent, now) {
+			continue
+		}
+		candidates = append(candidates, candidate{
+			id: agent.ID, name: agent.Name, metricsURL: agent.MetricsURL,
+			swarmNodeID: agent.Labels["swarmNodeId"],
+		})
+	}
+	s.state.mu.RUnlock()
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].id < candidates[j].id })
+
+	groups := make([]prometheusTargetGroup, 0, len(candidates))
+	for _, agent := range candidates {
+		target, scheme, metricsPath, ok := prometheusTargetFromURL(agent.metricsURL)
+		if !ok {
+			continue
+		}
+		labels := map[string]string{"agent_id": agent.id, "agent_name": agent.name}
+		if agent.swarmNodeID != "" {
+			labels["swarm_node_id"] = agent.swarmNodeID
+		}
+		if scheme != "http" {
+			labels["__scheme__"] = scheme
+		}
+		if metricsPath != "/metrics" {
+			labels["__metrics_path__"] = metricsPath
+		}
+		groups = append(groups, prometheusTargetGroup{Targets: []string{target}, Labels: labels})
+	}
+	writeJSON(w, http.StatusOK, groups)
+}
+
+func prometheusTargetFromURL(raw string) (target, scheme, metricsPath string, ok bool) {
+	if raw == "" || strings.TrimSpace(raw) != raw || strings.Contains(raw, "#") {
+		return "", "", "", false
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Opaque != "" || parsed.User != nil || parsed.Hostname() == "" || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.RawPath != "" {
+		return "", "", "", false
+	}
+	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	if host == "localhost" || host == "localhost.localdomain" || strings.HasSuffix(host, ".localhost") {
+		return "", "", "", false
+	}
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+		return "", "", "", false
+	}
+	scheme = parsed.Scheme
+	if scheme != "http" && scheme != "https" {
+		return "", "", "", false
+	}
+	port := parsed.Port()
+	if port == "" {
+		if scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return "", "", "", false
+	}
+	metricsPath = parsed.EscapedPath()
+	if metricsPath != "/metrics" {
+		return "", "", "", false
+	}
+	return net.JoinHostPort(parsed.Hostname(), strconv.Itoa(portNumber)), scheme, metricsPath, true
 }
 
 func (s *Server) handleUIConfig(w http.ResponseWriter, r *http.Request) {
