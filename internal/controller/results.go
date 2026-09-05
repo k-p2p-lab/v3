@@ -261,7 +261,7 @@ func (s *Server) markResultDeletedLocked(id string) error {
 }
 
 // Remove entries relative to held directory descriptors. Symlinks are unlinked,
-// never traversed. This uses only Root methods available in Go 1.24.
+// never traversed. This uses only Root methods available on the supported Go toolchain.
 func removeResultDirectory(parent *os.Root, id string) error {
 	directory, err := openResultDirectory(parent, id)
 	if err != nil {

@@ -2,7 +2,7 @@
 
 English | [Korean](development.kr.md)
 
-The canonical Go module path is `github.com/k-p2p-lab/v3`, and the project requires Go 1.24 or later. Build and test from the repository root:
+The canonical Go module path is `github.com/k-p2p-lab/v3`, and the project requires Go 1.25 or later. Build and test from the repository root:
 
 ```sh
 go build -o bin/kpl ./cmd/kpl

@@ -19,7 +19,7 @@ English is the default language for code, the UI, and documentation. Korean docu
 
 - Linux with rootful Docker Engine and Docker Compose v2; the supplied deployment does not support userns-remap
 - `NET_ADMIN` and the kernel `sch_prio`, `sch_netem`, `cls_u32`, and optional `sch_tbf` modules for network conditions
-- Go 1.24 or later only for development outside Docker
+- Go 1.25 or later only for development outside Docker
 - For Swarm: an active manager and an image registry reachable and trusted by every selected node
 
 See the [Linux deployment guide](docs/linux-deployment.md) for permissions, remote access, storage, and safe shutdown.

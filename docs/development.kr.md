@@ -2,7 +2,7 @@
 
 [English](development.md) | 한국어
 
-정식 Go 모듈 경로는 `github.com/k-p2p-lab/v3`이며 Go 1.24 이상이 필요합니다. 저장소 루트에서 빌드와 테스트를 실행하십시오.
+정식 Go 모듈 경로는 `github.com/k-p2p-lab/v3`이며 Go 1.25 이상이 필요합니다. 저장소 루트에서 빌드와 테스트를 실행하십시오.
 
 ```sh
 go build -o bin/kpl ./cmd/kpl

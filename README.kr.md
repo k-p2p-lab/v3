@@ -19,7 +19,7 @@ K-P2PLab v3는 하나 이상의 Linux 호스트에서 재현 가능한 libp2p Ka
 
 - rootful Docker Engine과 Docker Compose v2가 설치된 Linux. 기본 배포 구성은 userns-remap을 지원하지 않습니다.
 - 네트워크 조건을 위한 `NET_ADMIN`과 커널 `sch_prio`, `sch_netem`, `cls_u32` 및 선택적인 `sch_tbf` 모듈
-- Docker 밖에서 개발할 때만 Go 1.24 이상
+- Docker 밖에서 개발할 때만 Go 1.25 이상
 - Swarm에서는 활성 manager와 선택한 모든 노드가 접근하고 신뢰하는 이미지 registry
 
 권한, 원격 접속, 저장소와 안전한 종료 방법은 [Linux 배포 가이드](docs/linux-deployment.kr.md)를 참고하십시오.
