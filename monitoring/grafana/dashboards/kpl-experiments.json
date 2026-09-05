@@ -40,7 +40,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**Choose Run, Agent and Topic, then a time range.** Traffic uses rate/increase. **Session-window cards use the whole observed run and only Run.** Stable delivery requires subscription throughout each fixed window (default 10s); departures are excluded even after early success. Starting-cohort delivery retains departures. Read both bounds with coverage, unknown and pending counts. Bounds are not confidence intervals. Missing or uncertain population denominators remain N/A. Late telemetry can revise results; clocks must be synchronized. Completely invisible telemetry cannot be detected. Legacy publications are reported separately and excluded from new metrics."
+        "content": "**Choose Run, Agent and Topic, then a time range.** Traffic uses rate/increase. **Session-window cards use the whole observed run and only Run.** Stable delivery requires subscription throughout each fixed window (default 10s); departures are excluded even after early success. Known starting-cohort delivery retains departures. Read both bounds with coverage, availability-unknown, incomplete-measurement, and pending counts. Bounds are not confidence intervals and describe only receiver sessions whose presence at publication is proven. Late telemetry can revise results; clocks must be synchronized. Completely invisible telemetry cannot be detected. Legacy publications are reported separately and excluded from new metrics."
       }
     },
     {
@@ -542,7 +542,7 @@
       "id": 31,
       "type": "stat",
       "title": "Starting cohort · Bounds",
-      "description": "On-time success among sessions proven present at actual publication time, including confirmed later departures and their early receipts. Pair-weighted across selected new runs. N/A if any selected new run has availability uncertainty or incomplete measurement, or no targets. Bounds reflect unknown receipts. Only the Run filter applies. Counts cover mature messages in the whole observed run unless stated otherwise; legacy publications are excluded.",
+      "description": "On-time success among the known starting cohort: sessions proven present at actual publication time, including confirmed later departures and their early receipts. Pair-weighted across selected new runs. Bounds reflect unknown receipt evidence within that known cohort and remain available despite separately reported candidate-availability or measurement uncertainty. N/A only when there are no known starting pairs. This is not an estimate for unobserved candidates. Only the Run filter applies. Counts cover mature messages in the whole observed run unless stated otherwise; legacy publications are excluded.",
       "datasource": {
         "type": "prometheus",
         "uid": "kpl-prometheus"
@@ -556,7 +556,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "(sum(kpl_window_initial_reached_pairs{run_id=~\"${run_id:regex}\"}) / sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"})) and on() (sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"}) > 0) and on() (sum(kpl_window_availability_unknown_pairs{run_id=~\"${run_id:regex}\"}) == 0) and on() (max(kpl_window_measurement_incomplete{run_id=~\"${run_id:regex}\"}) == 0)",
+          "expr": "(sum(kpl_window_initial_reached_pairs{run_id=~\"${run_id:regex}\"}) / sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"})) and on() (sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"}) > 0)",
           "legendFormat": "Lower bound",
           "instant": true,
           "range": false,
@@ -569,7 +569,7 @@
         },
         {
           "refId": "B",
-          "expr": "((sum(kpl_window_initial_reached_pairs{run_id=~\"${run_id:regex}\"}) + sum(kpl_window_initial_unknown_pairs{run_id=~\"${run_id:regex}\"})) / sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"})) and on() (sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"}) > 0) and on() (sum(kpl_window_availability_unknown_pairs{run_id=~\"${run_id:regex}\"}) == 0) and on() (max(kpl_window_measurement_incomplete{run_id=~\"${run_id:regex}\"}) == 0)",
+          "expr": "((sum(kpl_window_initial_reached_pairs{run_id=~\"${run_id:regex}\"}) + sum(kpl_window_initial_unknown_pairs{run_id=~\"${run_id:regex}\"})) / sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"})) and on() (sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"}) > 0)",
           "legendFormat": "Upper bound",
           "instant": true,
           "range": false,
@@ -623,7 +623,7 @@
       "id": 32,
       "type": "stat",
       "title": "Stable coverage",
-      "description": "Proven stable receiver-session pairs divided by starting-cohort pairs. Shows how much of the initial audience remains in the conditional result. N/A if any selected new run has availability uncertainty or incomplete measurement, or no initial targets. Network disconnection and mesh removal do not exclude subscribers. Only the Run filter applies. Counts cover mature messages in the whole observed run unless stated otherwise; legacy publications are excluded.",
+      "description": "Bounds on stable coverage within the known starting cohort. Lower = proven stable / known starting pairs. Upper additionally treats continuity-unknown known starting pairs as stable. Confirmed departures remain outside both numerators. Candidate sessions whose presence at publication is unknown are reported separately and do not enter this conditional denominator. N/A only when there are no known starting pairs. Network disconnection and mesh removal do not exclude subscribers. Only the Run filter applies. Counts cover mature messages in the whole observed run unless stated otherwise; legacy publications are excluded.",
       "datasource": {
         "type": "prometheus",
         "uid": "kpl-prometheus"
@@ -637,8 +637,21 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "(sum(kpl_window_stable_pairs{run_id=~\"${run_id:regex}\"}) / sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"})) and on() (sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"}) > 0) and on() (sum(kpl_window_availability_unknown_pairs{run_id=~\"${run_id:regex}\"}) == 0) and on() (max(kpl_window_measurement_incomplete{run_id=~\"${run_id:regex}\"}) == 0)",
-          "legendFormat": "Coverage",
+          "expr": "(sum(kpl_window_stable_pairs{run_id=~\"${run_id:regex}\"}) / sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"})) and on() (sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"}) > 0)",
+          "legendFormat": "Lower bound",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        },
+        {
+          "refId": "B",
+          "expr": "((sum(kpl_window_stable_pairs{run_id=~\"${run_id:regex}\"}) + sum(kpl_window_continuity_unknown_pairs{run_id=~\"${run_id:regex}\"})) / sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"})) and on() (sum(kpl_window_initial_pairs{run_id=~\"${run_id:regex}\"}) > 0)",
+          "legendFormat": "Upper bound",
           "instant": true,
           "range": false,
           "format": "time_series",
@@ -989,7 +1002,7 @@
       "id": 35,
       "type": "stat",
       "title": "Availability unknown pairs",
-      "description": "Recorded candidate sessions whose presence at publication or continuity through the deadline cannot be established. Forced termination may leave an unknown tail. These are not confirmed departures or packet loss. Any such pair makes starting-cohort ratios and coverage N/A. Only the Run filter applies. Counts cover mature messages in the whole observed run unless stated otherwise; legacy publications are excluded.",
+      "description": "Candidate uncertainty split by stage. Publication availability unknown means presence at publication was not proven, so the pair is outside the known starting cohort. Continuity unknown means presence at publication was proven, but neither survival through the deadline nor an earlier departure was established. Total is their compatibility sum. These are not confirmed departures or packet loss and do not suppress conditional known-cohort bounds. Only the Run filter applies. Counts cover mature messages in the whole observed run unless stated otherwise; legacy publications are excluded.",
       "datasource": {
         "type": "prometheus",
         "uid": "kpl-prometheus"
@@ -1004,7 +1017,33 @@
         {
           "refId": "A",
           "expr": "sum(kpl_window_availability_unknown_pairs{run_id=~\"${run_id:regex}\"})",
-          "legendFormat": "Availability unknown",
+          "legendFormat": "Total availability unknown",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(kpl_window_publication_availability_unknown_pairs{run_id=~\"${run_id:regex}\"})",
+          "legendFormat": "At publication",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "kpl-prometheus"
+          },
+          "editorMode": "code"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(kpl_window_continuity_unknown_pairs{run_id=~\"${run_id:regex}\"})",
+          "legendFormat": "Through deadline",
           "instant": true,
           "range": false,
           "format": "time_series",
@@ -1206,7 +1245,7 @@
       "id": 38,
       "type": "stat",
       "title": "Incomplete new runs",
-      "description": "Number of selected new runs with known unscoped measurement streams. A positive value makes aggregate starting-cohort ratios and coverage N/A. Zero cannot detect completely invisible telemetry or prove observation of every physical Peer. Only the Run filter applies. Counts cover mature messages in the whole observed run unless stated otherwise; legacy publications are excluded.",
+      "description": "Number of selected new runs with known unscoped measurement streams. This is an independent data-quality warning; known starting-cohort ratios and coverage remain available when their denominator exists. Zero cannot detect completely invisible telemetry or prove observation of every physical Peer. Only the Run filter applies. Counts cover mature messages in the whole observed run unless stated otherwise; legacy publications are excluded.",
       "datasource": {
         "type": "prometheus",
         "uid": "kpl-prometheus"
@@ -3163,7 +3202,7 @@
       "24h"
     ]
   },
-  "version": 3,
+  "version": 4,
   "weekStart": "monday",
   "annotations": {
     "list": [

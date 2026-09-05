@@ -93,6 +93,39 @@ func TestDefaultEnvelopeRetainsCorrelationAndLatency(t *testing.T) {
 	}
 }
 
+func TestEnvelopeCarriesControllerClockUncertainty(t *testing.T) {
+	server, _ := publicationTestServer(t)
+	server.telemetry.acceptClockEstimate(controllerClockEstimate{uncertainty: 2 * time.Millisecond}, time.Now())
+	reading := server.telemetry.clockReading()
+	message, err := server.preparePublicationWithClock(model.PublishRequest{PayloadSize: 32}, reading)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiverReading := reading
+	receiverReading.timestamp = reading.timestamp.Add(-time.Millisecond)
+	event, ok := server.deliveryEventWithClock(publicationTestMessage(message.wire, "clock-wire-id", corepeer.ID("previous-hop")), "topic-a", receiverReading)
+	if !ok || event.LatencyMS != -1 || event.Fields["latencyClockSynchronized"] != true || event.Fields["latencyUncertaintyMs"] != float64(4) {
+		t.Fatalf("synchronized envelope metadata=%+v", event)
+	}
+	var payload envelope
+	if err := json.Unmarshal(message.wire, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.ClockBasis != controllerClockBasis || payload.ClockUncertaintyNS != int64(2*time.Millisecond) {
+		t.Fatalf("publisher clock provenance missing: %+v", payload)
+	}
+	server.telemetry.acceptClockEstimate(controllerClockEstimate{uncertainty: 2 * time.Millisecond}, time.Now().Add(-controllerClockMaxAge-time.Second))
+	staleReceiver := server.telemetry.clockReading()
+	staleReceiver.timestamp = reading.timestamp.Add(time.Millisecond)
+	event, ok = server.deliveryEventWithClock(publicationTestMessage(message.wire, "stale-clock-wire-id", corepeer.ID("previous-hop")), "topic-a", staleReceiver)
+	if !ok {
+		t.Fatal("stale receiver discarded a valid envelope")
+	}
+	if _, exists := event.Fields["latencyClockSynchronized"]; exists {
+		t.Fatalf("stale receiver asserted synchronized latency: %+v", event.Fields)
+	}
+}
+
 func TestAllTopicsRawPublishUsesExactBytesAndDistinctMessages(t *testing.T) {
 	server, parent := publicationTestServer(t)
 	subs := make(map[string]*pubsub.Subscription)

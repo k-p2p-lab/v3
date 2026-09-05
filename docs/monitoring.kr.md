@@ -72,9 +72,11 @@ curl --fail --output run-results.zip \
 | `kpl_window_stable_pairs`, `kpl_window_reached_pairs` | 기간이 지난 메시지 중 수신 기간 전체의 구독이 증명된 수신 세션 쌍 및 기한 내 성공. `run_id`로 구분 |
 | `kpl_window_unknown_pairs`, `kpl_window_missed_pairs`, `kpl_window_late_pairs` | 안정 쌍의 수신 불명·확인된 미도달·마감 후 수신 수 |
 | `kpl_window_delivery_ratio` (`bound`: `lower` / `upper`) | 안정 대상 조건부 도달률의 논리적 상·하한. 안정 쌍이 없으면 생략하며 신뢰구간이 아님 |
-| `kpl_window_initial_pairs`, `kpl_window_initial_reached_pairs`, `kpl_window_initial_unknown_pairs` | 관측된 발행 시점 대상, 이탈자를 포함한 기한 내 성공, 수신 불명 수 |
-| `kpl_window_initial_delivery_ratio` (`bound`: `lower` / `upper`), `kpl_window_stable_coverage` | 발행 시점 대상 도달률 범위와 안정/발행 시점 대상 coverage. 가용성 불명·측정 불완전이면 생략 |
-| `kpl_window_departed_pairs`, `kpl_window_availability_unknown_pairs` | 확인된 이탈 및 세션 가용성을 확인하지 못한 쌍 수 |
+| `kpl_window_initial_pairs`, `kpl_window_initial_reached_pairs`, `kpl_window_initial_unknown_pairs` | 확인된 발행 시점 대상, 이탈자를 포함한 기한 내 성공, 수신 불명 수 |
+| `kpl_window_initial_delivery_ratio` (`bound`: `lower` / `upper`) | 확인된 발행 시점 대상 안의 논리적 도달률 범위. 해당 집단이 비었을 때만 생략 |
+| `kpl_window_stable_coverage`, `kpl_window_stable_coverage_upper_bound` | coverage 하한인 안정/확인된 발행 시점 대상과 상한인 (안정 + 지속 여부 불명)/확인된 발행 시점 대상. 확인된 집단이 비었을 때만 생략 |
+| `kpl_window_departed_pairs`, `kpl_window_continuity_unknown_pairs` | 마감 전 이탈이 확인된 발행 시점 쌍과, 이탈·마감까지 지속 어느 쪽도 증명하지 못한 쌍 수 |
+| `kpl_window_publication_availability_unknown_pairs`, `kpl_window_availability_unknown_pairs` | 발행 시점 생존을 증명하지 못한 후보 쌍과 발행 시점·지속 불명의 합계 |
 | `kpl_window_pending_publications`, `kpl_window_finalized_publications` | 마감 전 메시지와 기간이 지난 메시지. 확정 결과도 늦은 telemetry로 정정 가능 |
 | `kpl_window_measurement_incomplete`, `kpl_window_legacy_publications` | 관측된 측정 범위 불명 stream 여부(0/1)와 과거 정의 발행 수. 0도 아예 보이지 않은 telemetry는 검출하지 못함 |
 | `kpl_window_propagation_latency_seconds` | 안정 대상의 기한 내 첫 원격 envelope 수신 지연. `run_id`, 수신 `agent_id`, `topic`으로 구분. raw·로컬·마감 후·이탈·불명·무효 표본 제외 |
@@ -94,13 +96,13 @@ curl --fail --output run-results.zip \
 
 `session-window-v1`은 실제 발행 시각과 `publish.deliveryWindow`(기본 10초, 양수·최대 1시간)를 사용합니다. 주 조건부 도달률은 기간 전체의 구독을 세션 증거로 확인해야 합니다. 마감 전 이탈은 조기 성공했어도 제외하며 발행 시점 대상 도달률에는 유지합니다. 늦은 join과 발행자 로컬 수신은 양쪽 모두 제외합니다. 단절이나 mesh 변화로 구독자를 제거하지 않습니다. 안정 도달률 범위, 발행 시점 대상 범위, coverage, pending, 불명을 함께 보십시오. sequence 누락은 확인된 미도달이 아닌 unknown이며 가용성 증거 부재도 확정 이탈은 아닙니다.
 
-Grafana 세션 패널에는 Run 필터만 적용하고 백분율 평균이 아닌 수신 쌍 합계로 집계합니다. 범위는 확인된 안정 세션에 대한 값이며 보이지 않는 모집단을 증명하지 않습니다. 선택한 새 run 중 하나라도 가용성 불명이나 측정 불완전이 있으면 발행 시점 대상 비율과 coverage는 N/A입니다. 과거 발행 패널은 새 결과에서 제외한 과거 데이터를 표시합니다. 새 패널은 `kpl_window_*`만 사용하고 이전 `kpl_delivery_*`·`kpl_propagation_latency_seconds`는 과거 의미를 유지하므로 섞지 마십시오.
+Grafana 세션 패널에는 Run 필터만 적용하고 백분율 평균이 아닌 수신 쌍 합계로 집계합니다. 범위는 관측된 집단에 대한 값이며 보이지 않는 모집단을 증명하지 않습니다. 발행 시점 가용성 경고나 `measurementIncomplete`가 있어도 확인된 발행 시점 도달률과 안정 coverage를 표시하며, 선택한 run 전체에 확인된 발행 시점 쌍이 하나도 없을 때만 N/A입니다. 각 집계에서 확인된 발행 시점 대상 = 안정 + 이탈 + 지속 여부 불명이 성립합니다. 과거 발행 패널은 새 결과에서 제외한 과거 데이터를 표시합니다. 새 패널은 `kpl_window_*`만 사용하고 이전 `kpl_delivery_*`·`kpl_propagation_latency_seconds`는 과거 의미를 유지하므로 섞지 마십시오.
 
 전체 `deliver`에는 로컬 수신도 포함되므로 발행 수로 나누어 도달률을 구하지 않습니다. TCP 재전송은 패킷 손실을 지연으로 바꿀 수 있습니다. [정의·수식·참고 문헌](experiment-metrics.kr.md)을 확인하십시오. 늦은 배치가 기간 gauge와 histogram 버킷을 정정할 수 있어 `rate`/`increase` 대신 직접 조회합니다. Grafana 지연은 실험 전체 누적 분위수이며 선택 시간 범위만의 분위수가 아닙니다.
 
 누적 카운터는 최근 300개 웹 이벤트 버퍼와 독립적입니다. Controller 프로세스가 재시작되면 카운터가 초기화되며 과거 `events.jsonl`을 자동 재생하지 않습니다. Prometheus에 이미 저장된 시계열은 유지되고 `rate`/`increase`는 관측된 카운터 재설정을 처리합니다. 단, scrape 전에 사라진 이벤트나 telemetry 전송 실패를 복구하는 기능은 아닙니다. `increase`는 scrape 표본으로 추정한 구간 증가량이므로 누적 정수 이벤트 수와 항상 정확히 일치하지는 않습니다.
 
-raw 수신도 수신 수·바이트에는 포함되지만 지연 히스토그램에는 포함되지 않습니다. 지연 표본이 없는 구간은 0ms로 해석하지 마십시오. 발행·세션 수명·마감·지연 비교를 위해 호스트 시계를 동기화하십시오. 양수 방향 시계 오차는 검출되지 않을 수 있습니다. checkpoint는 계측 애플리케이션 세션의 증거이며 물리적 uptime을 뜻하지 않습니다.
+raw 수신도 수신 수·바이트에는 포함되지만 지연 히스토그램에는 포함되지 않습니다. 지연 표본이 없는 구간은 0ms로 해석하지 마십시오. 각 Peer는 시작 시 최대 5초 동안 Controller health 표본을 최대 7개 수집하고, 빠른 실패 사이를 250ms 띄운 뒤 최소 RTT 표본의 중간점을 사용합니다. 실패해도 Ready 진행을 막지 않습니다. 미동기화 상태에서는 5초마다 다시 시도하고 동기화 상태에서는 30초마다 갱신합니다. 성공한 표본은 2분 후 만료되며 마지막 offset은 timestamp 연속성을 위해 유지하지만, 재동기화할 때까지 신뢰 시계 metadata를 중단합니다. 범위로 기한 내 수신을 증명할 수 있는 음수 추정은 도달 성공에 포함하지만 지연 histogram에서는 제외합니다. 모든 호스트에서 chrony/NTP를 계속 사용하십시오. checkpoint는 계측 애플리케이션 세션의 증거이며 물리적 uptime을 뜻하지 않습니다.
 
 ## 실제 실행 검증
 

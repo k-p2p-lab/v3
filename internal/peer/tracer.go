@@ -20,9 +20,9 @@ func (t *gossipTracer) Trace(event *pubsubpb.TraceEvent) {
 	if event == nil || event.Type == nil {
 		return
 	}
-	trace := model.TraceEvent{PeerID: t.peerID, Timestamp: time.Now().UTC()}
+	trace := model.TraceEvent{PeerID: t.peerID, Timestamp: t.telemetry.now()}
 	if event.GetTimestamp() > 0 {
-		trace.Timestamp = time.Unix(0, event.GetTimestamp()).UTC()
+		trace.Timestamp = t.telemetry.adjustTimestamp(time.Unix(0, event.GetTimestamp()).UTC())
 	}
 	switch event.GetType() {
 	case pubsubpb.TraceEvent_PUBLISH_MESSAGE:
@@ -92,8 +92,8 @@ func (t *messageTracer) DuplicateMessage(message *pubsub.Message) {
 	if message == nil || message.Message == nil {
 		return
 	}
-	t.server.telemetry.emitObserved(func(now time.Time) (model.TraceEvent, bool) {
-		return t.server.duplicateEvent(message, now)
+	t.server.telemetry.emitObserved(func(reading controllerClockReading) (model.TraceEvent, bool) {
+		return t.server.duplicateEvent(message, reading.timestamp)
 	})
 }
 

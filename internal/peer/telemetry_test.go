@@ -173,10 +173,10 @@ func TestMeasurementCheckpointCannotPassPendingReceipt(t *testing.T) {
 	builderEntered, releaseBuilder := make(chan struct{}), make(chan struct{})
 	observed, checkpointed := make(chan struct{}), make(chan struct{})
 	go func() {
-		tel.emitObserved(func(now time.Time) (model.TraceEvent, bool) {
+		tel.emitObserved(func(reading controllerClockReading) (model.TraceEvent, bool) {
 			close(builderEntered)
 			<-releaseBuilder
-			return model.TraceEvent{Type: "deliver", Timestamp: now}, true
+			return model.TraceEvent{Type: "deliver", Timestamp: reading.timestamp}, true
 		})
 		close(observed)
 	}()

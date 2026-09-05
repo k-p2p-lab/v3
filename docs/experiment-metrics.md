@@ -34,12 +34,15 @@ Peer telemetry records `measurement_start` after actual subscription setup, incl
 
 For each message, the Controller reconstructs these sets from recorded sessions in the same run and topic, excluding the publisher:
 
-- **Starting cohort C:** subscription began at or before `t`, and a checkpoint or stop proves that the same session continued at least until `t`. A session starting after `t`, or confirmed ended at or before `t`, is excluded.
-- **Stable cohort E:** a member of C with a checkpoint or stop at or after `d`, and no subscription-session stop before `d`.
-- **Departed:** a member of C with a stop before `d`. It is excluded from both the stable numerator and denominator, **even if it received the message before leaving**. It remains in the starting cohort.
-- **Availability unknown:** recorded evidence does not establish presence at `t` or continuity through `d`. A forced process termination can leave such a tail; it is not automatically classified as a departure or a delivery failure.
+- **Known starting cohort K:** subscription began at or before `t`, and a checkpoint or stop proves that the same session continued at least until `t`. A session starting after `t`, or confirmed ended at or before `t`, is excluded.
+- **Stable cohort S:** a member of K with a checkpoint or stop at or after `d`, and no subscription-session stop before `d`.
+- **Departed D:** a member of K with a stop before `d`. It is excluded from both the stable numerator and denominator, **even if it received the message before leaving**. It remains in the known starting cohort.
+- **Continuity unknown C:** a member of K for which the log proves neither departure before `d` nor continuity through `d`.
+- **Publication-time availability unknown:** a candidate session started before `t`, but the recorded evidence does not prove that it was still present at `t`. It remains outside K and is reported separately as measurement quality.
 
-The Agent can also record `measurement_terminated` after confirming process/container termination. Its timestamp is an **upper bound on termination time**, not the exact death time and not a receipt checkpoint. It can exclude a session definitely dead before publication, or establish departure before the deadline when a separate Peer checkpoint already proves presence at publication. It cannot prove an otherwise unknown tail survived through the deadline. Docker churn still uses forced removal; a forced kill does not run the Peer's graceful telemetry drain.
+Every known starting pair has exactly one continuity outcome, so `K = S + D + C`. A forced process termination can leave either kind of unknown tail; it is not automatically classified as a departure or a delivery failure.
+
+The Agent can also record `measurement_terminated` after confirming process/container termination. When the Controller receives this Agent event, it replaces the Agent-host timestamp with its own receipt time and retains the original in `fields.sourceTimestamp`. The receipt time is a cross-host comparable **upper bound on termination time**, not the exact death time and not a receipt checkpoint. It can exclude a session definitely dead before publication, or establish departure before the deadline when a separate Peer checkpoint already proves presence at publication. It cannot prove an otherwise unknown tail survived through the deadline. Docker churn still uses forced removal; a forced kill does not run the Peer's graceful telemetry drain.
 
 Transport disconnection, GRAFT/PRUNE, mesh removal, stale inventory, and an offline Agent are not subscription-session stop evidence. Removing a circle from the topology cannot improve the metric. Actual later session evidence can revise an earlier unknown classification.
 
@@ -51,17 +54,28 @@ A message remains `pending` until `d`; it does not enter finalized pair totals b
 
 Each Peer event has a source `sessionId`, increasing `sequence`, and a retry-stable `eventId`. A missing receipt becomes a confirmed miss only when the source sequence prefix from `measurement_start` is complete through the session evidence covering the window. A gap or invalid timestamp ordering leaves the receipt **unknown**. Retries may fill the gap later. A passed deadline does not prove that all telemetry has arrived, so finalized results can still be corrected by later batches.
 
-For known stable pairs, let E be their count, S the on-time successes, U the unknown receipts, and F the confirmed misses:
+For known stable pairs, let S be their count, R the on-time successes, U the unknown receipts, and F the confirmed misses:
 
 ```text
-E = S + U + F
-stable delivery lower bound = S / E
-stable delivery upper bound = (S + U) / E
+S = R + U + F
+stable delivery lower bound = R / S
+stable delivery upper bound = (R + U) / S
 ```
 
 When U is zero, the bounds coincide. These are logical bounds from missing observations, **not statistical confidence intervals**. A zero denominator is N/A. Unknown pairs are not removed to make the ratio look better. Availability uncertainty is a separate issue: these bounds describe known stable sessions, not an unknown total population.
 
-The starting-cohort ratio retains confirmed departures. Its numerator includes on-time receipts by those departed sessions. Stable coverage is `|E| / |C|`. Starting-cohort ratios and coverage are **N/A** when availability is unknown or `measurementIncomplete` is true. Known unscoped sequence streams trigger that flag; completely invisible sessions or telemetry streams cannot be detected from the received log alone. A false flag therefore does not certify perfect observation of every real Peer.
+The known-starting-cohort ratio retains confirmed departures and continuity-unknown pairs. Its numerator includes on-time receipts by departed sessions. If Rk is the on-time successes and Uk is the receipt-unknown count in K, the displayed bounds are `Rk / K` and `(Rk + Uk) / K`.
+
+Stable coverage also has logical bounds:
+
+```text
+stable coverage lower bound = S / K
+stable coverage upper bound = (S + C) / K
+```
+
+Both supporting metrics are available whenever `K > 0`; only an empty known starting cohort makes them **N/A**. Publication-time availability-unknown pairs remain outside K, and `measurementIncomplete` remains visible as a quality warning. Neither condition suppresses a useful result for the evidence that is present. The bounds are conditional on the known cohort and do not claim coverage of an unseen population. Known unscoped sequence streams trigger `measurementIncomplete`; completely invisible sessions or telemetry streams cannot be detected from the received log alone. A false flag therefore does not certify perfect observation of every real Peer.
+
+In `metrics.json`, `publicationAvailabilityUnknownPairs` counts candidates outside K, `continuityUnknownPairs` is C, `stableCoverage` is the lower bound, and `stableCoverageUpperBound` is the upper bound. `availabilityUnknownPairs` remains the aggregate of the two unknown categories for compatibility.
 
 The Controller's historical `targetNodeIds` dispatch snapshot is retained only as an additional audit hint: a listed recipient with no valid session-start record marks measurement incomplete. It does not add that recipient to the denominator or determine its actual publication-time availability. Sessions absent from both instrumentation and this snapshot can still be invisible.
 
@@ -79,7 +93,11 @@ Totals are **receiver-pair weighted**: sum successes and denominators across mat
 
 ### Clock and collection limits
 
-Publication, subscription, checkpoint, stop, and receipt timestamps come from different hosts. Synchronize all hosts with chrony/NTP. Negative latency samples reveal some errors, but positive offsets and small boundary errors cannot be detected reliably; they can affect cohort membership and deadline classification as well as latency. Instrumented session continuity does not prove continuous physical connectivity.
+Publication, subscription, checkpoint, stop, and receipt timestamps come from different hosts. At startup, each Peer spends at most five seconds obtaining up to seven Controller health samples. Fast failures are spaced 250ms apart instead of exhausting every attempt immediately. It selects the minimum-RTT sample and shifts measurement timestamps to the Controller clock using the request midpoint. Failure does not prevent the Peer from becoming Ready: it proceeds unsynchronized and retries every five seconds. After synchronization it refreshes every 30 seconds.
+
+A successful sample remains trusted for two minutes. If refreshes keep failing past that age, the Peer retains the last offset for timestamp continuity but stops attaching trusted clock metadata. A later successful sample restores it. While a sample is trusted, events record `clockBasis`, `clockOffsetMs`, and the half-RTT `clockUncertaintyMs`; an envelope carries the publisher uncertainty, and a receiver reports the combined uncertainty as `latencyUncertaintyMs`.
+
+The Controller uses that bound when a one-way point estimate crosses zero or the delivery deadline. A slightly negative estimate whose uncertainty still permits a causal, on-time receipt counts as delivery, while the negative value is excluded from the latency histogram. A bound entirely before publication is invalid; a bound wholly after the deadline is late; a bound that straddles the deadline is unknown. Periodic sampling limits drift while the Controller is reachable, but midpoint estimates and temporary outages do not replace host time synchronization. Keep chrony/NTP enabled on every host, especially for long churn runs. Instrumented session continuity does not prove continuous physical connectivity.
 
 Peer telemetry uses bounded retries and an orderly shutdown drain. Agent telemetry uses backpressure for a full queue rather than acknowledging and discarding that batch; its orderly shutdown allows Peer cleanup before a bounded final drain. Queue overflow, exhausted shutdown time, process failure, and Agent/Controller failures can still lose observations. Sequence tracking distinguishes some gaps from confirmed misses; it cannot recreate missing data or prove the existence of a wholly unobserved session. `scope: all` can impair the measurement channel itself. Keep loss counters and incomplete/unknown indicators with every result.
 
@@ -87,7 +105,7 @@ Peer telemetry uses bounded retries and an orderly shutdown drain. Agent telemet
 
 The latency samples use mature, stable, on-time remote receiver pairs. For each pair, take the first successful `Subscription.Next` receipt time minus the envelope timestamp prepared after the publisher acquires its local publish gate. This includes serialization, PubSub processing, network transit, and the subscriber queue. It excludes Controller-to-Agent dispatch and waiting for that local gate.
 
-Raw payloads have no embedded application send timestamp: they contribute to session-window delivery ratios but latency remains **N/A**. Local receipts, later deliveries, departed/late-joining receivers, and unavailable latency samples do not enter the distribution. Negative samples are excluded and counted in `invalidLatencySamples`; a positive host-clock offset is not detectable this way.
+Raw payloads have no embedded application send timestamp: they contribute to session-window delivery ratios but latency remains **N/A**. Local receipts, later deliveries, departed/late-joining receivers, and unavailable latency samples do not enter the distribution. Negative point estimates are excluded and counted in `invalidLatencySamples`, even when bounded uncertainty lets the receipt count as an on-time delivery.
 
 The UI and `metrics.json` report arithmetic mean, nearest-rank P95, and `latencySamples`. Missing or unknown receipts are not zero milliseconds. These latencies are conditional on observed on-time success and stable subscription; always show delivery bounds and coverage beside them.
 
@@ -107,7 +125,7 @@ New summaries use `definition: "session-window-v1"`. A publication records `fiel
 - Accumulation covers the whole observed run, independent of the 300-event recent feed and its 40 visible rows. The index grows with sessions, publications, receiver pairs, and event IDs until deletion or process restart.
 - `published`, `delivered`, and `duplicates` remain overall event counts. Overall delivery includes local and late-join receipts; dividing it by publications is not a delivery ratio or packet-loss rate.
 - ZIP `metrics.json` is rebuilt from exactly the captured `events.jsonl` prefix, including after a Controller restart. Maturity uses the manifest's fixed `exportedAt` boundary; use that same timestamp when reproducing the calculation. `deliveryWindows` lists the observed valid window settings. Later telemetry is outside that download. Incomplete logs yield unknown/incomplete results; malformed event logs fail the export rather than fabricate metrics.
-- Prometheus `kpl_window_*` gauges expose stable and starting-cohort counts, bounds, coverage, pending publications, departures, and measurement uncertainty by run. Grafana's session panels use only the Run filter and combine runs by receiver pairs. No denominator or uncertain starting population means N/A, not zero.
+- Prometheus `kpl_window_*` gauges expose stable and known-starting-cohort counts, delivery bounds, coverage bounds, pending publications, departures, continuity unknowns, publication-time availability unknowns, and measurement quality by run. Grafana's session panels use only the Run filter and combine runs by receiver pairs. Starting delivery and coverage are N/A only when the known starting denominator is zero, not when quality warnings are nonzero.
 - `kpl_window_propagation_latency_seconds` groups the same successful pairs by run, receiving Agent, and topic. Grafana estimates whole-run quantiles from histogram buckets; web P95 is exact nearest rank. Late telemetry can revise these gauges and histogram buckets: query directly, not with `rate`/`increase`. Traffic event counters keep normal rate semantics.
 
 ### Historical results

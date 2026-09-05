@@ -36,6 +36,14 @@ The previous graph used `ConnectedPeers`, collected from libp2p host connections
 
 An edge is an undirected display projection of one or both endpoints' reports. `reportedBy` identifies which endpoints actually reported it; Kademlia tables and transient mesh observations can be asymmetric. A PRUNE seen by one endpoint may leave the other endpoint's report visible briefly, until that endpoint reports its new state. DHT, transport, and mesh data are not sampled at a single atomic cluster-wide instant.
 
+## Bootstrap and topic discovery
+
+Kademlia bootstrap and GossipSub transport discovery are separate. A Peer first uses `/api/v1/bootstrap` to connect to a ready `boot` Peer in its run and bootstrap the DHT. The built-in boot type does not run PubSub, so this connection alone cannot form a GossipSub mesh.
+
+After PubSub starts, a Peer queries the Controller's `/api/v1/discovery` registry immediately and every three seconds for each exact configured topic. The registry returns only ready, online, PubSub-enabled Peers from the same run and topic. Rendezvous hashing gives each requester a stable selection of up to its configured `DHigh` transport candidates, preferring subscribed receivers before publish-only or relay candidates, and the Peer opens missing transports. This repairs candidate connectivity as churn changes membership without creating an all-to-all graph.
+
+The registry supplies addresses and configured topic participation; it does not report or choose delivery outcomes. A discovered transport appears in the gray layer only after libp2p connects. GossipSub still decides which topic peers enter the mesh, and only an accepted GRAFT appears as an orange mesh edge. A DHT routing-table entry remains a separate cyan edge. Consequently, `DHigh` is a discovery target rather than a promise that the graph will show exactly that many transport or mesh neighbors.
+
 ## Freshness and lifecycle
 
 Peers send status about every two seconds; Agents forward their current snapshots. Network, scheduling, and status failures add delay. Stopping, stopped, starting, and failed endpoints have no displayed relationship lines. Stopping/stopped Peer circles are hidden; failed Peers remain visible as issues.
@@ -48,7 +56,7 @@ Older Peers lacking overlay snapshots provide only Transport lines. The graph re
 
 ## API and retained data
 
-`GET /api/v1/snapshot`, `GET /api/v1/network`, and the SSE snapshot carry the same typed edges. Relevant Node fields are `routingPeers` (Peer IDs), `meshPeers` (topic → Peer IDs), and `overlayObservedAt`. An example edge is:
+`GET /api/v1/snapshot`, `GET /api/v1/network`, and the SSE snapshot carry the same typed edges. Relevant Node fields are `routingPeers` (Peer IDs), `meshPeers` (topic → Peer IDs), and `overlayObservedAt`. `/api/v1/discovery` is a live transport-candidate registry and is not a topology-history endpoint. An example edge is:
 
 ```json
 {"source":"node-a","target":"node-b","protocol":"gossipsub","topic":"kpl/demo","reportedBy":["node-a"]}

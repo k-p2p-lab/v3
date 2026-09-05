@@ -70,7 +70,7 @@ func TestSessionWindowDispatchTargetsOnlyAuditMissingStartEvidence(t *testing.T)
 			events[1].Fields["targetNodeIds"] = []string{"receiver", "hint-only"}
 			result := windowSummary(append(events, test.evidence...), 30)
 			if result.MeasurementIncomplete != test.incomplete || result.ExpectedDeliveries != 1 || result.EligibleDeliveries != 1 || result.Reachability != 1 ||
-				result.InitialExpectedDeliveries != 1 || result.AvailabilityUnknownPairs != 0 || result.StableCoverageAvailable == test.incomplete || result.InitialDeliveryRatioAvailable == test.incomplete {
+				result.InitialExpectedDeliveries != 1 || result.AvailabilityUnknownPairs != 0 || !result.StableCoverageAvailable || !result.InitialDeliveryRatioAvailable {
 				t.Fatalf("dispatch audit changed session membership or missed silent evidence: %+v", result)
 			}
 		})
@@ -151,13 +151,35 @@ func TestSessionWindowPendingAndUnknownAvailabilityAreNotFailures(t *testing.T) 
 		t.Fatalf("unmatured publication was classified: %+v", pending)
 	}
 	unknown := windowSummary(events, 30)
-	if unknown.AvailabilityUnknownPairs != 1 || unknown.InitialExpectedDeliveries != 0 || unknown.DeliveryRatioAvailable || unknown.InitialDeliveryRatioAvailable || unknown.MissedDeliveries != 0 {
+	if unknown.AvailabilityUnknownPairs != 1 || unknown.PublicationAvailabilityUnknownPairs != 1 || unknown.ContinuityUnknownPairs != 0 || unknown.InitialExpectedDeliveries != 0 || unknown.DeliveryRatioAvailable || unknown.InitialDeliveryRatioAvailable || unknown.MissedDeliveries != 0 {
 		t.Fatalf("delivery was incorrectly used as availability proof: %+v", unknown)
 	}
 	events = append(events, windowEvent("receiver", "session", 3, "measurement_checkpoint", 13))
 	unknown = windowSummary(events, 30)
-	if unknown.InitialExpectedDeliveries != 1 || unknown.InitialEligibleDeliveries != 1 || unknown.AvailabilityUnknownPairs != 1 || unknown.ExpectedDeliveries != 0 || unknown.InitialDeliveryRatioAvailable {
+	if unknown.InitialExpectedDeliveries != 1 || unknown.InitialEligibleDeliveries != 1 || unknown.AvailabilityUnknownPairs != 1 || unknown.PublicationAvailabilityUnknownPairs != 0 || unknown.ContinuityUnknownPairs != 1 ||
+		unknown.ExpectedDeliveries != 0 || !unknown.InitialDeliveryRatioAvailable || unknown.InitialDeliveryRatio != 1 || unknown.InitialDeliveryRatioUpperBound != 1 ||
+		!unknown.StableCoverageAvailable || unknown.StableCoverage != 0 || unknown.StableCoverageUpperBound != 1 {
 		t.Fatalf("pre-deadline checkpoint proved full-window survival: %+v", unknown)
+	}
+}
+
+func TestSessionWindowCoveragePartitionsKnownStartingCohort(t *testing.T) {
+	events := windowEvents(
+		windowStart("stable", "stable-session", 0, "topic"), windowEvent("stable", "stable-session", 2, "measurement_checkpoint", 22),
+		windowStart("departed", "departed-session", 0, "topic"), windowEvent("departed", "departed-session", 2, "measurement_stop", 15),
+		windowStart("continuity", "continuity-session", 0, "topic"), windowEvent("continuity", "continuity-session", 2, "measurement_checkpoint", 12),
+		windowStart("publication-unknown", "publication-session", 0, "topic"),
+	)
+	result := windowSummary(events, 30)
+	if result.InitialExpectedDeliveries != 3 || result.ExpectedDeliveries != 1 || result.DepartedPairs != 1 || result.ContinuityUnknownPairs != 1 ||
+		result.PublicationAvailabilityUnknownPairs != 1 || result.AvailabilityUnknownPairs != 2 {
+		t.Fatalf("known and candidate availability classes overlap or disappeared: %+v", result)
+	}
+	if result.InitialExpectedDeliveries != result.ExpectedDeliveries+result.DepartedPairs+result.ContinuityUnknownPairs {
+		t.Fatalf("K != S + D + C: %+v", result)
+	}
+	if !result.InitialDeliveryRatioAvailable || !result.StableCoverageAvailable || result.StableCoverage != 1.0/3 || result.StableCoverageUpperBound != 2.0/3 {
+		t.Fatalf("known-cohort bounds were hidden or miscomputed: %+v", result)
 	}
 }
 
@@ -199,6 +221,15 @@ func TestSessionWindowNegativeOrderingRawLatencyAndDuplicates(t *testing.T) {
 	result := windowSummary(windowEvents(windowStart("receiver", "session", 0, "topic"), negative, windowEvent("receiver", "session", 3, "measurement_checkpoint", 22)), 30)
 	if result.EligibleDeliveries != 0 || result.UnknownDeliveries != 1 || result.MissedDeliveries != 0 || result.InvalidLatencySamples != 1 {
 		t.Fatalf("negative clock ordering became a success or definite miss: %+v", result)
+	}
+	// A Controller-synchronized estimate whose uncertainty overlaps zero is a
+	// causally valid on-time receipt. It contributes to delivery, while its
+	// negative point estimate remains outside the latency distribution.
+	negative.Fields["latencyClockSynchronized"] = true
+	negative.Fields["latencyUncertaintyMs"] = 1001.0
+	result = windowSummary(windowEvents(windowStart("receiver", "session", 0, "topic"), negative, windowEvent("receiver", "session", 3, "measurement_checkpoint", 22)), 30)
+	if result.EligibleDeliveries != 1 || result.UnknownDeliveries != 0 || result.InvalidLatencySamples != 1 || result.LatencySamples != 0 {
+		t.Fatalf("bounded clock uncertainty discarded a proven on-time receipt or fabricated latency: %+v", result)
 	}
 	raw := windowDeliveredEvent("receiver", "session", 2, 12)
 	raw.Fields = map[string]any{"payloadEncoding": "raw", "latencyAvailable": false}
@@ -243,13 +274,13 @@ func TestSessionWindowMissingLifecycleAndExactTopics(t *testing.T) {
 
 func TestSessionTerminationUpperBoundNeverProvesLivenessOrReceipts(t *testing.T) {
 	for _, fixture := range []struct {
-		termination, checkpoint                         int
-		initial, departed, availability, initialUnknown int
+		termination, checkpoint                                           int
+		initial, departed, publicationUnknown, continuity, initialUnknown int
 	}{
-		{9, 8, 0, 0, 0, 0},
-		{15, 12, 1, 1, 0, 1},
-		{15, 0, 0, 0, 1, 0},
-		{20, 12, 1, 0, 1, 1},
+		{9, 8, 0, 0, 0, 0, 0},
+		{15, 12, 1, 1, 0, 0, 1},
+		{15, 0, 0, 0, 1, 0, 0},
+		{20, 12, 1, 0, 0, 1, 1},
 	} {
 		extra := []model.TraceEvent{windowStart("receiver", "session", 0, "topic")}
 		if fixture.checkpoint != 0 {
@@ -258,7 +289,9 @@ func TestSessionTerminationUpperBoundNeverProvesLivenessOrReceipts(t *testing.T)
 		terminated := windowEvent("receiver", "", 0, "measurement_terminated", fixture.termination)
 		extra = append(extra, terminated)
 		result := windowSummary(windowEvents(extra...), 30)
-		if result.InitialExpectedDeliveries != fixture.initial || result.DepartedPairs != fixture.departed || result.AvailabilityUnknownPairs != fixture.availability || result.InitialUnknownDeliveries != fixture.initialUnknown || result.ExpectedDeliveries != 0 {
+		if result.InitialExpectedDeliveries != fixture.initial || result.DepartedPairs != fixture.departed ||
+			result.PublicationAvailabilityUnknownPairs != fixture.publicationUnknown || result.ContinuityUnknownPairs != fixture.continuity ||
+			result.AvailabilityUnknownPairs != fixture.publicationUnknown+fixture.continuity || result.InitialUnknownDeliveries != fixture.initialUnknown || result.ExpectedDeliveries != 0 {
 			t.Fatalf("termination %+v was mistaken for a Peer checkpoint: %+v", fixture, result)
 		}
 	}
@@ -300,7 +333,11 @@ func TestSessionWindowReportsCanonicalDurationsAndRejectsInvalidArchiveWindows(t
 
 func TestSessionWindowPrometheusKeepsNewBoundsSeparateFromLegacyMetrics(t *testing.T) {
 	s := newState(t.TempDir())
-	events := windowEvents(windowStart("receiver", "session", 0, "topic"), windowEvent("receiver", "session", 3, "measurement_checkpoint", 22))
+	events := windowEvents(
+		windowStart("receiver", "session", 0, "topic"), windowEvent("receiver", "session", 3, "measurement_checkpoint", 22),
+		windowStart("continuity", "continuity-session", 0, "topic"), windowEvent("continuity", "continuity-session", 2, "measurement_checkpoint", 13),
+		windowStart("publication-unknown", "publication-session", 0, "topic"),
+	)
 	if err := s.appendEvents(model.EventBatch{Events: events}); err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +345,11 @@ func TestSessionWindowPrometheusKeepsNewBoundsSeparateFromLegacyMetrics(t *testi
 	labels := map[string]string{"run_id": "window-run"}
 	requireMetricValue(t, metrics, "kpl_window_stable_pairs", labels, 1)
 	requireMetricValue(t, metrics, "kpl_window_unknown_pairs", labels, 1)
-	requireMetricValue(t, metrics, "kpl_window_stable_coverage", labels, 1)
+	requireMetricValue(t, metrics, "kpl_window_publication_availability_unknown_pairs", labels, 1)
+	requireMetricValue(t, metrics, "kpl_window_continuity_unknown_pairs", labels, 1)
+	requireMetricValue(t, metrics, "kpl_window_availability_unknown_pairs", labels, 2)
+	requireMetricValue(t, metrics, "kpl_window_stable_coverage", labels, 0.5)
+	requireMetricValue(t, metrics, "kpl_window_stable_coverage_upper_bound", labels, 1)
 	requireMetricValue(t, metrics, "kpl_window_measurement_incomplete", labels, 0)
 	requireMetricValue(t, metrics, "kpl_window_delivery_ratio", map[string]string{"run_id": "window-run", "bound": "lower"}, 0)
 	requireMetricValue(t, metrics, "kpl_window_delivery_ratio", map[string]string{"run_id": "window-run", "bound": "upper"}, 1)

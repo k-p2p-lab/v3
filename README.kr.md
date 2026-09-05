@@ -22,11 +22,11 @@ Controller ─── scenario state machine / registry / event store / dashboard
     Peer Peer        Peer Peer     configurable libp2p Kademlia + PubSub
 ```
 
-- **Controller**: Agent와 Peer 상태, bootstrap registry, 시나리오 실행, 이벤트 저장, REST API와 웹 대시보드를 제공합니다.
+- **Controller**: Agent와 Peer 상태, 서로 분리된 bootstrap·정확한 topic discovery registry, 시나리오 실행, 이벤트 저장, REST API와 웹 대시보드를 제공합니다.
 - **Agent**: 물리/가상 호스트마다 하나씩 실행합니다. 기본적으로 Peer마다 Docker 컨테이너를 생성해 시작·종료·발행을 담당하고 telemetry를 묶어서 Controller로 전달합니다. 로컬 개발용 process 런타임도 제공합니다.
 - **Peer**: 결정적인 `(run ID, seed)` namespace로 ID를 생성하고 선택한 Kademlia와 PubSub 설정으로 실행됩니다. Docker Peer는 별도 network namespace에서 선택적인 네트워크 조건을 적용합니다.
 - **Dashboard**: Agent 용량, Peer 준비 상태, peer score 요약, 실험 단계, 전파 지연과 최근 이벤트를 SSE로 갱신합니다. 전체 폭의 [대화형 토폴로지](docs/topology.kr.md)는 같은 크기의 Agent별 부채꼴 안에 번호가 있는 Peer를 배치하고 Kademlia 라우팅 테이블, GRAFT 기반 GossipSub mesh, transport 연결을 구분합니다. Peer는 표시된 연결을 기준으로 소속 영역 안에서 자리를 잡으며 레이어·topic 필터, 움직임 일시 정지·재개, 확대·이동과 이웃 강조로 관계를 확인할 수 있습니다.
-- **실험 분석**: 지정한 시간 동안 계속 구독한 세션의 기한 내 도달률을 집계하고, 발행 당시 세션 전체의 도달률·지속 구독 비중·관측 불확실성을 함께 표시합니다. 첫 수신 지연과 평균 중복 수에도 같은 적격 대상을 적용합니다. Agent 번호로 토폴로지와 상태 표를 연결하고 종료된 Peer는 토폴로지에서 숨깁니다. 웹에서 1~100회 순차 실행, 결과 ZIP 다운로드와 삭제를 지원합니다. [지표 정의와 사용법](docs/experiment-metrics.kr.md)을 참고하십시오.
+- **실험 분석**: 지정한 시간 동안 계속 구독한 세션의 기한 내 도달률을 집계하고, 확인된 발행 시점 세션의 도달률 범위·안정 coverage 범위·관측 품질을 함께 표시합니다. 첫 수신 지연과 평균 중복 수에도 같은 적격 대상을 적용합니다. Agent 번호로 토폴로지와 상태 표를 연결하고 종료된 Peer는 토폴로지에서 숨깁니다. 웹에서 1~100회 순차 실행, 결과 ZIP 다운로드와 삭제를 지원합니다. [지표 정의와 사용법](docs/experiment-metrics.kr.md)을 참고하십시오.
 
 ## 빠른 실행
 
@@ -119,7 +119,7 @@ Compose는 Prometheus와 Grafana도 함께 실행하고 데이터 소스와 실�
 
 ## 노드 역할, 종류와 프로파일
 
-`role`은 bootstrap discovery를 제어합니다. `boot` 노드는 Controller가 bootstrap peer로 제공하지만 `worker` 노드는 제공하지 않습니다. `type`은 노드의 libp2p, Kademlia, PubSub 동작을 제어합니다. 두 값은 서로 독립적이므로 bootstrap 역할을 오용하지 않고 여러 종류의 worker를 한 실험에서 사용할 수 있습니다. `type`과 `profile`을 모두 생략하면 `role: boot`는 `boot` preset을, 그 밖의 role은 `full`을 선택합니다.
+`role`은 Kademlia bootstrap discovery를 제어합니다. `boot` 노드는 Controller가 bootstrap peer로 제공하지만 `worker` 노드는 제공하지 않습니다. Topic transport discovery는 별도이며 동일 run·정확한 topic의 ready PubSub 참가자를 대상으로 합니다. `type`은 노드의 libp2p, Kademlia, PubSub 동작을 제어합니다. 이 개념들은 서로 독립적이므로 bootstrap 역할을 오용하지 않고 여러 종류의 worker를 한 실험에서 사용할 수 있습니다. `type`과 `profile`을 모두 생략하면 `role: boot`는 `boot` preset을, 그 밖의 role은 `full`을 선택합니다.
 
 | 내장 type | 동작 |
 |---|---|
@@ -137,7 +137,7 @@ Compose는 Prometheus와 Grafana도 함께 실행하고 데이터 소스와 실�
 
 재사용할 노드 설정은 최상위 `profiles` 맵에 정의합니다. join phase의 설정 결합 순서는 내장 `type`, 이름이 지정된 `profile`, phase 안의 `node` override 순서입니다. 명시적인 `false`와 `0`도 보존하므로 `historyGossip: 0`처럼 lazy gossip을 끄는 실험도 표현할 수 있습니다.
 
-내장 `boot` type은 `gossipsub.enabled: false`를 설정합니다. bootstrap 노드도 PubSub에 참여시킬 때는 profile이나 phase의 `node` 블록에서 이를 명시적으로 `true`로 설정하십시오. 활성화한 boot 노드에는 아래의 모든 PubSub router, parameter, scoring, inspection 옵션을 사용할 수 있습니다. [`examples/mixed-workers.yaml`](examples/mixed-workers.yaml)이 이 opt-in 구성을 보여 줍니다.
+내장 `boot` type은 `gossipsub.enabled: false`를 설정합니다. bootstrap 노드도 PubSub에 참여시킬 때는 profile이나 phase의 `node` 블록에서 이를 명시적으로 `true`로 설정하십시오. 활성화한 boot 노드에는 아래의 모든 PubSub router, parameter, scoring, inspection 옵션을 사용할 수 있습니다. [`examples/mixed-workers.yaml`](examples/mixed-workers.yaml)이 이 opt-in 구성을 보여 줍니다. PubSub가 활성화된 Peer는 시작 직후와 이후 3초마다 동일 run·정확한 topic의 Controller registry를 조회하고 rendezvous hash로 topic마다 `DHigh`까지 transport 후보를 선택해 빠진 연결을 생성합니다. 실제 GRAFT mesh는 GossipSub가 구성하므로 DHT bootstrap, transport 후보, mesh 구성원은 서로 구분됩니다.
 
 ```yaml
 version: 2
@@ -327,12 +327,13 @@ phases:
 
 | Method | Path | 설명 |
 |---|---|---|
-| `GET` | `/api/v1/health` | Controller 상태 확인 |
+| `GET` | `/api/v1/health` | Controller 상태와 Peer 시계 측정에 쓰는 현재 UTC 시각 |
 | `GET` | `/api/v1/snapshot` | 노드 `peerScores`를 포함한 대시보드 전체 snapshot |
 | `GET` | `/api/v1/agents` | Agent 상태 |
 | `GET` | `/api/v1/nodes` | inspection으로 수집한 `peerScores`를 포함한 Peer 상태 |
 | `GET` | `/api/v1/network` | `peerScores`가 포함된 Peer, 연결 edge와 전파 지표 |
 | `GET` | `/api/v1/bootstrap?runId={runId}` | 필수 run ID에 속한 준비 상태의 bootstrap peer만 반환 |
+| `GET` | `/api/v1/discovery?runId={runId}&topic={topic}&requesterNodeId={nodeId}` | 동일 run·정확한 topic에서 ready·online 상태인 PubSub transport 후보 |
 | `GET` | `/api/v1/events` | 최근 trace event |
 | `GET` | `/api/v1/stream` | `peerScores`를 포함한 실시간 snapshot SSE |
 | `GET` | `/api/v1/experiments` | 실험 상태와 `activeJobs`, `completedJobs`, `failedJobs`, `canceledJobs` counter |
@@ -342,7 +343,7 @@ phases:
 | `POST` | `/api/v1/experiments` | YAML 1회 실행 또는 JSON `{scenario, repetitions}`로 1~100회 순차 실행 |
 | `POST` | `/api/v1/experiments/{id}/stop` | 실행을 취소한 뒤 제한 시간 내 job 종료와 generation-fenced Peer cleanup 수행 |
 
-`/api/v1/bootstrap`의 `runId` query parameter는 필수입니다. registry는 해당 run에서 준비 상태이고 유효한 identity와 address 정보가 있는 `boot` 노드만 반환하므로 동시에 실행되는 실험끼리 bootstrap peer를 발견하지 않습니다.
+`/api/v1/bootstrap`의 `runId` query parameter는 필수입니다. registry는 해당 run에서 준비 상태이고 유효한 identity와 address 정보가 있는 `boot` 노드만 반환하므로 동시에 실행되는 실험끼리 bootstrap peer를 발견하지 않습니다. `/api/v1/discovery`에는 표시된 query 세 개가 모두 필요하며 요청자 자신을 제외하고 실제 전달·mesh 결과가 아닌 설정상 topic 참가자를 반환합니다.
 
 예시:
 
@@ -373,8 +374,8 @@ Agent는 Controller가 cleanup에 사용하는 다음 내부 운영 endpoint를 
 
 ## 측정 주의사항과 한계
 
-전파 메시지에는 발행 시각이 포함됩니다. 서로 다른 물리 서버의 지연을 비교하려면 모든 Agent 호스트에 chrony/NTP를 적용해야 하며, 음수 지연이 감지되면 이벤트에 `clockSkewDetected`가 기록됩니다.
+전파 메시지에는 발행 시각이 포함됩니다. 각 Peer는 시작 시 최대 5초 동안 Controller health 표본을 최대 7개 수집하고, 빠른 실패 사이를 250ms 띄운 뒤 최소 RTT 표본의 중간점으로 측정 시계를 보정합니다. 실패해도 Ready 진행을 막지 않습니다. 미동기화 Peer는 5초마다 다시 시도하고 동기화 Peer는 30초마다 갱신합니다. 성공한 표본은 갱신 없이 2분이 지나면 만료됩니다. 마지막 offset은 timestamp 연속성을 위해 유지하지만 이후 성공으로 복구할 때까지 신뢰 시계 metadata를 중단합니다. 범위상 인과적으로 가능하고 기한 내인 음수 point estimate는 도달 성공으로 인정할 수 있지만 지연 통계에서는 제외합니다. 모든 Agent 호스트에서 chrony/NTP를 계속 사용하십시오.
 
-Docker 런타임은 Peer마다 네트워크를 격리하고 노드별 P2P egress 조건을 지원합니다. `wait-ready`는 Peer 초기화와 API 준비 완료를 확인하며 mesh 수렴을 검증하지 않습니다. 필요한 실험에는 별도 안정화 대기 단계를 추가하십시오. scenario seed는 앞서 설명한 조건에서 애플리케이션 sampling과 순서를 재현하지만, 커널의 packet impairment나 네트워크 타이밍까지 동일하게 재현하지는 않습니다. HopWave는 지원하지 않습니다.
+Docker 런타임은 Peer마다 네트워크를 격리하고 노드별 P2P egress 조건을 지원합니다. `wait-ready`는 Peer 초기화와 API 준비 완료를 확인하며 mesh 수렴을 검증하지 않습니다. 주기적 topic discovery가 churn 중 transport 후보를 보강하지만 GossipSub heartbeat와 GRAFT 처리에는 여전히 수렴 시간이 필요합니다. 필요한 실험에는 별도 안정화 대기 단계를 추가하십시오. scenario seed는 앞서 설명한 조건에서 애플리케이션 sampling과 순서를 재현하지만, 커널의 packet impairment나 네트워크 타이밍까지 동일하게 재현하지는 않습니다. HopWave는 지원하지 않습니다.
 
 종료된 노드의 이력은 현재 메모리에 유지되며 Agent heartbeat와 Controller snapshot에도 포함됩니다. 장기간 대규모 churn을 실행할 때 control-plane 상태와 payload가 계속 증가하지 않도록 제한된 보존 정책과 별도의 pagination 기반 history API가 추가로 필요합니다.

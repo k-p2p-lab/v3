@@ -19,7 +19,7 @@ sudo sh scripts/swarm.sh scenario examples/swarm-churn-publish.yaml
 
 `access`의 Controller URL을 여십시오. **Run experiment**에서 **YAML scenario** 전체를 출력된 내용으로 교체하고, `credentials`의 실제 배포된 API 토큰을 입력한 뒤 **Run**을 누릅니다. `scenario`는 YAML만 출력하며 웹 동작이 실험을 시작합니다. 웹 폼의 기본값과 helper의 기본 `scenario` 출력은 다른 예제입니다.
 
-worker는 Linux `NET_ADMIN`과 호스트 커널의 netem 지원을 사용합니다. 호스트 간 편도 전파 지연을 비교하려면 먼저 시계를 동기화하십시오. 예제의 네트워크 설정은 송신 P2P TCP 트래픽에 적용하며 제어·telemetry HTTP는 해당 범위에서 제외합니다.
+worker는 Linux `NET_ADMIN`과 호스트 커널의 netem 지원을 사용합니다. 각 Peer는 시작 시 최대 5초 동안 Controller health 표본을 최대 7개 수집하며 모두 실패해도 Ready까지 진행합니다. 미동기화 Peer는 5초마다 다시 시도하고 동기화 Peer는 30초마다 갱신하며, 마지막 성공 표본은 갱신 없이 2분이 지나면 신뢰 상태를 잃습니다. 장시간 실행 중에는 chrony/NTP를 계속 사용하십시오. 예제의 네트워크 설정은 송신 P2P TCP 트래픽에 적용하며 제어·시계 측정·discovery·telemetry HTTP는 해당 범위에서 제외합니다.
 
 ## 실행 흐름
 
@@ -38,6 +38,8 @@ worker는 Linux `NET_ADMIN`과 호스트 커널의 netem 지원을 사용합니�
 `count: 10000`은 **총 join 예산**이며 동시 worker 10,000개가 아닙니다. 보통 이 예산을 다 쓰기 전에 마지막 `stop-all`이 producer를 취소합니다. 이 예제에는 개별 worker의 명시적 `leave` phase가 없고 샘플링한 수명이 퇴장을 발생시킵니다.
 
 readiness barrier는 안정적인 boot 그룹에만 적용합니다. 계속 커지는 churn 그룹에 `wait-ready`를 적용하면 현재 generation에서 이미 종료된 구성원도 포함됩니다. 3분 warm-up은 이 부적절한 barrier를 피하기 위한 대기이며 특정 worker 수나 GossipSub mesh 수렴을 보장하지 않습니다. worker의 mesh 설정은 `d: 9`, `dLow: 7`, `dHigh: 11`입니다.
+
+내장 boot Peer는 PubSub가 비활성화되어 있으므로 DHT bootstrap만으로 worker가 GossipSub overlay에 연결되지는 않습니다. Worker가 PubSub를 시작하면 동일 run·정확한 topic의 Controller discovery registry를 즉시 조회하고 이후 3초마다 반복합니다. Rendezvous hash로 ready transport 후보를 `DHigh`까지 선택하되 subscriber를 우선하고, 빠진 연결을 생성해 churn으로 바뀐 이웃을 보강합니다. 실제 GRAFT mesh는 계속 GossipSub가 선택하므로 registry 후보나 transport 연결이 곧 mesh 구성원인 것은 아닙니다.
 
 10개 노드를 모두 선택한 round에는 평균 합계 9초인 간격 아홉 개와 요청 처리 시간이 있습니다. 기본 대기 스케줄은 `180 + 30×9 + 29×10 + 30 = 770초`, 즉 **약 12분 50초**이며 bootstrap·API·정리 시간이 추가됩니다. 고정 종료 시각은 아닙니다. 후보가 적거나 없는 round는 짧아지고 느린 요청은 길어집니다.
 
@@ -61,8 +63,8 @@ Control Room에서는 ready Peer 수, Agent 점유량, 실험·job 상태와 이
 |---|---|
 | 변화하는 노드 수와 점유 용량 | 실시간 node inventory, `kpl_nodes`, `kpl_agent_active_nodes` |
 | 발행·수신·중복 이벤트 수 | `kpl_events_total`. mesh 변화는 `graft`/`prune` 이벤트로 관측 |
-| 안정 대상 조건부 도달률·발행 시점 대상 도달률·coverage | `kpl_window_delivery_ratio`, `kpl_window_initial_delivery_ratio`, `kpl_window_stable_coverage`. Run 필터만 적용 |
-| Pending과 관측 불명 | `kpl_window_pending_publications`, `kpl_window_unknown_pairs`, `kpl_window_availability_unknown_pairs`, `kpl_window_measurement_incomplete` |
+| 안정 대상 조건부 도달률·확인된 발행 시점 대상 도달률·coverage 범위 | `kpl_window_delivery_ratio`, `kpl_window_initial_delivery_ratio`, `kpl_window_stable_coverage`, `kpl_window_stable_coverage_upper_bound`. Run 필터만 적용 |
+| Pending과 관측 불명 | `kpl_window_pending_publications`, `kpl_window_unknown_pairs`, `kpl_window_publication_availability_unknown_pairs`, `kpl_window_continuity_unknown_pairs`, `kpl_window_measurement_incomplete` |
 | 안정 대상의 원격 성공 수신당 관측 추가 복사본 | `kpl_window_duplicates_per_reached_pair`. Run 필터만 적용 |
 | Envelope 지연과 PubSub 데이터 양 | `kpl_window_propagation_latency_seconds`, `kpl_message_bytes_total` |
 | 설정한 네트워크 조건 | `kpl_network_configured_*`. 실제 손실률이나 RTT가 아닌 설정값 |
@@ -70,9 +72,9 @@ Control Room에서는 ready Peer 수, Agent 점유량, 실험·job 상태와 이
 
 새 `session-window-v1` 발행은 실제 발행 시각과 고정된 10초 마감을 사용합니다. `measurement_start`는 구독 애플리케이션 세션을 기록하고 동일 세션의 2초 주기 checkpoint 또는 stop으로 관측된 지속을 확인합니다. 주 도달률은 기간 전체에 걸쳐 구독을 증명한 세션만 사용합니다. 마감 전 stop 세션은 이미 수신했어도 주 지표의 분자·분모에서 모두 제외하고, 늦은 join도 제외합니다. 네트워크 단절이나 mesh 제거로 구독자를 제외하지 않습니다.
 
-발행 시점 대상 도달률과 안정 coverage를 함께 보십시오. 최초 10명 중 2명이 이탈하고 그중 1명은 미리 수신했으며 안정 구독자 8명 중 7명이 성공하면 안정 도달률은 **7/8**, 발행 시점 대상 도달률은 **8/10**, coverage는 **80%**입니다. 발행 시점 대상 도달률에는 이탈자의 조기 성공도 포함합니다. 원본 sequence가 누락된 미수신은 unknown이며 도달률 상·하한을 넓힙니다. 이 범위는 신뢰구간이 아닙니다. 10초가 지나지 않은 메시지는 pending입니다. 가용성이 불명확하거나 측정이 불완전하면 발행 시점 대상 비율과 coverage는 N/A입니다.
+확인된 발행 시점 대상 도달률과 안정 coverage를 함께 보십시오. 확인된 최초 10명 중 2명이 이탈하고 그중 1명은 미리 수신했으며 안정 구독자 8명 중 7명이 성공하면 안정 도달률은 **7/8**, 발행 시점 대상 도달률은 **8/10**, coverage는 **80%**입니다. 발행 시점 대상 도달률에는 이탈자의 조기 성공도 포함합니다. 확인된 발행 시점 쌍의 이탈과 마감까지 지속 어느 쪽도 증명하지 못하면 coverage 범위는 `안정/확인된 발행 시점 대상`부터 `(안정 + 지속 여부 불명)/확인된 발행 시점 대상`까지 넓어집니다. 원본 sequence가 누락된 미수신도 도달률 범위를 넓힙니다. 이 범위는 신뢰구간이 아닙니다. 10초가 지나지 않은 메시지는 pending입니다. 발행 시점 가용성 불명 후보는 확인된 집단 밖에 두고 관측 품질로 표시합니다. 확인된 집단이 비었을 때만 발행 시점 도달률과 coverage가 N/A이며 incomplete/unknown 경고만으로 숨기지는 않습니다.
 
-PubSub `join`/`leave`는 **Peer 생성·종료 기록이 아닙니다**. 측정 이벤트는 계측된 구독 세션이며 전체 Docker lifecycle이나 물리적 uptime 이력이 아닙니다. 강제 종료는 불명 꼬리 구간을 남길 수 있고 아예 보이지 않은 telemetry는 수신 로그만으로 검출하지 못합니다. 시계 동기화는 지연뿐 아니라 마감·대상 판정에도 영향을 줍니다. ZIP `metrics.json`은 같은 이벤트 경계에서 재계산합니다. 과거 dispatch 대상은 legacy로 남기며 지속 구독 증거를 대신하지 못합니다. [지표 정의와 수집 한계](experiment-metrics.kr.md)를 참고하십시오.
+PubSub `join`/`leave`는 **Peer 생성·종료 기록이 아닙니다**. 측정 이벤트는 계측된 구독 세션이며 전체 Docker lifecycle이나 물리적 uptime 이력이 아닙니다. 강제 종료는 불명 꼬리 구간을 남길 수 있고 아예 보이지 않은 telemetry는 수신 로그만으로 검출하지 못합니다. 신뢰 상태의 시계 추정은 uncertainty를 기록하며, 범위상 기한 내인 음수 추정은 수신 성공으로 인정해도 지연 통계에서는 제외합니다. 갱신 실패가 2분 유효 기간을 넘으면 신뢰 metadata를 중단하고 이후 성공하면 다시 제공합니다. chrony/NTP도 계속 권장합니다. ZIP `metrics.json`은 같은 이벤트 경계에서 재계산합니다. 과거 dispatch 대상은 legacy로 남기며 지속 구독 증거를 대신하지 못합니다. [지표 정의와 수집 한계](experiment-metrics.kr.md)를 참고하십시오.
 
 실험 종료 후 Peer 정리와, 다른 실행이 없다면 Agent 점유량 0을 확인합니다. `stop-all`이 끝나지 않은 join job을 의도적으로 취소하므로 `completed` 실행에도 `canceledJobs: 1`이 있을 수 있습니다. 이 값만으로 실패를 뜻하지는 않습니다.
 

@@ -22,11 +22,11 @@ Controller ─── scenario state machine / registry / event store / dashboard
     Peer Peer        Peer Peer     configurable libp2p Kademlia + PubSub
 ```
 
-- **Controller** provides Agent and Peer state, the bootstrap registry, scenario execution, event persistence, the REST API, and the web dashboard.
+- **Controller** provides Agent and Peer state, separate bootstrap and exact-topic discovery registries, scenario execution, event persistence, the REST API, and the web dashboard.
 - **Agent** runs once per physical or virtual host. It starts and stops one Docker container per Peer by default, forwards publish requests, and batches telemetry for the Controller. A process runtime is also available for local development.
 - **Peer** derives its identity from a deterministic `(run ID, seed)` namespace and runs a selected Kademlia and PubSub configuration. Each Docker Peer has its own network namespace for optional traffic conditions.
 - **Dashboard** uses SSE to update Agent capacity, Peer readiness, peer-score summaries, experiment phases, propagation latency, and recent events. The full-width [interactive topology](docs/topology.md) places numbered Peers inside equal Agent sectors and separates Kademlia routing tables, GRAFT-based GossipSub meshes, and transport connections. Peers settle within their sectors using the visible links; layer/topic filters, motion pause/resume, zoom, and neighbor highlighting help inspect the graph.
-- **Experiment analysis** measures on-time delivery to sessions continuously subscribed throughout a configured window, alongside starting-session delivery, coverage, and observation uncertainty. First-delivery latency and average duplicate copies use the same eligible pairs. Agent numbers link topology to the status table; stopped Peers disappear from topology. The web form supports 1–100 sequential runs, and Saved results supports ZIP download and deletion. See [definitions and usage](docs/experiment-metrics.md).
+- **Experiment analysis** measures on-time delivery to sessions continuously subscribed throughout a configured window, alongside known-starting-session delivery bounds, stable-coverage bounds, and observation quality. First-delivery latency and average duplicate copies use the same eligible pairs. Agent numbers link topology to the status table; stopped Peers disappear from topology. The web form supports 1–100 sequential runs, and Saved results supports ZIP download and deletion. See [definitions and usage](docs/experiment-metrics.md).
 
 ## Quick start
 
@@ -119,7 +119,7 @@ The canonical Go module path is `github.com/k-p2p-lab/v3`. Source imports and co
 
 ## Node roles, types, and profiles
 
-`role` controls bootstrap discovery: a `boot` node is advertised by the Controller as a bootstrap peer, while a `worker` node is not. `type` controls the node's libp2p, Kademlia, and PubSub behavior. They are deliberately independent, so an experiment can use several worker behaviors without abusing the bootstrap role. When both `type` and `profile` are omitted, `role: boot` selects the `boot` preset and every other role selects `full`.
+`role` controls Kademlia bootstrap discovery: a `boot` node is advertised by the Controller as a bootstrap peer, while a `worker` node is not. Topic transport discovery is separate and considers ready PubSub participants in the same run and exact topic. `type` controls the node's libp2p, Kademlia, and PubSub behavior. These concepts are independent, so an experiment can use several worker behaviors without abusing the bootstrap role. When both `type` and `profile` are omitted, `role: boot` selects the `boot` preset and every other role selects `full`.
 
 | Built-in type | Behavior |
 |---|---|
@@ -137,7 +137,7 @@ The canonical Go module path is `github.com/k-p2p-lab/v3`. Source imports and co
 
 Reusable node profiles belong in the top-level `profiles` map. A join phase resolves its configuration in this order: built-in `type`, named `profile`, then the phase's inline `node` overrides. Explicit `false` and `0` values are preserved, which allows experiments such as disabling lazy gossip with `historyGossip: 0`.
 
-The built-in `boot` type sets `gossipsub.enabled: false`. Set it explicitly to `true` in a profile or inline `node` block when bootstrap nodes should also participate in PubSub. Once enabled, boot nodes can use every PubSub router, parameter, scoring, and inspection option described below; [`examples/mixed-workers.yaml`](examples/mixed-workers.yaml) demonstrates this opt-in.
+The built-in `boot` type sets `gossipsub.enabled: false`. Set it explicitly to `true` in a profile or inline `node` block when bootstrap nodes should also participate in PubSub. Once enabled, boot nodes can use every PubSub router, parameter, scoring, and inspection option described below; [`examples/mixed-workers.yaml`](examples/mixed-workers.yaml) demonstrates this opt-in. PubSub-enabled Peers query the Controller's same-run, exact-topic registry immediately after startup and every three seconds, then use rendezvous hashing to select up to `DHigh` transport candidates per topic and open missing connections. GossipSub still forms the actual GRAFT mesh; DHT bootstrap, transport candidacy, and mesh membership remain distinct.
 
 ```yaml
 version: 2
@@ -327,12 +327,13 @@ A non-zero scenario seed reproduces sampled delays, distribution samples, and ra
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/v1/health` | Controller health |
+| `GET` | `/api/v1/health` | Controller health and current UTC time used for Peer clock sampling |
 | `GET` | `/api/v1/snapshot` | Full dashboard snapshot, including node `peerScores` |
 | `GET` | `/api/v1/agents` | Agent state |
 | `GET` | `/api/v1/nodes` | Peer state, including inspected `peerScores` |
 | `GET` | `/api/v1/network` | Peers with `peerScores`, connection edges, and propagation metrics |
 | `GET` | `/api/v1/bootstrap?runId={runId}` | Ready bootstrap peers belonging only to the required run ID |
+| `GET` | `/api/v1/discovery?runId={runId}&topic={topic}&requesterNodeId={nodeId}` | Ready, online PubSub transport candidates from the same run and exact topic |
 | `GET` | `/api/v1/events` | Recent trace events |
 | `GET` | `/api/v1/stream` | Real-time snapshot SSE stream, including `peerScores` |
 | `GET` | `/api/v1/experiments` | Experiment state plus `activeJobs`, `completedJobs`, `failedJobs`, and `canceledJobs` counters |
@@ -342,7 +343,7 @@ A non-zero scenario seed reproduces sampled delays, distribution samples, and ra
 | `POST` | `/api/v1/experiments` | Run YAML once, or JSON `{scenario, repetitions}` for 1–100 sequential runs |
 | `POST` | `/api/v1/experiments/{id}/stop` | Cancel a running experiment, then perform bounded job shutdown and generation-fenced Peer cleanup |
 
-The `runId` query parameter on `/api/v1/bootstrap` is required. The registry returns only ready `boot` nodes with usable identity and address data from that run, so concurrent experiments cannot discover one another's bootstrap peers.
+The `runId` query parameter on `/api/v1/bootstrap` is required. The registry returns only ready `boot` nodes with usable identity and address data from that run, so concurrent experiments cannot discover one another's bootstrap peers. `/api/v1/discovery` requires all three shown query parameters, excludes the requester, and returns configured topic participants rather than observed delivery or mesh outcomes.
 
 Example:
 
@@ -373,8 +374,8 @@ The same four job counters are present in `/api/v1/snapshot` and SSE snapshots. 
 
 ## Measurement notes and limitations
 
-Propagation messages include the publisher's timestamp. Synchronize all Agent hosts with chrony or NTP before comparing latency across physical machines. Events with a negative observed latency are marked with `clockSkewDetected`.
+Propagation messages include the publisher's timestamp. At startup, every Peer has a five-second budget for up to seven Controller health samples, spacing fast failures by 250ms and using the minimum-RTT midpoint to correct its measurement clock. Failure does not block Ready: unsynchronized Peers retry every five seconds, and synchronized Peers refresh every 30 seconds. A successful sample expires after two minutes without refresh; the last offset remains for timestamp continuity, but trusted clock metadata stops until a later success restores it. A bounded negative point estimate can count as a causally possible on-time delivery while remaining excluded from latency statistics. Keep chrony or NTP enabled on all Agent hosts.
 
-The Docker runtime isolates each Peer and supports per-node P2P egress conditions. `wait-ready` confirms Peer initialization and API readiness; it does not verify mesh convergence. Add a settling phase when the experiment needs it. Scenario seeds reproduce application sampling and ordering under the documented conditions, but do not promise identical kernel packet impairment or network timing. HopWave is not supported.
+The Docker runtime isolates each Peer and supports per-node P2P egress conditions. `wait-ready` confirms Peer initialization and API readiness; it does not verify mesh convergence. Periodic topic discovery repairs transport candidates under churn, while GossipSub heartbeat and GRAFT processing still need time to converge. Add a settling phase when the experiment needs it. Scenario seeds reproduce application sampling and ordering under the documented conditions, but do not promise identical kernel packet impairment or network timing. HopWave is not supported.
 
 Stopped-node history is currently retained in memory and included in Agent heartbeats and Controller snapshots. Long-running, high-volume churn still needs a bounded retention policy and a separate paginated history API to prevent control-plane state and payloads from growing indefinitely.

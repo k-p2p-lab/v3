@@ -105,3 +105,104 @@ func TestBootstrapRegistryRequiresRunAndReturnsOnlyReadyBootNodesFromThatRun(t *
 		t.Fatalf("bootstrap nodes = %+v, want only ready run-a boot node", nodes)
 	}
 }
+
+func TestTopicDiscoveryRegistryFiltersAndPrioritizesCandidates(t *testing.T) {
+	server := New(ServerConfig{DataDir: t.TempDir()}, nil)
+	now := time.Now().UTC()
+	server.state.mu.Lock()
+	server.state.agents["online"] = model.Agent{ID: "online", State: model.AgentOnline, LastSeen: now}
+	server.state.agents["stale"] = model.Agent{ID: "stale", State: model.AgentOnline, LastSeen: now.Add(-agentStaleAfter - time.Second)}
+	server.state.agents["offline"] = model.Agent{ID: "offline", State: model.AgentOffline, LastSeen: now}
+	addNode := func(id, runID, agentID, state, peerID, address, nodeType, mode, topics string, enabled string) {
+		metadata := map[string]string{"topicMode": mode, "topicsJSON": topics}
+		if enabled != "" {
+			metadata["pubsubEnabled"] = enabled
+		}
+		addresses := []string{address}
+		if address == "" {
+			addresses = nil
+		}
+		server.state.nodes[id] = model.Node{
+			ID: id, RunID: runID, AgentID: agentID, State: state, PeerID: peerID,
+			Addresses: addresses, Type: nodeType, Metadata: metadata,
+		}
+	}
+	addNode("requester", "run-a", "online", model.NodeReady, "peer-requester", "/ip4/127.0.0.1/tcp/10000", "full", "subscribe", `["topic-a"]`, "true")
+	addNode("subscriber", "run-a", "online", model.NodeReady, "peer-subscriber", "/ip4/127.0.0.1/tcp/10001", "full", "subscribe", `["topic-a"]`, "true")
+	addNode("publisher", "run-a", "online", model.NodeReady, "peer-publisher", "/ip4/127.0.0.1/tcp/10002", "publisher", "publish", `["topic-a"]`, "true")
+	addNode("relay", "run-a", "online", model.NodeReady, "peer-relay", "/ip4/127.0.0.1/tcp/10003", "relay", "relay", `["topic-a"]`, "true")
+	addNode("wrong-topic", "run-a", "online", model.NodeReady, "peer-wrong", "/ip4/127.0.0.1/tcp/10004", "full", "subscribe", `["topic-b"]`, "true")
+	addNode("starting", "run-a", "online", model.NodeStarting, "peer-starting", "/ip4/127.0.0.1/tcp/10005", "full", "subscribe", `["topic-a"]`, "true")
+	addNode("other-run", "run-b", "online", model.NodeReady, "peer-other-run", "/ip4/127.0.0.1/tcp/10006", "full", "subscribe", `["topic-a"]`, "true")
+	addNode("stale", "run-a", "stale", model.NodeReady, "peer-stale", "/ip4/127.0.0.1/tcp/10007", "full", "subscribe", `["topic-a"]`, "true")
+	addNode("offline", "run-a", "offline", model.NodeReady, "peer-offline", "/ip4/127.0.0.1/tcp/10008", "full", "subscribe", `["topic-a"]`, "true")
+	addNode("disabled", "run-a", "online", model.NodeReady, "peer-disabled", "/ip4/127.0.0.1/tcp/10009", "full", "subscribe", `["topic-a"]`, "false")
+	addNode("boot", "run-a", "online", model.NodeReady, "peer-boot", "/ip4/127.0.0.1/tcp/10010", "boot", "subscribe", `["topic-a"]`, "")
+	addNode("no-address", "run-a", "online", model.NodeReady, "peer-no-address", "", "full", "subscribe", `["topic-a"]`, "true")
+	server.state.mu.Unlock()
+
+	handler := server.Handler(context.Background())
+	for _, target := range []string{
+		"/api/v1/discovery",
+		"/api/v1/discovery?runId=run-a&topic=topic-a",
+		"/api/v1/discovery?runId=run-a&requesterNodeId=requester",
+		"/api/v1/discovery?topic=topic-a&requesterNodeId=requester",
+	} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, target, nil))
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("GET %s status=%d body=%s, want 400", target, recorder.Code, recorder.Body.String())
+		}
+	}
+
+	recorder := httptest.NewRecorder()
+	target := "/api/v1/discovery?runId=run-a&topic=topic-a&requesterNodeId=requester"
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, target, nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("discovery status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var nodes []struct {
+		NodeID     string   `json:"nodeId"`
+		PeerID     string   `json:"peerId"`
+		Addresses  []string `json:"addresses"`
+		Subscribed bool     `json:"subscribed"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &nodes); err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 3 {
+		t.Fatalf("discovery nodes=%+v, want subscriber, publisher, and relay", nodes)
+	}
+	if nodes[0].NodeID != "subscriber" || !nodes[0].Subscribed {
+		t.Fatalf("first discovery node=%+v, want subscribed candidate first", nodes[0])
+	}
+	if nodes[1].NodeID != "publisher" || nodes[1].Subscribed || nodes[2].NodeID != "relay" || nodes[2].Subscribed {
+		t.Fatalf("fallback discovery nodes=%+v, want deterministic non-subscriber order", nodes[1:])
+	}
+	if nodes[0].PeerID != "peer-subscriber" || len(nodes[0].Addresses) != 1 {
+		t.Fatalf("discovery identity/address missing: %+v", nodes[0])
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, target, nil))
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST discovery status=%d, want 405", recorder.Code)
+	}
+}
+
+func TestAgentTerminationUsesControllerReceiptAsComparableUpperBound(t *testing.T) {
+	source := time.Date(2035, 1, 2, 3, 4, 5, 6, time.UTC)
+	received := time.Date(2026, 9, 5, 1, 2, 3, 4, time.UTC)
+	batch := model.EventBatch{Events: []model.TraceEvent{
+		{Type: "measurement_terminated", Timestamp: source},
+		{Type: "measurement_stop", Timestamp: source},
+	}}
+	normalizeControllerEventTimes(&batch, received)
+	if !batch.Events[0].Timestamp.Equal(received) || batch.Events[0].Fields["sourceTimestamp"] != source.Format(time.RFC3339Nano) ||
+		batch.Events[0].Fields["timestampBasis"] != "controller-receipt-upper-bound-v1" {
+		t.Fatalf("termination timestamp was not normalized with provenance: %+v", batch.Events[0])
+	}
+	if !batch.Events[1].Timestamp.Equal(source) || batch.Events[1].Fields != nil {
+		t.Fatalf("Peer-owned lifecycle timestamp was rewritten: %+v", batch.Events[1])
+	}
+}

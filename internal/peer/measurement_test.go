@@ -78,6 +78,8 @@ func TestServerRunWaitsForFinalMeasurementDrain(t *testing.T) {
 	var received []model.TraceEvent
 	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/v1/health":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "time": time.Now().UTC()})
 		case "/api/v1/bootstrap":
 			_, _ = io.WriteString(w, "[]")
 		case "/api/v1/nodes/node/status":
@@ -220,6 +222,9 @@ func TestServerRunWaitsForFinalMeasurementDrain(t *testing.T) {
 	}
 	if topics, ok := start.Fields["subscribedTopics"].([]any); !ok || !reflect.DeepEqual(topics, []any{"topic-a"}) {
 		t.Fatalf("incorrect session subscriptions: %+v", start)
+	}
+	if start.Fields["clockBasis"] != controllerClockBasis {
+		t.Fatalf("measurement timestamps were not synchronized to the Controller: %+v", start.Fields)
 	}
 	if publish.MessageID == "" || publish.MessageID != deliver.MessageID || deliver.Sequence <= start.Sequence || publish.Sequence <= start.Sequence || checkpoint.Sequence <= deliver.Sequence || stop.Sequence <= checkpoint.Sequence {
 		t.Fatalf("missing ordered application measurement: %+v", received)

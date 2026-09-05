@@ -21,6 +21,7 @@ type publication struct {
 	pubsubID string
 	encoding string
 	sentAt   time.Time
+	clock    controllerClockReading
 }
 
 func (s *Server) publishTopics(requested string) ([]string, error) {
@@ -46,6 +47,10 @@ func (s *Server) publishTopics(requested string) ([]string, error) {
 }
 
 func (s *Server) preparePublication(request model.PublishRequest, now time.Time) (publication, error) {
+	return s.preparePublicationWithClock(request, controllerClockReading{timestamp: now})
+}
+
+func (s *Server) preparePublicationWithClock(request model.PublishRequest, reading controllerClockReading) (publication, error) {
 	encoding := request.PayloadEncoding
 	if encoding == "" {
 		encoding = "envelope"
@@ -60,16 +65,20 @@ func (s *Server) preparePublication(request model.PublishRequest, now time.Time)
 	if encoding == "raw" {
 		// No application header or base64 expansion: exactly payloadSize bytes
 		// are passed to Topic.Publish. Libp2p still adds its own framing/signature.
-		return publication{wire: payload, encoding: encoding, sentAt: now}, nil
+		return publication{wire: payload, encoding: encoding, sentAt: reading.timestamp, clock: reading}, nil
 	}
 	sequence := s.publishSeq.Add(1)
-	digest := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%d", s.config.Node.ID, now.UnixNano(), sequence)))
-	message := envelope{ID: hex.EncodeToString(digest[:16]), RunID: s.config.Node.RunID, Publisher: s.config.Node.ID, SentAt: now.UnixNano(), Payload: payload}
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%d", s.config.Node.ID, reading.timestamp.UnixNano(), sequence)))
+	message := envelope{ID: hex.EncodeToString(digest[:16]), RunID: s.config.Node.RunID, Publisher: s.config.Node.ID, SentAt: reading.timestamp.UnixNano(), Payload: payload}
+	if reading.synchronized {
+		message.ClockBasis = controllerClockBasis
+		message.ClockUncertaintyNS = int64(reading.uncertainty)
+	}
 	wire, err := json.Marshal(message)
 	if err != nil {
 		return publication{}, fmt.Errorf("encode message: %w", err)
 	}
-	return publication{wire: wire, id: message.ID, encoding: encoding, sentAt: now}, nil
+	return publication{wire: wire, id: message.ID, encoding: encoding, sentAt: reading.timestamp, clock: reading}, nil
 }
 
 // publicationBridge observes the ID assigned by PubSub without replacing its
@@ -152,20 +161,29 @@ func (s *Server) messageIdentity(message *pubsub.Message) (string, bool) {
 }
 
 func (s *Server) deliveryEvent(message *pubsub.Message, topic string, now time.Time) (model.TraceEvent, bool) {
+	return s.deliveryEventWithClock(message, topic, controllerClockReading{timestamp: now})
+}
+
+func (s *Server) deliveryEventWithClock(message *pubsub.Message, topic string, reading controllerClockReading) (model.TraceEvent, bool) {
 	if message == nil || message.Message == nil {
 		return model.TraceEvent{}, false
 	}
 	data := message.Data
 	wireID, local := s.messageIdentity(message)
-	event := model.TraceEvent{PeerID: s.host.ID().String(), Type: "deliver", Topic: topic, RemotePeerID: message.ReceivedFrom.String(), Timestamp: now}
+	event := model.TraceEvent{PeerID: s.host.ID().String(), Type: "deliver", Topic: topic, RemotePeerID: message.ReceivedFrom.String(), Timestamp: reading.timestamp}
 	var payload envelope
 	if json.Unmarshal(data, &payload) == nil && payload.ID != "" && payload.RunID != "" && payload.Publisher != "" && payload.SentAt > 0 {
 		if payload.RunID != s.config.Node.RunID {
 			return model.TraceEvent{}, false
 		}
 		event.MessageID = payload.ID
-		event.LatencyMS = float64(now.UnixNano()-payload.SentAt) / float64(time.Millisecond)
+		event.LatencyMS = float64(reading.timestamp.UnixNano()-payload.SentAt) / float64(time.Millisecond)
 		event.Fields = map[string]any{"publisher": payload.Publisher, "payloadBytes": len(payload.Payload), "wireBytes": len(data), "payloadEncoding": "envelope", "latencyAvailable": true, "localDelivery": local || payload.Publisher == s.config.Node.ID, "pubsubMessageId": wireID}
+		if reading.synchronized && payload.ClockBasis == controllerClockBasis &&
+			payload.ClockUncertaintyNS >= 0 && payload.ClockUncertaintyNS <= int64(5*time.Second) {
+			event.Fields["latencyClockSynchronized"] = true
+			event.Fields["latencyUncertaintyMs"] = float64(payload.ClockUncertaintyNS+int64(reading.uncertainty)) / float64(time.Millisecond)
+		}
 		if event.LatencyMS < 0 {
 			event.Fields["clockSkewDetected"] = true
 		}

@@ -35,6 +35,7 @@ type telemetry struct {
 	sealed             bool
 	shutdownTimeout    time.Duration
 	retryInterval      time.Duration
+	clock              atomic.Pointer[controllerClockSample]
 }
 
 const telemetryShutdownTimeout = 20 * time.Second
@@ -62,27 +63,124 @@ func (t *telemetry) emit(event model.TraceEvent) {
 	t.enqueueLocked(event, false)
 }
 
+func (t *telemetry) emitWithClock(event model.TraceEvent, reading controllerClockReading) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.sealed {
+		t.reportDropsLocked(false)
+	}
+	t.enqueueLockedWithClock(event, false, reading)
+}
+
 // Receipt timestamps are created inside the same critical section as a
 // checkpoint. A checkpoint therefore never certifies a delivery whose earlier
 // receipt timestamp has been assigned but whose event is still awaiting enqueue.
-func (t *telemetry) emitObserved(build func(time.Time) (model.TraceEvent, bool)) {
+func (t *telemetry) emitObserved(build func(controllerClockReading) (model.TraceEvent, bool)) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if event, ok := build(t.observationTimeLocked()); ok {
+	reading := t.observationClockLocked()
+	if event, ok := build(reading); ok {
 		if !t.sealed {
 			t.reportDropsLocked(false)
 		}
-		t.enqueueLocked(event, false)
+		t.enqueueLockedWithClock(event, false, reading)
 	}
 }
 
-func (t *telemetry) observationTimeLocked() time.Time {
-	now := time.Now().UTC()
-	if !now.After(t.observedAt) {
-		now = t.observedAt.Add(time.Nanosecond)
+func (t *telemetry) observationClockLocked() controllerClockReading {
+	reading := t.clockReading()
+	if !reading.timestamp.After(t.observedAt) {
+		reading.timestamp = t.observedAt.Add(time.Nanosecond)
 	}
-	t.observedAt = now
-	return now
+	t.observedAt = reading.timestamp
+	return reading
+}
+
+func (t *telemetry) now() time.Time {
+	return t.clockReading().timestamp
+}
+
+func (t *telemetry) adjustTimestamp(value time.Time) time.Time {
+	if value.IsZero() {
+		return value
+	}
+	reading := t.clockReading()
+	if reading.offset == 0 {
+		return value.UTC()
+	}
+	return value.UTC().Add(reading.offset)
+}
+
+func (t *telemetry) synchronizeClock(ctx context.Context, controllerURL string) error {
+	estimate, err := estimateControllerClock(ctx, controllerURL, t.client)
+	if err != nil {
+		return err
+	}
+	t.acceptClockEstimate(estimate, time.Now())
+	return nil
+}
+
+func (t *telemetry) clockSnapshot() (offset, uncertainty time.Duration, synchronized bool) {
+	reading := t.clockReading()
+	return reading.offset, reading.uncertainty, reading.synchronized
+}
+
+func (t *telemetry) clockSnapshotAt(now time.Time) (offset, uncertainty time.Duration, synchronized bool) {
+	reading := t.clockReadingAt(now)
+	return reading.offset, reading.uncertainty, reading.synchronized
+}
+
+func (t *telemetry) clockReading() controllerClockReading {
+	return t.clockReadingAt(time.Now())
+}
+
+func (t *telemetry) clockReadingAt(now time.Time) controllerClockReading {
+	reading := controllerClockReading{timestamp: now.UTC()}
+	sample := t.clock.Load()
+	if sample == nil {
+		return reading
+	}
+	reading.offset = sample.offset
+	reading.uncertainty = sample.uncertainty
+	// Retain the last offset for timestamp continuity, but stop asserting that
+	// it is synchronized once its age is outside the bounded validity window.
+	reading.timestamp = reading.timestamp.Add(sample.offset)
+	age := now.Sub(sample.sampledAt)
+	reading.synchronized = age >= 0 && age <= controllerClockMaxAge
+	return reading
+}
+
+func (t *telemetry) acceptClockEstimate(estimate controllerClockEstimate, sampledAt time.Time) {
+	t.clock.Store(&controllerClockSample{offset: estimate.offset, uncertainty: estimate.uncertainty, sampledAt: sampledAt})
+}
+
+type clockSynchronizer func(context.Context, string) error
+
+func (t *telemetry) clockSyncLoop(ctx context.Context, controllerURL string) {
+	t.clockSyncLoopWithIntervals(ctx, controllerURL, controllerClockUnsyncedInterval, controllerClockResyncInterval, t.synchronizeClock)
+}
+
+func (t *telemetry) clockSyncLoopWithIntervals(ctx context.Context, controllerURL string, unsyncedInterval, syncedInterval time.Duration, synchronize clockSynchronizer) {
+	for {
+		_, _, synchronized := t.clockSnapshot()
+		interval := unsyncedInterval
+		if synchronized {
+			interval = syncedInterval
+		}
+		if interval <= 0 {
+			interval = time.Nanosecond
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		if err := synchronize(ctx, controllerURL); err != nil && ctx.Err() == nil && t.logger != nil {
+			t.logger.Warn("synchronize peer clock", "error", err)
+		}
+	}
 }
 
 // Leave two slots for the final drop notice and stop checkpoint when the
@@ -96,7 +194,11 @@ func (t *telemetry) queueLimit(priority bool) int {
 }
 
 func (t *telemetry) enqueueLocked(event model.TraceEvent, priority bool) {
-	event = t.identifyLocked(event)
+	t.enqueueLockedWithClock(event, priority, t.clockReading())
+}
+
+func (t *telemetry) enqueueLockedWithClock(event model.TraceEvent, priority bool, reading controllerClockReading) {
+	event = t.identifyLockedWithClock(event, reading)
 	if t.sealed || (cap(t.events) > 0 && len(t.events) >= t.queueLimit(priority)) {
 		t.dropped.Add(1)
 		return
@@ -109,6 +211,10 @@ func (t *telemetry) enqueueLocked(event model.TraceEvent, priority bool) {
 }
 
 func (t *telemetry) identifyLocked(event model.TraceEvent) model.TraceEvent {
+	return t.identifyLockedWithClock(event, t.clockReading())
+}
+
+func (t *telemetry) identifyLockedWithClock(event model.TraceEvent, reading controllerClockReading) model.TraceEvent {
 	if t.sessionID == "" {
 		t.sessionID = rand.Text()
 	}
@@ -122,7 +228,17 @@ func (t *telemetry) identifyLocked(event model.TraceEvent) model.TraceEvent {
 		event.EventID = rand.Text()
 	}
 	if event.Timestamp.IsZero() {
-		event.Timestamp = time.Now().UTC()
+		event.Timestamp = reading.timestamp
+	}
+	if reading.synchronized &&
+		(event.Type == "measurement_start" || event.Type == "measurement_checkpoint" || event.Type == "measurement_stop" ||
+			event.Type == "publish" || event.Type == "deliver" || event.Type == "duplicate") {
+		if event.Fields == nil {
+			event.Fields = make(map[string]any)
+		}
+		event.Fields["clockBasis"] = controllerClockBasis
+		event.Fields["clockOffsetMs"] = float64(reading.offset) / float64(time.Millisecond)
+		event.Fields["clockUncertaintyMs"] = float64(reading.uncertainty) / float64(time.Millisecond)
 	}
 	return event
 }
@@ -146,7 +262,8 @@ func (t *telemetry) startMeasurement(topics []string) bool {
 	t.measurementStarted = true
 	t.measurementDone = make(chan struct{})
 	t.reportDropsLocked(false)
-	t.enqueueLocked(model.TraceEvent{Type: "measurement_start", Timestamp: t.observationTimeLocked(), Fields: map[string]any{"subscribedTopics": append([]string{}, topics...)}}, false)
+	reading := t.observationClockLocked()
+	t.enqueueLockedWithClock(model.TraceEvent{Type: "measurement_start", Timestamp: reading.timestamp, Fields: map[string]any{"subscribedTopics": append([]string{}, topics...)}}, false, reading)
 	return true
 }
 
@@ -155,7 +272,8 @@ func (t *telemetry) checkpoint() {
 	defer t.mu.Unlock()
 	if t.measurementStarted && !t.measurementStopped {
 		t.reportDropsLocked(false)
-		t.enqueueLocked(model.TraceEvent{Type: "measurement_checkpoint", Timestamp: t.observationTimeLocked()}, false)
+		reading := t.observationClockLocked()
+		t.enqueueLockedWithClock(model.TraceEvent{Type: "measurement_checkpoint", Timestamp: reading.timestamp}, false, reading)
 	}
 }
 
@@ -168,7 +286,8 @@ func (t *telemetry) stopMeasurement() {
 	t.measurementStopped = true
 	if t.measurementStarted {
 		t.reportDropsLocked(true)
-		t.enqueueLocked(model.TraceEvent{Type: "measurement_stop", Timestamp: t.observationTimeLocked()}, true)
+		reading := t.observationClockLocked()
+		t.enqueueLockedWithClock(model.TraceEvent{Type: "measurement_stop", Timestamp: reading.timestamp}, true, reading)
 		close(t.measurementDone)
 	}
 }

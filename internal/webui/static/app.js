@@ -187,6 +187,7 @@ function ratioRange(available, lower, upper, unknown) {
 function deliveryMetricView(metrics) {
   const windowed = metrics.definition === "session-window-v1";
   const n = (key) => formatNumber(metrics[key]);
+  const coverageUpper = Number.isFinite(Number(metrics.stableCoverageUpperBound)) ? metrics.stableCoverageUpperBound : metrics.stableCoverage;
   return {
     windowed,
     label: windowed ? "Continuous-session delivery" : "Legacy dispatch delivery",
@@ -195,12 +196,12 @@ function deliveryMetricView(metrics) {
     progress: windowed ? `Windows: ${(metrics.deliveryWindows || []).join(", ") || "Awaiting publication"} · Mature: ${n("finalizedPublications")} · Pending: ${n("pendingPublications")}` : "Historical definition · No fixed deadline",
     initial: ratioRange(metrics.initialDeliveryRatioAvailable, metrics.initialDeliveryRatio, metrics.initialDeliveryRatioUpperBound, metrics.initialUnknownDeliveries),
     initialDetail: `On time: ${n("initialEligibleDeliveries")} / ${n("initialExpectedDeliveries")} known starting pairs`,
-    coverage: metrics.stableCoverageAvailable ? `${formatNumber(metrics.stableCoverage * 100, 1)}%` : "N/A",
-    coverageDetail: `Stable: ${n("expectedDeliveries")} · Departed before deadline: ${n("departedPairs")}`,
-    observation: `${n("unknownDeliveries")} receipt unknown · ${n("availabilityUnknownPairs")} availability unknown`,
+    coverage: ratioRange(metrics.stableCoverageAvailable, metrics.stableCoverage, coverageUpper, metrics.continuityUnknownPairs),
+    coverageDetail: `Stable: ${n("expectedDeliveries")} / ${n("initialExpectedDeliveries")} known starting pairs · Departed: ${n("departedPairs")}`,
+    observation: `${n("unknownDeliveries")} receipt unknown · ${n("continuityUnknownPairs")} continuity unknown · ${n("publicationAvailabilityUnknownPairs")} start unknown`,
     outcomes: `Known missed: ${n("missedDeliveries")} · Observed late: ${n("lateDeliveries")}`,
     note: windowed
-      ? `Each publication uses its configured deliveryWindow. Only mature publications and sessions subscribed throughout that window enter the main ratio. Ranges represent missing receipt evidence, not confidence intervals.${metrics.availabilityUnknownPairs > 0 || metrics.measurementIncomplete ? " Membership evidence is incomplete: the main ratio covers proven continuous sessions only; overall delivery and coverage are N/A." : ""}${metrics.legacyPublications > 0 || metrics.unscopedPublications > 0 ? " Publications without the required measurement evidence are excluded." : ""}`
+      ? `Each publication uses its configured deliveryWindow. Only mature publications and sessions subscribed throughout that window enter the main ratio. Ranges are logical bounds from missing evidence, not confidence intervals. Starting delivery and coverage are conditional on the known starting cohort.${metrics.publicationAvailabilityUnknownPairs > 0 || metrics.measurementIncomplete ? " Some candidate starting sessions remain outside that cohort because their publication-time availability could not be proved; see observation quality." : ""}${metrics.legacyPublications > 0 || metrics.unscopedPublications > 0 ? " Publications without the required measurement evidence are excluded." : ""}`
       : "Historical dispatch cohorts have no fixed receipt deadline or session continuity evidence. New runs use continuous-session measurement.",
   };
 }

@@ -187,7 +187,13 @@ func (w *sessionWindowAccumulator) observe(event model.TraceEvent) {
 	}
 	encoding, _ := event.Fields["payloadEncoding"].(string)
 	available, _ := event.Fields["latencyAvailable"].(bool)
-	receipts.deliveries = append(receipts.deliveries, windowDelivery{proof, deliveryMetric{event.Timestamp, event.AgentID, event.LatencyMS, encoding == "envelope" && available}})
+	clockSynchronized, _ := event.Fields["latencyClockSynchronized"].(bool)
+	latencyUncertaintyMS, _ := numericEventField(event.Fields, "latencyUncertaintyMs")
+	receipts.deliveries = append(receipts.deliveries, windowDelivery{proof: proof, value: deliveryMetric{
+		timestamp: event.Timestamp, agentID: event.AgentID, latencyMS: event.LatencyMS,
+		latencyAvailable: encoding == "envelope" && available, clockSynchronized: clockSynchronized,
+		latencyUncertaintyMS: latencyUncertaintyMS,
+	}})
 }
 
 type evaluatedSession struct {
@@ -325,6 +331,7 @@ func (w *sessionWindowAccumulator) summarize(runID string, asOf time.Time, publi
 					continue
 				}
 				if session.aliveThrough.Before(publication.at) {
+					result.PublicationAvailabilityUnknownPairs++
 					result.AvailabilityUnknownPairs++
 					continue
 				}
@@ -342,6 +349,7 @@ func (w *sessionWindowAccumulator) summarize(runID string, asOf time.Time, publi
 					continue
 				}
 				if !stable {
+					result.ContinuityUnknownPairs++
 					result.AvailabilityUnknownPairs++
 					continue
 				}
@@ -363,9 +371,11 @@ func (w *sessionWindowAccumulator) summarize(runID string, asOf time.Time, publi
 				result.EligibleDeliveries++
 				result.EligibleDuplicates += receipt.duplicates
 				value := receipt.ontime.value
-				if value.latencyAvailable {
+				if value.latencyAvailable && value.latencyMS >= 0 && !math.IsNaN(value.latencyMS) && !math.IsInf(value.latencyMS, 0) {
 					latencies = append(latencies, value.latencyMS)
 					samples = append(samples, propagationSample{propagationSeriesKey{value.agentID, publication.key.topic}, value.latencyMS / 1000})
+				} else if value.latencyAvailable {
+					result.InvalidLatencySamples++
 				}
 			}
 		}
@@ -375,12 +385,13 @@ func (w *sessionWindowAccumulator) summarize(runID string, asOf time.Time, publi
 		result.Reachability = float64(result.EligibleDeliveries) / float64(result.ExpectedDeliveries)
 		result.DeliveryRatioUpperBound = float64(result.EligibleDeliveries+result.UnknownDeliveries) / float64(result.ExpectedDeliveries)
 	}
-	result.InitialDeliveryRatioAvailable = result.InitialExpectedDeliveries > 0 && result.AvailabilityUnknownPairs == 0 && !result.MeasurementIncomplete
-	result.StableCoverageAvailable = result.InitialDeliveryRatioAvailable
+	result.InitialDeliveryRatioAvailable = result.InitialExpectedDeliveries > 0
+	result.StableCoverageAvailable = result.InitialExpectedDeliveries > 0
 	if result.InitialExpectedDeliveries > 0 {
 		result.InitialDeliveryRatio = float64(result.InitialEligibleDeliveries) / float64(result.InitialExpectedDeliveries)
 		result.InitialDeliveryRatioUpperBound = float64(result.InitialEligibleDeliveries+result.InitialUnknownDeliveries) / float64(result.InitialExpectedDeliveries)
 		result.StableCoverage = float64(result.ExpectedDeliveries) / float64(result.InitialExpectedDeliveries)
+		result.StableCoverageUpperBound = float64(result.ExpectedDeliveries+result.ContinuityUnknownPairs) / float64(result.InitialExpectedDeliveries)
 	}
 	result.DuplicateSamples = result.EligibleDeliveries
 	if result.DuplicateSamples > 0 {
@@ -423,14 +434,35 @@ func inspectWindowReceipts(receipts *windowReceipts, publication windowPublicati
 	for i := range receipts.deliveries {
 		delivery := &receipts.deliveries[i]
 		at, value := delivery.proof.at, delivery.value
-		if at.Before(publication.at) || at.Before(session.start.at) || delivery.proof.sequence < session.start.sequence ||
+		clockBounded := value.clockSynchronized && value.latencyAvailable && value.latencyUncertaintyMS >= 0 &&
+			!math.IsNaN(value.latencyMS) && !math.IsInf(value.latencyMS, 0) &&
+			!math.IsNaN(value.latencyUncertaintyMS) && !math.IsInf(value.latencyUncertaintyMS, 0)
+		if (!clockBounded && at.Before(publication.at)) || at.Before(session.start.at) || delivery.proof.sequence < session.start.sequence ||
 			(evaluated.end != nil && at.After(*evaluated.end)) ||
-			(session.stop != nil && (at.After(session.stop.at) || delivery.proof.sequence > session.stop.sequence)) ||
-			(value.latencyAvailable && (value.latencyMS < 0 || math.IsNaN(value.latencyMS) || math.IsInf(value.latencyMS, 0))) {
+			(session.stop != nil && (at.After(session.stop.at) || delivery.proof.sequence > session.stop.sequence)) {
 			result.invalid = true
 			continue
 		}
-		if at.After(publication.deadline) {
+		if clockBounded {
+			upper := value.latencyMS + value.latencyUncertaintyMS
+			lower := value.latencyMS - value.latencyUncertaintyMS
+			windowMS := float64(publication.deadline.Sub(publication.at)) / float64(time.Millisecond)
+			if upper < 0 {
+				result.invalid = true
+				continue
+			}
+			if upper > windowMS {
+				if lower > windowMS {
+					result.late = true
+				} else {
+					result.invalid = true
+				}
+				continue
+			}
+		} else if value.latencyAvailable && (value.latencyMS < 0 || math.IsNaN(value.latencyMS) || math.IsInf(value.latencyMS, 0)) {
+			result.invalid = true
+			continue
+		} else if at.After(publication.deadline) {
 			result.late = true
 			continue
 		}

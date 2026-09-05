@@ -10,6 +10,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -97,6 +98,7 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 	mux.HandleFunc("/api/v1/nodes", s.handleNodes)
 	mux.HandleFunc("/api/v1/network", s.handleNetwork)
 	mux.HandleFunc("/api/v1/bootstrap", s.handleBootstrap)
+	mux.HandleFunc("/api/v1/discovery", s.handleDiscovery)
 	mux.HandleFunc("/api/v1/events", s.handleEvents)
 	mux.HandleFunc("/api/v1/events/batch", s.handleEventBatch)
 	mux.HandleFunc("/api/v1/experiments", s.handleExperiments(ctx))
@@ -233,6 +235,55 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+// handleDiscovery exposes configured topic membership rather than observed
+// graph outcomes. Peers use it only to discover transports; GossipSub still
+// decides which connected topic peers enter its mesh.
+func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	runID := strings.TrimSpace(r.URL.Query().Get("runId"))
+	topic := strings.TrimSpace(r.URL.Query().Get("topic"))
+	requesterNodeID := strings.TrimSpace(r.URL.Query().Get("requesterNodeId"))
+	if runID == "" || topic == "" || requesterNodeID == "" {
+		writeError(w, http.StatusBadRequest, "runId, topic, and requesterNodeId query parameters are required")
+		return
+	}
+	type discoveryNode struct {
+		NodeID     string   `json:"nodeId"`
+		PeerID     string   `json:"peerId"`
+		Addresses  []string `json:"addresses"`
+		Subscribed bool     `json:"subscribed"`
+	}
+	result := make([]discoveryNode, 0)
+	now := time.Now().UTC()
+	s.state.mu.RLock()
+	for _, node := range s.state.nodes {
+		if node.ID == requesterNodeID || node.RunID != runID || node.State != model.NodeReady ||
+			node.PeerID == "" || len(node.Addresses) == 0 ||
+			!agentIsOnline(s.state.agents[node.AgentID], now) ||
+			!nodeFeatureEnabled(node, "pubsubEnabled", node.Type != "boot" && node.Type != "dht-only") ||
+			!nodeHasTopic(node, topic) {
+			continue
+		}
+		result = append(result, discoveryNode{
+			NodeID:     node.ID,
+			PeerID:     node.PeerID,
+			Addresses:  append([]string(nil), node.Addresses...),
+			Subscribed: nodeSubscribesToTopic(node, topic),
+		})
+	}
+	s.state.mu.RUnlock()
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Subscribed != result[j].Subscribed {
+			return result[i].Subscribed
+		}
+		return result[i].NodeID < result[j].NodeID
+	})
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w)
@@ -255,11 +306,32 @@ func (s *Server) handleEventBatch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, "event batch cannot exceed 5000 events")
 		return
 	}
+	normalizeControllerEventTimes(&batch, time.Now().UTC())
 	if err := s.state.appendEvents(batch); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// An Agent emits measurement_terminated only after it has observed process or
+// container exit. Controller receipt is therefore a conservative, comparable
+// upper bound even when Agent host clocks differ.
+func normalizeControllerEventTimes(batch *model.EventBatch, observedAt time.Time) {
+	for index := range batch.Events {
+		event := &batch.Events[index]
+		if event.Type != "measurement_terminated" {
+			continue
+		}
+		if event.Fields == nil {
+			event.Fields = make(map[string]any)
+		}
+		if !event.Timestamp.IsZero() {
+			event.Fields["sourceTimestamp"] = event.Timestamp.UTC().Format(time.RFC3339Nano)
+		}
+		event.Fields["timestampBasis"] = "controller-receipt-upper-bound-v1"
+		event.Timestamp = observedAt
+	}
 }
 
 func (s *Server) handleExperiments(ctx context.Context) http.HandlerFunc {

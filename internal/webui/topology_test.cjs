@@ -20,16 +20,19 @@ const peer = (id, agentId = 'a', state = 'ready') => ({ id, agentId, state });
 
 test('delivery display distinguishes conditional reach, missing observations, pending and legacy', () => {
   const api = context();
-  const metrics = {definition:'session-window-v1',deliveryRatioAvailable:true,reachability:0.7,deliveryRatioUpperBound:0.9,unknownDeliveries:2,expectedDeliveries:10,eligibleDeliveries:7,pendingPublications:3,finalizedPublications:8,initialDeliveryRatioAvailable:false,stableCoverageAvailable:false,availabilityUnknownPairs:1};
+  const metrics = {definition:'session-window-v1',deliveryRatioAvailable:true,reachability:0.7,deliveryRatioUpperBound:0.9,unknownDeliveries:2,expectedDeliveries:7,eligibleDeliveries:5,pendingPublications:3,finalizedPublications:8,initialDeliveryRatioAvailable:true,initialDeliveryRatio:0.6,initialDeliveryRatioUpperBound:0.8,initialUnknownDeliveries:2,initialExpectedDeliveries:10,stableCoverageAvailable:true,stableCoverage:0.7,stableCoverageUpperBound:0.8,departedPairs:2,continuityUnknownPairs:1,publicationAvailabilityUnknownPairs:3,availabilityUnknownPairs:4};
   let view = api.deliveryMetricView(metrics);
   assert.equal(view.primary, '70%–90%');
-  assert.equal(view.initial, 'N/A');
-  assert.equal(view.coverage, 'N/A');
+  assert.equal(view.initial, '60%–80%');
+  assert.equal(view.coverage, '70%–80%');
   assert.match(view.progress, /Pending: 3/);
-  assert.match(view.note, /proven continuous sessions only/);
-  assert.match(view.observation, /2 receipt unknown · 1 availability unknown/);
+  assert.match(view.note, /conditional on the known starting cohort/);
+  assert.match(view.observation, /2 receipt unknown · 1 continuity unknown · 3 start unknown/);
   view = api.deliveryMetricView({...metrics, deliveryRatioAvailable:false});
   assert.equal(view.primary, 'N/A');
+  view = api.deliveryMetricView({...metrics, initialDeliveryRatioAvailable:false, stableCoverageAvailable:false});
+  assert.equal(view.initial, 'N/A');
+  assert.equal(view.coverage, 'N/A');
   view = api.deliveryMetricView({definition:'dispatch-cohort-v1',deliveryRatioAvailable:true,reachability:0.6});
   assert.equal(view.primary,'60%');
   assert.equal(view.windowed,false);

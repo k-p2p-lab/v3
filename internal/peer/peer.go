@@ -30,37 +30,42 @@ import (
 )
 
 type Server struct {
-	config     model.PeerProcessConfig
-	host       host.Host
-	dht        *dht.IpfsDHT
-	pubsub     *pubsub.PubSub
-	topics     map[string]*pubsub.Topic
-	subs       []*pubsub.Subscription
-	relays     []pubsub.RelayCancelFunc
-	scoreMu    sync.RWMutex
-	peerScores map[string]float64
-	telemetry  *telemetry
-	logger     *slog.Logger
-	startedAt  time.Time
-	publishSeq atomic.Uint64
-	publishMu  sync.Mutex
-	publishing publicationBridge
-	mesh       meshTracker
-	closeOnce  sync.Once
+	config            model.PeerProcessConfig
+	host              host.Host
+	dht               *dht.IpfsDHT
+	pubsub            *pubsub.PubSub
+	topics            map[string]*pubsub.Topic
+	subs              []*pubsub.Subscription
+	relays            []pubsub.RelayCancelFunc
+	scoreMu           sync.RWMutex
+	peerScores        map[string]float64
+	telemetry         *telemetry
+	logger            *slog.Logger
+	startedAt         time.Time
+	publishSeq        atomic.Uint64
+	publishMu         sync.Mutex
+	publishing        publicationBridge
+	mesh              meshTracker
+	discoveryMu       sync.Mutex
+	discoveryFailures map[peer.ID]time.Time
+	closeOnce         sync.Once
 }
 
 type envelope struct {
-	ID        string `json:"id"`
-	RunID     string `json:"runId"`
-	Publisher string `json:"publisher"`
-	SentAt    int64  `json:"sentAt"`
-	Payload   []byte `json:"payload"`
+	ID                 string `json:"id"`
+	RunID              string `json:"runId"`
+	Publisher          string `json:"publisher"`
+	SentAt             int64  `json:"sentAt"`
+	ClockBasis         string `json:"clockBasis,omitempty"`
+	ClockUncertaintyNS int64  `json:"clockUncertaintyNs,omitempty"`
+	Payload            []byte `json:"payload"`
 }
 
 type bootstrapNode struct {
-	NodeID    string   `json:"nodeId"`
-	PeerID    string   `json:"peerId"`
-	Addresses []string `json:"addresses"`
+	NodeID     string   `json:"nodeId"`
+	PeerID     string   `json:"peerId"`
+	Addresses  []string `json:"addresses"`
+	Subscribed bool     `json:"subscribed,omitempty"`
 }
 
 func Run(ctx context.Context, configPath string, logger *slog.Logger) error {
@@ -173,6 +178,13 @@ func (s *Server) Run(parentCtx context.Context) (runErr error) {
 		stopTelemetry()
 		runErr = errors.Join(runErr, <-telemetryDone)
 	}()
+	if err := s.telemetry.synchronizeClock(ctx, s.config.ControllerURL); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		s.logger.Warn("start peer without synchronized clock", "error", err)
+	}
+	go s.telemetry.clockSyncLoop(ctx, s.config.ControllerURL)
 	if err := s.connectBootstrap(ctx); err != nil {
 		return err
 	}
@@ -295,6 +307,9 @@ func (s *Server) startPubSub(ctx context.Context) error {
 	for i, topicName := range subscribedTopics {
 		go s.consume(ctx, topicName, s.subs[i])
 	}
+	if strings.TrimSpace(s.config.ControllerURL) != "" {
+		go s.discoveryLoop(ctx)
+	}
 	return nil
 }
 
@@ -366,7 +381,7 @@ func (s *Server) handlePublish(w http.ResponseWriter, r *http.Request) {
 		// Start the application clock after acquiring the publication gate.
 		// Queueing behind another HTTP publish is not propagation latency.
 		s.publishMu.Lock()
-		message, err := s.preparePublication(request, time.Now().UTC())
+		message, err := s.preparePublicationWithClock(request, s.telemetry.clockReading())
 		if err != nil {
 			s.publishMu.Unlock()
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -396,7 +411,7 @@ func (s *Server) handlePublish(w http.ResponseWriter, r *http.Request) {
 		if !request.CohortCapturedAt.IsZero() {
 			fields["cohortCapturedAt"] = request.CohortCapturedAt.UTC().Format(time.RFC3339Nano)
 		}
-		s.telemetry.emit(model.TraceEvent{PeerID: s.host.ID().String(), Type: "publish", MessageID: message.id, Topic: topicName, Timestamp: message.sentAt, Fields: fields})
+		s.telemetry.emitWithClock(model.TraceEvent{PeerID: s.host.ID().String(), Type: "publish", MessageID: message.id, Topic: topicName, Timestamp: message.sentAt, Fields: fields}, message.clock)
 		results = append(results, map[string]any{"messageId": message.id, "topic": topicName, "payloadBytes": request.PayloadSize, "wireBytes": len(message.wire), "payloadEncoding": message.encoding})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -415,8 +430,8 @@ func (s *Server) consume(ctx context.Context, topic string, sub *pubsub.Subscrip
 			s.telemetry.stopMeasurement()
 			return
 		}
-		s.telemetry.emitObserved(func(now time.Time) (model.TraceEvent, bool) {
-			return s.deliveryEvent(message, topic, now)
+		s.telemetry.emitObserved(func(reading controllerClockReading) (model.TraceEvent, bool) {
+			return s.deliveryEventWithClock(message, topic, reading)
 		})
 	}
 }

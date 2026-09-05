@@ -14,10 +14,12 @@ import (
 
 type messageMetricKey struct{ topic, id string }
 type deliveryMetric struct {
-	timestamp        time.Time
-	agentID          string
-	latencyMS        float64
-	latencyAvailable bool
+	timestamp            time.Time
+	agentID              string
+	latencyMS            float64
+	latencyAvailable     bool
+	clockSynchronized    bool
+	latencyUncertaintyMS float64
 }
 type messageMetric struct {
 	published  bool
@@ -112,9 +114,12 @@ func (a *runMetricAccumulator) observe(event model.TraceEvent) bool {
 		}
 		encoding, _ := event.Fields["payloadEncoding"].(string)
 		available, _ := event.Fields["latencyAvailable"].(bool)
+		clockSynchronized, _ := event.Fields["latencyClockSynchronized"].(bool)
+		latencyUncertaintyMS, _ := numericEventField(event.Fields, "latencyUncertaintyMs")
 		message.deliveries[event.NodeID] = deliveryMetric{
 			timestamp: event.Timestamp, agentID: event.AgentID, latencyMS: event.LatencyMS,
-			latencyAvailable: encoding == "envelope" && available,
+			latencyAvailable: encoding == "envelope" && available, clockSynchronized: clockSynchronized,
+			latencyUncertaintyMS: latencyUncertaintyMS,
 		}
 	case "duplicate":
 		a.duplicates++
@@ -123,6 +128,28 @@ func (a *runMetricAccumulator) observe(event model.TraceEvent) bool {
 		}
 	}
 	return true
+}
+
+func numericEventField(fields map[string]any, key string) (float64, bool) {
+	value, exists := fields[key]
+	if !exists {
+		return 0, false
+	}
+	switch value := value.(type) {
+	case float64:
+		return value, true
+	case float32:
+		return float64(value), true
+	case int:
+		return float64(value), true
+	case int64:
+		return float64(value), true
+	case json.Number:
+		parsed, err := value.Float64()
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func targetNodeIDs(value any) ([]string, bool) {
