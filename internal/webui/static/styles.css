@@ -56,16 +56,13 @@ button:disabled { cursor: not-allowed; opacity: 0.65; }
 
 .brand-block { gap: 0.85rem; }
 .brand-mark {
-  display: grid;
+  display: block;
+  flex: 0 0 auto;
   width: 2.65rem;
-  aspect-ratio: 1;
-  place-items: center;
+  height: 2.65rem;
   border: 1px solid rgba(57, 214, 208, 0.48);
   border-radius: 0.65rem;
-  color: var(--cyan);
-  background: rgba(57, 214, 208, 0.08);
-  font-weight: 800;
-  letter-spacing: -0.04em;
+  object-fit: cover;
 }
 
 h1, h2, p { margin: 0; }

@@ -1,6 +1,8 @@
 package webui
 
 import (
+	"bytes"
+	"image/jpeg"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -11,6 +13,51 @@ import (
 	"github.com/k-p2p-lab/v3/internal/scenario"
 	"golang.org/x/net/html"
 )
+
+func TestBrandLogoIsEmbeddedAndReferenced(t *testing.T) {
+	asset, err := fs.ReadFile(FS(), "kpl-logo.jpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := jpeg.DecodeConfig(bytes.NewReader(asset))
+	if err != nil || config.Width < 128 || config.Height < 128 {
+		t.Fatalf("embedded logo is not a usable JPEG: %dx%d, %v", config.Width, config.Height, err)
+	}
+	content, err := fs.ReadFile(FS(), "index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := html.Parse(strings.NewReader(string(content)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logos []*html.Node
+	var visit func(*html.Node)
+	visit = func(node *html.Node) {
+		if node.Type == html.ElementNode && node.Data == "img" {
+			for _, attribute := range node.Attr {
+				if attribute.Key == "class" && attribute.Val == "brand-mark" {
+					logos = append(logos, node)
+				}
+			}
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			visit(child)
+		}
+	}
+	visit(document)
+	if len(logos) != 1 {
+		t.Fatalf("expected exactly one brand logo, got %d", len(logos))
+	}
+	attributes := make(map[string]string)
+	present := make(map[string]bool)
+	for _, attribute := range logos[0].Attr {
+		attributes[attribute.Key], present[attribute.Key] = attribute.Val, true
+	}
+	if attributes["src"] != "/kpl-logo.jpg" || !present["alt"] || attributes["alt"] != "" || attributes["width"] != "42" || attributes["height"] != "42" {
+		t.Fatalf("brand logo markup is incomplete: %#v", attributes)
+	}
+}
 
 func TestDefaultScenarioMatchesSmokeExample(t *testing.T) {
 	script, err := fs.ReadFile(FS(), "app.js")
