@@ -10,11 +10,19 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
 
-const resultMetadataLimit = 1 << 20
+const (
+	resultMetadataLimit        = 1 << 20
+	resultArchiveCacheTTL      = 5 * time.Second
+	resultArchiveMeasureLimit  = 2
+	resultArchiveResponseGrace = time.Second
+	resultExportTimeLayout     = "2006-01-02T15:04:05.000000000Z"
+	resultSizeMaxAgeHeader     = "X-KPL-Result-Size-Max-Age-Ms"
+)
 
 var (
 	errResultNotFound = errors.New("saved result not found")
@@ -22,22 +30,53 @@ var (
 )
 
 type savedResult struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	State       string    `json:"state"`
-	StartedAt   time.Time `json:"startedAt"`
-	FinishedAt  time.Time `json:"finishedAt"`
-	Active      bool      `json:"active"`
-	BatchID     string    `json:"batchId,omitempty"`
-	Iteration   int       `json:"iteration,omitempty"`
-	Repetitions int       `json:"repetitions,omitempty"`
-	storedState string
+	ID                     string    `json:"id"`
+	Name                   string    `json:"name"`
+	State                  string    `json:"state"`
+	StartedAt              time.Time `json:"startedAt"`
+	FinishedAt             time.Time `json:"finishedAt"`
+	Active                 bool      `json:"active"`
+	BatchID                string    `json:"batchId,omitempty"`
+	Iteration              int       `json:"iteration,omitempty"`
+	Repetitions            int       `json:"repetitions,omitempty"`
+	DownloadBytes          *int64    `json:"downloadBytes,omitempty"`
+	DownloadSizeMaxAgeMS   *int64    `json:"downloadSizeMaxAgeMs,omitempty"`
+	storedState            string
+	downloadArchiveVersion resultArchiveVersion
+	downloadSizePending    bool
 }
 
 type resultFile struct {
 	name string
 	file *os.File
 	size int64
+	info os.FileInfo
+}
+
+type resultArchiveVersion struct {
+	files       []resultFileVersion
+	active      bool
+	state       string
+	storedState string
+}
+
+type resultFileVersion struct {
+	name string
+	size int64
+	info os.FileInfo
+}
+
+type resultArchiveInfo struct {
+	version             resultArchiveVersion
+	bytes               int64
+	pendingPublications int
+	exportedAt          time.Time
+	expiresAt           time.Time
+	listGraceExtended   bool
+}
+
+type resultArchiveFlight struct {
+	done chan struct{}
 }
 
 type resultSnapshot struct {
@@ -115,7 +154,7 @@ func openResultFile(root *os.Root, name string) (resultFile, error) {
 		_ = file.Close()
 		return result, fmt.Errorf("result file changed while opening %s", name)
 	}
-	result.file, result.size = file, opened.Size()
+	result.file, result.size, result.info = file, opened.Size(), opened
 	return result, nil
 }
 
@@ -329,6 +368,9 @@ func (s *Server) deleteSavedResult(id string) error {
 	s.state.events = events
 	s.state.mu.Unlock()
 	s.state.notify()
+	s.resultArchiveMu.Lock()
+	delete(s.resultArchives, id)
+	s.resultArchiveMu.Unlock()
 	return nil
 }
 
@@ -358,6 +400,9 @@ func (s *Server) handleResults(w http.ResponseWriter, r *http.Request) {
 	for {
 		entries, readErr := directory.ReadDir(100)
 		for _, entry := range entries {
+			if r.Context().Err() != nil {
+				return
+			}
 			if !validResultID(entry.Name()) || !entry.IsDir() {
 				s.logger.Warn("skip unsafe saved result entry", "entry", entry.Name())
 				continue
@@ -370,6 +415,20 @@ func (s *Server) handleResults(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				s.logger.Warn("read saved result metadata", "run", id, "error", err)
 				result = savedResult{ID: id, Name: id, State: "unreadable"}
+			} else if !result.Active && result.State != "queued" {
+				snapshot, snapshotErr := s.captureResult(id)
+				if snapshotErr == nil {
+					archiveInfo, ready := s.cachedResultArchiveInfo(snapshot, time.Now().UTC())
+					snapshot.close()
+					if ready {
+						archiveBytes := archiveInfo.bytes
+						result.DownloadBytes = &archiveBytes
+						result.downloadArchiveVersion = archiveInfo.version
+						result.downloadSizePending = archiveInfo.pendingPublications > 0
+					}
+				} else if !errors.Is(snapshotErr, errResultNotFound) {
+					s.logger.Warn("capture saved result for archive size", "run", id, "error", snapshotErr)
+				}
 			}
 			results = append(results, result)
 		}
@@ -391,7 +450,42 @@ func (s *Server) handleResults(w http.ResponseWriter, r *http.Request) {
 		}
 		return results[i].StartedAt.After(results[j].StartedAt)
 	})
+	s.extendPendingResultArchiveCache(results, time.Now().UTC())
 	writeJSON(w, http.StatusOK, results)
+}
+
+// Keep a pending result's measured boundary available for a short interval
+// after the complete list is ready, including time spent inspecting other rows.
+// The advertised lifetime reserves response grace so clients never receive a
+// cache value that is already too close to the server-side boundary.
+func (s *Server) extendPendingResultArchiveCache(results []savedResult, now time.Time) {
+	s.resultArchiveMu.Lock()
+	defer s.resultArchiveMu.Unlock()
+	for index := range results {
+		result := &results[index]
+		if result.DownloadBytes == nil || !result.downloadSizePending {
+			continue
+		}
+		cached, found := s.resultArchives[result.ID]
+		if !found || cached.pendingPublications == 0 || cached.bytes != *result.DownloadBytes ||
+			!sameResultArchiveVersion(cached.version, result.downloadArchiveVersion) {
+			result.DownloadBytes = nil
+			result.DownloadSizeMaxAgeMS = nil
+			continue
+		}
+		if !cached.listGraceExtended {
+			cached.expiresAt = now.Add(resultArchiveCacheTTL)
+			cached.listGraceExtended = true
+			s.resultArchives[result.ID] = cached
+		}
+		maxAgeMS, usable := resultArchiveSizeMaxAgeMS(cached, now)
+		if !usable {
+			result.DownloadBytes = nil
+			result.DownloadSizeMaxAgeMS = nil
+			continue
+		}
+		result.DownloadSizeMaxAgeMS = &maxAgeMS
+	}
 }
 
 func (s *Server) readSavedResult(runs *os.Root, id string) (savedResult, error) {
@@ -506,7 +600,7 @@ func (s *Server) captureResult(id string) (*resultSnapshot, error) {
 }
 
 func (s *Server) handleResultDownload(w http.ResponseWriter, r *http.Request, id string) {
-	if r.Method != http.MethodGet {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		methodNotAllowed(w)
 		return
 	}
@@ -521,17 +615,222 @@ func (s *Server) handleResultDownload(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	defer snapshot.close()
+	var archiveInfo resultArchiveInfo
+	var sizeMaxAgeMS int64
+	for {
+		archiveInfo, err = s.prepareResultArchiveInfo(r.Context(), snapshot)
+		if err != nil || archiveInfo.pendingPublications == 0 {
+			break
+		}
+		var usable bool
+		sizeMaxAgeMS, usable = resultArchiveSizeMaxAgeMS(archiveInfo, time.Now().UTC())
+		if usable {
+			break
+		}
+		// The cache crossed the response-safety boundary after lookup but before
+		// headers were ready. Rebuild from a current export time.
+		snapshot.exportedAt = time.Now().UTC()
+	}
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || r.Context().Err() != nil {
+			return
+		}
+		s.logger.Warn("measure saved result archive", "run", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "saved result files are unreadable")
+		return
+	}
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", id))
-	if err := snapshot.writeZIP(r.Context(), w); err != nil {
-		s.logger.Warn("stream saved result", "run", id, "error", err)
-		// A partial archive must not receive a valid central directory. Tell
-		// net/http to abort the connection/stream without a redundant panic log.
+	w.Header().Set("Content-Length", strconv.FormatInt(archiveInfo.bytes, 10))
+	if archiveInfo.pendingPublications > 0 {
+		w.Header().Set(resultSizeMaxAgeHeader, strconv.FormatInt(sizeMaxAgeMS, 10))
+	}
+	if r.Method == http.MethodHead {
+		return
+	}
+	written := &resultCountingWriter{writer: w}
+	if err := snapshot.writeZIP(r.Context(), written); err != nil || written.bytes != archiveInfo.bytes {
+		if err == nil {
+			err = fmt.Errorf("archive size changed from %d to %d bytes", archiveInfo.bytes, written.bytes)
+		}
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && r.Context().Err() == nil {
+			s.logger.Warn("stream saved result", "run", id, "error", err)
+		}
+		// Headers are already committed. Abort the HTTP stream so a short body
+		// or size invariant failure cannot be reported as a successful response.
+		// ErrAbortHandler suppresses the standard server panic log.
 		panic(http.ErrAbortHandler)
 	}
 }
 
+func (snapshot *resultSnapshot) archiveVersion() resultArchiveVersion {
+	version := resultArchiveVersion{
+		files:  make([]resultFileVersion, len(snapshot.files)),
+		active: snapshot.result.Active, state: snapshot.result.State, storedState: snapshot.storedState,
+	}
+	for index, file := range snapshot.files {
+		version.files[index] = resultFileVersion{name: file.name, size: file.size, info: file.info}
+	}
+	return version
+}
+
+func sameResultArchiveVersion(left, right resultArchiveVersion) bool {
+	if left.active != right.active || left.state != right.state || left.storedState != right.storedState || len(left.files) != len(right.files) {
+		return false
+	}
+	for index := range left.files {
+		leftFile, rightFile := left.files[index], right.files[index]
+		if leftFile.name != rightFile.name || leftFile.size != rightFile.size {
+			return false
+		}
+		if leftFile.info == nil || rightFile.info == nil {
+			if leftFile.info != nil || rightFile.info != nil {
+				return false
+			}
+			continue
+		}
+		if !os.SameFile(leftFile.info, rightFile.info) || !leftFile.info.ModTime().Equal(rightFile.info.ModTime()) {
+			return false
+		}
+	}
+	return true
+}
+
+func resultArchiveCacheUsable(cached resultArchiveInfo, version resultArchiveVersion, now time.Time) bool {
+	if !sameResultArchiveVersion(cached.version, version) {
+		return false
+	}
+	if cached.pendingPublications == 0 {
+		return true
+	}
+	_, usable := resultArchiveSizeMaxAgeMS(cached, now)
+	return usable
+}
+
+func resultArchiveSizeMaxAgeMS(cached resultArchiveInfo, now time.Time) (int64, bool) {
+	remaining := cached.expiresAt.Sub(now) - resultArchiveResponseGrace
+	maxAgeMS := remaining.Milliseconds()
+	return maxAgeMS, maxAgeMS > 0
+}
+
+func (s *Server) cachedResultArchiveInfo(snapshot *resultSnapshot, now time.Time) (resultArchiveInfo, bool) {
+	version := snapshot.archiveVersion()
+	s.resultArchiveMu.Lock()
+	defer s.resultArchiveMu.Unlock()
+	cached, found := s.resultArchives[snapshot.result.ID]
+	if !found || !resultArchiveCacheUsable(cached, version, now) {
+		return resultArchiveInfo{}, false
+	}
+	return cached, true
+}
+
+func useResultArchiveInfo(snapshot *resultSnapshot, cached resultArchiveInfo) {
+	if cached.pendingPublications > 0 {
+		snapshot.exportedAt = cached.exportedAt
+	}
+}
+
+func (s *Server) acquireResultArchiveSlot(ctx context.Context) error {
+	select {
+	case s.resultArchiveSlots <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Server) releaseResultArchiveSlot() {
+	<-s.resultArchiveSlots
+}
+
+func (s *Server) finishResultArchiveFlight(runID string, flight *resultArchiveFlight, candidate *resultArchiveInfo) {
+	s.resultArchiveMu.Lock()
+	defer s.resultArchiveMu.Unlock()
+	if candidate != nil {
+		s.resultArchives[runID] = *candidate
+	}
+	if s.resultArchiveFlights[runID] == flight {
+		delete(s.resultArchiveFlights, runID)
+		close(flight.done)
+	}
+}
+
+// prepareResultArchive caches only the exact byte count, not the archive. A
+// file version with no pending publications keeps the same encoded length even
+// with a fresh export time. Pending metrics briefly pin their measured boundary.
+// One flight per run prevents concurrent cache misses from repeating the work.
+func (s *Server) prepareResultArchive(ctx context.Context, snapshot *resultSnapshot) (int64, error) {
+	info, err := s.prepareResultArchiveInfo(ctx, snapshot)
+	return info.bytes, err
+}
+
+func (s *Server) prepareResultArchiveInfo(ctx context.Context, snapshot *resultSnapshot) (resultArchiveInfo, error) {
+	version := snapshot.archiveVersion()
+	runID := snapshot.result.ID
+	for {
+		if err := ctx.Err(); err != nil {
+			return resultArchiveInfo{}, err
+		}
+		now := time.Now().UTC()
+		s.resultArchiveMu.Lock()
+		if cached, found := s.resultArchives[runID]; found && resultArchiveCacheUsable(cached, version, now) {
+			useResultArchiveInfo(snapshot, cached)
+			s.resultArchiveMu.Unlock()
+			return cached, nil
+		}
+		if flight := s.resultArchiveFlights[runID]; flight != nil {
+			done := flight.done
+			s.resultArchiveMu.Unlock()
+			select {
+			case <-ctx.Done():
+				return resultArchiveInfo{}, ctx.Err()
+			case <-done:
+				continue
+			}
+		}
+		flight := &resultArchiveFlight{done: make(chan struct{})}
+		s.resultArchiveFlights[runID] = flight
+		s.resultArchiveMu.Unlock()
+		if err := s.acquireResultArchiveSlot(ctx); err != nil {
+			s.finishResultArchiveFlight(runID, flight, nil)
+			return resultArchiveInfo{}, err
+		}
+
+		measured := &resultCountingWriter{}
+		pendingPublications := 0
+		var err error
+		func() {
+			defer s.releaseResultArchiveSlot()
+			err = snapshot.writeZIPMeasured(ctx, measured, &pendingPublications)
+		}()
+		if err == nil {
+			err = ctx.Err()
+		}
+		candidate := resultArchiveInfo{
+			version: version, bytes: measured.bytes, pendingPublications: pendingPublications,
+			exportedAt: snapshot.exportedAt,
+		}
+		if pendingPublications > 0 {
+			candidate.expiresAt = time.Now().UTC().Add(resultArchiveCacheTTL)
+		}
+
+		if err == nil {
+			s.finishResultArchiveFlight(runID, flight, &candidate)
+		} else {
+			s.finishResultArchiveFlight(runID, flight, nil)
+		}
+		if err != nil {
+			return resultArchiveInfo{}, err
+		}
+		return candidate, nil
+	}
+}
+
 func (snapshot *resultSnapshot) writeZIP(ctx context.Context, output io.Writer) error {
+	return snapshot.writeZIPMeasured(ctx, output, nil)
+}
+
+func (snapshot *resultSnapshot) writeZIPMeasured(ctx context.Context, output io.Writer, pendingPublications *int) error {
 	archive := zip.NewWriter(resultContextWriter{ctx: ctx, writer: output})
 	sizes := make(map[string]int64, len(snapshot.files))
 	for _, file := range snapshot.files {
@@ -560,6 +859,9 @@ func (snapshot *resultSnapshot) writeZIP(ctx context.Context, output io.Writer) 
 	if err != nil {
 		return fmt.Errorf("summarize saved events: %w", err)
 	}
+	if pendingPublications != nil {
+		*pendingPublications = metrics.PendingPublications
+	}
 	metricsJSON, err := json.MarshalIndent(metrics, "", "  ")
 	if err != nil {
 		return err
@@ -573,14 +875,14 @@ func (snapshot *resultSnapshot) writeZIP(ctx context.Context, output io.Writer) 
 		return err
 	}
 	sizes["metrics.json"] = int64(len(metricsJSON))
-	exported, err := archive.Create("export.json")
+	exported, err := archive.CreateHeader(&zip.FileHeader{Name: "export.json", Method: zip.Store})
 	if err != nil {
 		return err
 	}
 	if err := json.NewEncoder(exported).Encode(struct {
 		Version     int              `json:"version"`
 		RunID       string           `json:"runId"`
-		ExportedAt  time.Time        `json:"exportedAt"`
+		ExportedAt  string           `json:"exportedAt"`
 		Active      bool             `json:"active"`
 		Partial     bool             `json:"partial"`
 		State       string           `json:"state"`
@@ -589,7 +891,7 @@ func (snapshot *resultSnapshot) writeZIP(ctx context.Context, output io.Writer) 
 		Files       map[string]int64 `json:"files"`
 		Boundary    string           `json:"boundary"`
 	}{
-		Version: 1, RunID: snapshot.result.ID, ExportedAt: snapshot.exportedAt,
+		Version: 1, RunID: snapshot.result.ID, ExportedAt: snapshot.exportedAt.UTC().Format(resultExportTimeLayout),
 		Active: snapshot.result.Active, Partial: snapshot.result.Active || snapshot.result.State == "interrupted" || snapshot.result.State == "queued",
 		State: snapshot.result.State, StoredState: snapshot.storedState,
 		EventBytes: sizes["events.jsonl"], Files: sizes,
@@ -603,6 +905,21 @@ func (snapshot *resultSnapshot) writeZIP(ctx context.Context, output io.Writer) 
 type resultContextWriter struct {
 	ctx    context.Context
 	writer io.Writer
+}
+
+type resultCountingWriter struct {
+	writer io.Writer
+	bytes  int64
+}
+
+func (w *resultCountingWriter) Write(data []byte) (int, error) {
+	if w.writer == nil {
+		w.bytes += int64(len(data))
+		return len(data), nil
+	}
+	written, err := w.writer.Write(data)
+	w.bytes += int64(written)
+	return written, err
 }
 
 type resultContextReader struct {

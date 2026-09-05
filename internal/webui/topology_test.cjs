@@ -17,6 +17,20 @@ function context(extra = {}) {
 }
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const peer = (id, agentId = 'a', state = 'ready') => ({ id, agentId, state });
+const resultSizeHeaders = (bytes, maxAgeMs) => ({
+  get(name) {
+    if (name.toLowerCase() === 'content-length') return String(bytes);
+    if (name.toLowerCase() === 'x-kpl-result-size-max-age-ms') return maxAgeMs === undefined ? null : String(maxAgeMs);
+    return null;
+  },
+});
+async function waitUntil(predicate, message) {
+  for (let attempt = 0; attempt < 30; attempt++) {
+    if (predicate()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.fail(message);
+}
 
 test('delivery display distinguishes conditional reach, missing observations, pending and legacy', () => {
   const api = context();
@@ -37,6 +51,243 @@ test('delivery display distinguishes conditional reach, missing observations, pe
   assert.equal(view.primary,'60%');
   assert.equal(view.windowed,false);
   assert.match(view.label,/Legacy/);
+});
+
+test('saved result download sizes distinguish loading, unavailable, live, and unreadable states', () => {
+  const state = {resultSizeUnavailable:new Set()};
+  const api = context({state});
+  assert.equal(api.formatBytes(999), '999 B');
+  assert.equal(api.formatBytes(1536), '1.5 KiB');
+  assert.equal(api.formatBytes(5 * 1024 * 1024), '5 MiB');
+  assert.equal(api.formatBytes(undefined), '');
+  assert.equal(api.formatBytes('1536'), '');
+  assert.match(api.resultDownloadSize({id:'loading',state:'completed'}), />Calculating ZIP size…<\/span>/);
+  state.resultSizeUnavailable.add('failed');
+  assert.match(api.resultDownloadSize({id:'failed',state:'completed'}), />Size unavailable<\/span>/);
+  assert.match(api.resultDownloadSize({id:'sized',state:'completed',downloadBytes:1536}), />ZIP · 1.5 KiB<\/span>/);
+  assert.match(api.resultDownloadSize({id:'sized',state:'completed',downloadBytes:1536}), /Size measured at last refresh; later events may change it\./);
+  assert.match(api.resultDownloadSize({id:'expired',state:'completed',downloadBytes:1536,downloadSizeExpiresAtMs:1}), />Calculating ZIP size…<\/span>/);
+  assert.match(api.resultDownloadSize({id:'live',state:'running',downloadBytes:1536}), />Live ZIP · size determined at download<\/span>/);
+  assert.equal(api.resultDownloadSize({id:'broken',state:'unreadable'}), '');
+});
+
+test('download-size headers use local max-age timing and allow stable sizes', () => {
+  const api = context();
+  const now = Date.parse('2042-04-03T02:01:00Z');
+  assert.deepEqual(plain(api.parseResultDownloadSizeHeaders(resultSizeHeaders(1536), now)), {downloadBytes:1536});
+  assert.deepEqual(plain(api.parseResultDownloadSizeHeaders(resultSizeHeaders(1536, 60000), now)), {
+    downloadBytes:1536,downloadSizeExpiresAtMs:now + 60000,
+  });
+  assert.deepEqual(plain(api.parseResultDownloadSizeHeaders(resultSizeHeaders(1536, 1), now)), {
+    downloadBytes:1536,downloadSizeExpiresAtMs:now + 1,
+  });
+  assert.throws(() => api.parseResultDownloadSizeHeaders(resultSizeHeaders('12.5', 60000), now), /Content-Length/);
+  assert.throws(() => api.parseResultDownloadSizeHeaders(resultSizeHeaders(0, 60000), now), /supported range/);
+  assert.throws(() => api.parseResultDownloadSizeHeaders(resultSizeHeaders(1536, 'invalid'), now), /positive max-age/);
+  assert.throws(() => api.parseResultDownloadSizeHeaders(resultSizeHeaders(1536, 0), now), /positive max-age/);
+});
+
+test('saved-list max-age is materialized once from the receiving client clock', () => {
+  const api = context();
+  const now = Date.parse('2042-04-03T02:01:00Z');
+  const run = {id:'timed',state:'completed',downloadBytes:1536,downloadSizeMaxAgeMs:250};
+  assert.equal(api.materializeResultDownloadSizeExpiry(run, now), true);
+  assert.equal(run.downloadSizeExpiresAtMs, now + 250);
+  assert.equal(Object.hasOwn(run, 'downloadSizeMaxAgeMs'), false);
+  api.materializeResultDownloadSizeExpiry(run, now + 100);
+  assert.equal(run.downloadSizeExpiresAtMs, now + 250, 're-rendering extended a relative lifetime');
+  const invalid = {id:'invalid',state:'completed',downloadBytes:1536,downloadSizeMaxAgeMs:'250'};
+  assert.equal(api.materializeResultDownloadSizeExpiry(invalid, now), false);
+  assert.equal(invalid.downloadBytes, undefined);
+});
+
+test('experiment cards use matching saved sizes only for terminal runs', () => {
+  const state = {savedResults:[{id:'done',downloadBytes:1536},{id:'active',downloadBytes:2048},{id:'unknown'}],resultSizeUnavailable:new Set()};
+  const api = context({state});
+  assert.match(api.runDownloadSize({id:'done',state:'completed'}), />ZIP · 1.5 KiB<\/span>/);
+  assert.match(api.runDownloadSize({id:'active',state:'running'}), />Live ZIP · size determined at download<\/span>/);
+  assert.match(api.runDownloadSize({id:'unknown',state:'completed'}), />Calculating ZIP size…<\/span>/);
+  assert.equal(api.runDownloadSize({id:'missing',state:'completed'}), '');
+});
+
+test('saved-results refresh redraws experiment cards with newly loaded sizes', async () => {
+  const elements = new Map();
+  const element = (id) => {
+    if (!elements.has(id)) elements.set(id, {
+      classList:{toggle(){}},
+      setAttribute(){},
+      textContent:'',innerHTML:'',hidden:false,disabled:false,
+    });
+    return elements.get(id);
+  };
+  const run = {id:'done',name:'Completed run',state:'completed',phase:1,totalPhases:1,seed:7};
+  const state = {
+    savedResults:null,resultsLoading:false,resultsError:'',resultsRefreshTimer:null,resultsRefreshPending:false,
+    deletedResultIDs:new Set(),snapshot:{experiments:[run]},runStates:null,pendingStops:new Set(),deletingResultId:null,
+    resultSizeInflight:new Set(),resultSizeQueue:[],resultSizeActive:0,resultSizeUnavailable:new Set(),
+  };
+  const api = context({state,$:(selector)=>element(selector),AbortController,setTimeout,clearTimeout});
+  api.api = async () => [{...run,downloadBytes:1536}];
+  await api.refreshSavedResults();
+  assert.match(element('#runList').innerHTML, />ZIP · 1.5 KiB<\/span>/);
+});
+
+test('download-size HEAD queue deduplicates IDs and limits global concurrency to two', async () => {
+  const runs = ['one','two','three'].map((id) => ({id,state:'completed'}));
+  const state = {savedResults:runs,resultSizeInflight:new Set(),resultSizeQueue:[],resultSizeActive:0,resultSizeUnavailable:new Set(),snapshot:null};
+  const calls = [], pending = [];
+  let active = 0, maximumActive = 0;
+  const fetch = (url, options) => new Promise((resolve) => {
+    active++;
+    maximumActive = Math.max(maximumActive, active);
+    calls.push({url,options});
+    pending.push((bytes) => {
+      active--;
+      resolve({ok:true,status:200,headers:resultSizeHeaders(bytes, 60000)});
+    });
+  });
+  const api = context({state,fetch,AbortController,setTimeout,clearTimeout});
+  api.renderResultSizeViews = () => {};
+  api.queueResultDownloadSizes(runs);
+  api.queueResultDownloadSizes(runs);
+  assert.equal(calls.length, 2);
+  assert.equal(state.resultSizeInflight.size, 3);
+  assert.equal(maximumActive, 2);
+  pending[0](1024);
+  await waitUntil(() => calls.length === 3, 'third HEAD request did not start after a slot was released');
+  assert.equal(maximumActive, 2);
+  pending[1](2048);
+  pending[2](3072);
+  await waitUntil(() => state.resultSizeInflight.size === 0, 'download-size queue did not drain');
+  assert.deepEqual(runs.map((run) => run.downloadBytes), [1024,2048,3072]);
+  assert.ok(calls.every(({options}) => options.method === 'HEAD' && options.cache === 'no-store' && options.signal));
+  assert.deepEqual(calls.map(({url}) => url), [
+    '/api/v1/experiments/one/download','/api/v1/experiments/two/download','/api/v1/experiments/three/download',
+  ]);
+  clearTimeout(state.resultSizeExpiryTimer);
+});
+
+test('stale HEAD completion cannot write into a refreshed result object', async () => {
+  const requested = {id:'race',state:'completed'};
+  const state = {savedResults:[requested],resultSizeInflight:new Set(),resultSizeQueue:[],resultSizeActive:0,resultSizeUnavailable:new Set(),snapshot:null};
+  const pending = [];
+  const fetch = () => new Promise((resolve) => pending.push((bytes) => resolve({
+    ok:true,status:200,headers:resultSizeHeaders(bytes, 60000),
+  })));
+  const api = context({state,fetch,AbortController,setTimeout,clearTimeout});
+  api.renderResultSizeViews = () => {};
+  api.queueResultDownloadSizes(state.savedResults);
+  assert.equal(pending.length, 1);
+  const refreshed = {id:'race',state:'completed'};
+  state.savedResults = [refreshed];
+  api.queueResultDownloadSizes(state.savedResults);
+  assert.equal(pending.length, 1, 'overlapping refresh duplicated the in-flight ID');
+  pending[0](1024);
+  await waitUntil(() => pending.length === 2, 'stale completion did not requeue the refreshed object');
+  assert.equal(requested.downloadBytes, undefined);
+  assert.equal(refreshed.downloadBytes, undefined, 'stale bytes leaked into the refreshed result');
+  assert.equal(state.resultSizeUnavailable.has('race'), false);
+  pending[1](2048);
+  await waitUntil(() => state.resultSizeInflight.size === 0, 'replacement size request did not settle');
+  assert.equal(refreshed.downloadBytes, 2048);
+  assert.equal(pending.length, 2, 'current completion unexpectedly retried itself');
+  clearTimeout(state.resultSizeExpiryTimer);
+});
+
+test('near expiry follows extended list grace then remeasures through the bounded queue', async () => {
+  let now = Date.parse('2026-09-05T03:00:00Z');
+  class FakeDate extends Date { static now() { return now; } }
+  const timers = new Map();
+  let nextTimer = 1;
+  const setTimeout = (callback, delay) => { const id = nextTimer++; timers.set(id,{callback,delay}); return id; };
+  const clearTimeout = (id) => timers.delete(id);
+  const run = {id:'expiring',state:'completed',downloadBytes:1024,downloadSizeMaxAgeMs:1};
+  const state = {
+    savedResults:[run],resultSizeInflight:new Set(),resultSizeQueue:[],resultSizeActive:0,resultSizeUnavailable:new Set(),snapshot:null,
+    resultSizeExpiryTimer:null,resultSizeExpiryAt:0,
+  };
+  const calls = [];
+  const fetch = async (url, options) => {
+    calls.push({url,options});
+    return {ok:true,status:200,headers:resultSizeHeaders(2048, 1000)};
+  };
+  const api = context({state,fetch,AbortController,Date:FakeDate,setTimeout,clearTimeout});
+  api.renderResultSizeViews = () => {};
+  api.queueResultDownloadSizes(state.savedResults);
+  assert.equal(calls.length, 0);
+  assert.equal(run.downloadSizeExpiresAtMs, now + 1);
+  assert.deepEqual([...timers.values()].map(({delay}) => delay), [1]);
+  const firstTimer = state.resultSizeExpiryTimer;
+  api.queueResultDownloadSizes(state.savedResults);
+  assert.equal(state.resultSizeExpiryTimer, firstTimer, 'unchanged expiry created a duplicate timer');
+  assert.equal(timers.size, 1);
+  const extendedRun = {id:'expiring',state:'completed',downloadBytes:1024,downloadSizeMaxAgeMs:500};
+  state.savedResults = [extendedRun];
+  api.queueResultDownloadSizes(state.savedResults);
+  assert.deepEqual([...timers.values()].map(({delay}) => delay), [500], 'later list grace did not replace the earlier timer');
+  now += 500;
+  const expiryTimer = timers.get(state.resultSizeExpiryTimer);
+  timers.delete(state.resultSizeExpiryTimer);
+  expiryTimer.callback();
+  assert.equal(extendedRun.downloadBytes, undefined, 'expired bytes remained renderable');
+  assert.equal(calls.length, 1);
+  await waitUntil(() => state.resultSizeInflight.size === 0, 'expired size was not remeasured');
+  assert.equal(extendedRun.downloadBytes, 2048);
+  assert.equal(extendedRun.downloadSizeExpiresAtMs, now + 1000);
+  assert.deepEqual([...timers.values()].map(({delay}) => delay), [1000]);
+});
+
+test('download-size HEAD failures are per-ID and skip active or unreadable results', async () => {
+  const runs = [
+    {id:'bad-header',state:'completed'}, {id:'request-error',state:'completed'},
+    {id:'active',state:'running'}, {id:'queued',state:'queued'}, {id:'broken',state:'unreadable'},
+  ];
+  const state = {savedResults:runs,resultSizeInflight:new Set(),resultSizeQueue:[],resultSizeActive:0,resultSizeUnavailable:new Set(),snapshot:null};
+  const calls = [], timerDelays = [];
+  const fetch = async (url, options) => {
+    calls.push({url,options});
+    if (url.includes('request-error')) return {ok:false,status:503,headers:{get:()=>null}};
+    return {ok:true,status:200,headers:resultSizeHeaders(1024, 'invalid')};
+  };
+  const api = context({
+    state,fetch,AbortController,
+    setTimeout:(callback,delay)=>{timerDelays.push(delay);return callback;},clearTimeout:()=>{},
+  });
+  api.renderResultSizeViews = () => {};
+  api.queueResultDownloadSizes(runs);
+  await waitUntil(() => state.resultSizeInflight.size === 0, 'failed download-size requests did not settle');
+  assert.deepEqual(calls.map(({url}) => url), [
+    '/api/v1/experiments/bad-header/download','/api/v1/experiments/request-error/download',
+  ]);
+  assert.deepEqual(timerDelays, [30000,30000]);
+  assert.deepEqual([...state.resultSizeUnavailable].sort(), ['bad-header','request-error']);
+  assert.equal(state.resultSizeQueue.length, 0);
+  assert.equal(state.resultSizeActive, 0);
+  assert.match(api.resultDownloadSize(runs[0]), />Size unavailable<\/span>/);
+  assert.match(api.resultDownloadSize(runs[2]), />Live ZIP · size determined at download<\/span>/);
+  assert.equal(api.resultDownloadSize(runs[4]), '');
+});
+
+test('invalid HEAD max-age follows the normal failure policy and retries on refresh', async () => {
+  const run = {id:'retry',state:'completed'};
+  const state = {savedResults:[run],resultSizeInflight:new Set(),resultSizeQueue:[],resultSizeActive:0,resultSizeUnavailable:new Set(),snapshot:null};
+  let calls = 0;
+  const fetch = async () => {
+    calls++;
+    return {ok:true,status:200,headers:calls === 1 ? resultSizeHeaders(2048, 0) : resultSizeHeaders(2048)};
+  };
+  const api = context({state,fetch,AbortController,setTimeout,clearTimeout});
+  api.renderResultSizeViews = () => {};
+  api.queueResultDownloadSizes(state.savedResults);
+  await waitUntil(() => state.resultSizeInflight.size === 0, 'invalid max-age request did not settle');
+  assert.equal(calls, 1, 'invalid max-age retried without a refresh');
+  assert.equal(state.resultSizeUnavailable.has(run.id), true);
+  api.queueResultDownloadSizes(state.savedResults);
+  await waitUntil(() => state.resultSizeInflight.size === 0, 'explicit refresh did not retry the size request');
+  assert.equal(calls, 2);
+  assert.equal(run.downloadBytes, 2048);
+  assert.equal(run.downloadSizeExpiresAtMs, undefined);
+  assert.equal(state.resultSizeUnavailable.has(run.id), false);
 });
 
 test('relationship layers do not misclassify legacy transport and preserve the input history', () => {
@@ -129,6 +380,37 @@ test('inspector escapes node/topic text and handles missing mesh values', () => 
   assert.ok(output.innerHTML.includes('0 scores · Average: N/A'));
   assert.ok(output.innerHTML.includes('<dt>PubSub router / topic mode</dt><dd>Off</dd>'));
   assert.ok(output.innerHTML.includes('<dt>DHT mode</dt><dd>Off</dd>'));
+});
+
+test('recent events separate experiment IDs and shorten matching node prefixes', () => {
+  const eventList = {};
+  const api = context({$: (selector) => {
+    assert.equal(selector, '#eventList');
+    return eventList;
+  }});
+  api.renderEvents([{
+    timestamp: '2026-09-05T03:04:05Z',
+    type: 'measurement_checkpoint_with_a_long_name',
+    runId: 'run-20260905T030000Z-a1b2c3d4',
+    nodeId: 'run-20260905T030000Z-a1b2c3d4-workers-00001',
+    remotePeerId: '<remote-peer-id>',
+    latencyMs: 12.25,
+  }]);
+  assert.match(eventList.innerHTML, /class="event-type"[^>]*>measurement_checkpoint_with_a_long_name<\/span>/);
+  assert.match(eventList.innerHTML, /class="event-summary"[^>]*>workers-00001 · ← &lt;remote-pe · 12\.3 ms<\/span>/);
+  assert.match(eventList.innerHTML, /class="event-run-id"[^>]*>Experiment · run-20260905T030000Z-a1b2c3d4<\/small>/);
+  assert.equal((eventList.innerHTML.match(/run-20260905T030000Z-a1b2c3d4/g) || []).length, 2, 'run ID should appear only in the small label and its title');
+  assert.ok(!eventList.innerHTML.includes('<remote-peer-id>'));
+});
+
+test('recent events preserve node IDs when no matching experiment prefix exists', () => {
+  const eventList = {};
+  const api = context({$: () => eventList});
+  api.renderEvents([{timestamp:'2026-09-05T03:04:05Z',type:'publish',runId:'run-a',nodeId:'standalone-node'}]);
+  assert.match(eventList.innerHTML, />standalone-node<\/span>/);
+  api.renderEvents([{timestamp:'2026-09-05T03:04:05Z',type:'publish',nodeId:'run-a-workers-00001'}]);
+  assert.match(eventList.innerHTML, />run-a-workers-00001<\/span>/);
+  assert.ok(!eventList.innerHTML.includes('event-run-id'));
 });
 
 function uiFixture({reducedMotion=false}={}) {

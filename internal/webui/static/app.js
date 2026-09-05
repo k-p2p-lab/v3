@@ -3,6 +3,8 @@ const state = {
   snapshot: null, stream: null, reconnectTimer: null,
   savedResults: null, resultsLoading: false, resultsError: "",
   resultsRefreshTimer: null, resultsRefreshPending: false, runStates: null,
+  resultSizeInflight: new Set(), resultSizeQueue: [], resultSizeActive: 0, resultSizeUnavailable: new Set(),
+  resultSizeExpiryTimer: null, resultSizeExpiryAt: 0,
   agentNumbers: loadAgentNumbers(),
   pendingStops: new Set(), deletedResultIDs: new Set(),
   pendingDelete: null, deletingResultId: null, apiToken: null,
@@ -178,6 +180,19 @@ function formatNumber(value, digits = 0) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: digits }).format(Number(value || 0));
 }
 
+function formatBytes(value) {
+  let size = value;
+  if (!Number.isFinite(size) || size <= 0) return "";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit++;
+  }
+  const digits = unit === 0 || size >= 100 ? 0 : size >= 10 ? 1 : 2;
+  return `${formatNumber(size, digits)} ${units[unit]}`;
+}
+
 function ratioRange(available, lower, upper, unknown) {
   if (!available) return "N/A";
   const percentage = (value) => `${formatNumber(value * 100, 1)}%`;
@@ -325,6 +340,7 @@ function renderRuns(runs) {
     const progress = run.totalPhases ? Math.round((run.phase / run.totalPhases) * 100) : 0;
     const stopping = state.pendingStops.has(run.batchId || run.id);
     const stop = isPendingRun(run) ? `<button class="stop-button" data-stop-run="${escapeHTML(run.id)}" type="button" title="Stop this run and cancel the remaining queued runs in its batch." ${stopping ? "disabled" : ""}>${stopping ? "Stopping…" : run.repetitions > 1 ? "Stop batch" : "Stop"}</button>` : "";
+    const downloadSize = runDownloadSize(run);
     return `<article class="run-item">
       <div class="run-title"><strong title="${escapeHTML(run.name)}">${escapeHTML(run.name)}</strong><span class="status-pill ${escapeHTML(run.state)}">${escapeHTML(run.state)}</span></div>
       <div class="run-meta"><span>${escapeHTML(run.state === "queued" ? "Waiting to start" : run.phaseName || `seed ${run.seed}`)}</span>${stop}</div>
@@ -332,7 +348,7 @@ function renderRuns(runs) {
       <div class="run-meta"><span>Jobs: ${formatNumber(run.activeJobs || 0)} active · ${formatNumber(run.completedJobs || 0)} completed · ${formatNumber(run.failedJobs || 0)} failed · ${formatNumber(run.canceledJobs || 0)} canceled</span></div>
       <div class="progress-track" aria-label="${progress}% complete"><i style="width:${Math.min(100, progress)}%"></i></div>
       ${run.error ? `<div class="run-meta"><span>${escapeHTML(run.error)}</span></div>` : ""}
-      <div class="run-actions">${resultDownloadLink(run)}</div>
+      <div class="run-actions">${resultDownloadLink(run)}${downloadSize}</div>
     </article>`;
   }).join("");
 }
@@ -358,6 +374,188 @@ function resultDownloadLink(run) {
   return `<a class="download-link" href="${escapeHTML(path)}" download="${escapeHTML(`${run.id}.zip`)}" target="_blank" rel="noopener" title="${title}" aria-label="${escapeHTML(`${label}: ${run.name || run.id}`)}">${label}</a>`;
 }
 
+function resultDownloadSize(run) {
+  if (run.state === "unreadable") return "";
+  if (isPendingRun(run)) {
+    return '<span class="download-size live" title="This run is active; the ZIP size is determined when the download snapshot is created.">Live ZIP · size determined at download</span>';
+  }
+  const size = hasFreshResultDownloadSize(run) ? formatBytes(run.downloadBytes) : "";
+  if (size) return `<span class="download-size" title="Size measured at last refresh; later events may change it.">ZIP · ${escapeHTML(size)}</span>`;
+  return state.resultSizeUnavailable.has(run.id)
+    ? '<span class="download-size" title="Size was not available at the last refresh.">Size unavailable</span>'
+    : '<span class="download-size" title="Reading the exact size from the download endpoint.">Calculating ZIP size…</span>';
+}
+
+function runDownloadSize(run) {
+  if (isPendingRun(run)) return resultDownloadSize(run);
+  const saved = (state.savedResults || []).find((result) => result.id === run.id);
+  return saved ? resultDownloadSize(saved) : "";
+}
+
+function resultSizeExpiryFromMaxAge(value, now = Date.now(), allowString = false) {
+  const candidate = allowString && typeof value === "string" && /^\d+$/.test(value.trim()) ? Number(value.trim()) : value;
+  if (typeof candidate !== "number" || !Number.isSafeInteger(candidate) || candidate <= 0) return 0;
+  const expiry = now + candidate;
+  return Number.isSafeInteger(expiry) && expiry > now ? expiry : 0;
+}
+
+function materializeResultDownloadSizeExpiry(run, now = Date.now()) {
+  if (!run || !Object.prototype.hasOwnProperty.call(run, "downloadSizeMaxAgeMs")) return true;
+  const expiry = resultSizeExpiryFromMaxAge(run.downloadSizeMaxAgeMs, now);
+  delete run.downloadSizeMaxAgeMs;
+  if (!formatBytes(run.downloadBytes) || !expiry) {
+    delete run.downloadBytes;
+    delete run.downloadSizeExpiresAtMs;
+    return false;
+  }
+  run.downloadSizeExpiresAtMs = expiry;
+  return true;
+}
+
+function hasFreshResultDownloadSize(run, now = Date.now()) {
+  if (!formatBytes(run?.downloadBytes)) return false;
+  if (run.downloadSizeExpiresAtMs === undefined || run.downloadSizeExpiresAtMs === null) return true;
+  return Number.isSafeInteger(run.downloadSizeExpiresAtMs) && run.downloadSizeExpiresAtMs > now;
+}
+
+function needsResultDownloadSize(run) {
+  return Boolean(run?.id && run.state !== "unreadable" && !isPendingRun(run) && !hasFreshResultDownloadSize(run));
+}
+
+function parseResultDownloadSizeHeaders(headers, now = Date.now()) {
+  const rawBytes = headers.get("Content-Length");
+  if (typeof rawBytes !== "string" || !/^\d+$/.test(rawBytes.trim())) throw new Error("Download size response has no valid Content-Length.");
+  const downloadBytes = Number(rawBytes);
+  if (!Number.isSafeInteger(downloadBytes) || downloadBytes <= 0) throw new Error("Download size is outside the supported range.");
+  const rawMaxAge = headers.get("X-KPL-Result-Size-Max-Age-Ms");
+  if (rawMaxAge === null || rawMaxAge === undefined) return { downloadBytes };
+  const expiry = resultSizeExpiryFromMaxAge(rawMaxAge, now, true);
+  if (!expiry) throw new Error("Download size response has no valid positive max-age.");
+  return { downloadBytes, downloadSizeExpiresAtMs: expiry };
+}
+
+async function fetchResultDownloadBytes(id) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  try {
+    const path = `/api/v1/experiments/${encodeURIComponent(id)}/download`;
+    const response = await fetch(path, { method: "HEAD", cache: "no-store", signal: controller.signal });
+    if (!response.ok) throw new Error(`Download size request failed with status ${response.status}.`);
+    return parseResultDownloadSizeHeaders(response.headers);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function renderResultSizeViews() {
+  renderSavedResults();
+  if (state.snapshot) renderRuns(state.snapshot.experiments || []);
+}
+
+async function resolveResultDownloadSize(id, requestedRun) {
+  try {
+    const measured = await fetchResultDownloadBytes(id);
+    const run = (state.savedResults || []).find((result) => result.id === id);
+    if (run === requestedRun) {
+      if (needsResultDownloadSize(run)) {
+        run.downloadBytes = measured.downloadBytes;
+        if (measured.downloadSizeExpiresAtMs) run.downloadSizeExpiresAtMs = measured.downloadSizeExpiresAtMs;
+        else delete run.downloadSizeExpiresAtMs;
+      }
+      state.resultSizeUnavailable.delete(id);
+    }
+  } catch {
+    const run = (state.savedResults || []).find((result) => result.id === id);
+    if (run === requestedRun && needsResultDownloadSize(run)) state.resultSizeUnavailable.add(id);
+  } finally {
+    state.resultSizeActive--;
+    state.resultSizeInflight.delete(id);
+    const current = (state.savedResults || []).find((result) => result.id === id);
+    if (current !== requestedRun) enqueueResultDownloadSize(current);
+    renderResultSizeViews();
+    pumpResultSizeQueue();
+    scheduleResultSizeExpiry();
+  }
+}
+
+function pumpResultSizeQueue() {
+  while (state.resultSizeActive < 2 && state.resultSizeQueue.length) {
+    const id = state.resultSizeQueue.shift();
+    const run = (state.savedResults || []).find((result) => result.id === id);
+    if (!needsResultDownloadSize(run)) {
+      state.resultSizeInflight.delete(id);
+      continue;
+    }
+    state.resultSizeActive++;
+    void resolveResultDownloadSize(id, run);
+  }
+}
+
+function enqueueResultDownloadSize(run) {
+  if (!needsResultDownloadSize(run) || state.resultSizeInflight.has(run.id)) return;
+  state.resultSizeUnavailable.delete(run.id);
+  state.resultSizeInflight.add(run.id);
+  state.resultSizeQueue.push(run.id);
+}
+
+function discardExpiredResultDownloadSize(run, now = Date.now()) {
+  if (!formatBytes(run?.downloadBytes) || run.downloadSizeExpiresAtMs === undefined || run.downloadSizeExpiresAtMs === null) return false;
+  if (Number.isSafeInteger(run.downloadSizeExpiresAtMs) && run.downloadSizeExpiresAtMs > now) return false;
+  delete run.downloadBytes;
+  delete run.downloadSizeExpiresAtMs;
+  return true;
+}
+
+function expireResultDownloadSizes() {
+  state.resultSizeExpiryTimer = null;
+  state.resultSizeExpiryAt = 0;
+  const now = Date.now();
+  for (const run of state.savedResults || []) {
+    if (run.state === "unreadable" || isPendingRun(run)) continue;
+    if (!discardExpiredResultDownloadSize(run, now)) continue;
+    state.resultSizeUnavailable.delete(run.id);
+    enqueueResultDownloadSize(run);
+  }
+  renderResultSizeViews();
+  pumpResultSizeQueue();
+  scheduleResultSizeExpiry();
+}
+
+function scheduleResultSizeExpiry() {
+  const now = Date.now();
+  let earliest = 0;
+  for (const run of state.savedResults || []) {
+    if (run.state === "unreadable" || isPendingRun(run)) continue;
+    if (!hasFreshResultDownloadSize(run, now)) continue;
+    const expiry = run.downloadSizeExpiresAtMs;
+    if (expiry && (!earliest || expiry < earliest)) earliest = expiry;
+  }
+  if (state.resultSizeExpiryTimer && state.resultSizeExpiryAt === earliest) return;
+  if (state.resultSizeExpiryTimer) clearTimeout(state.resultSizeExpiryTimer);
+  state.resultSizeExpiryTimer = null;
+  state.resultSizeExpiryAt = 0;
+  if (!earliest) return;
+  state.resultSizeExpiryAt = earliest;
+  const delay = Math.min(Math.max(1, earliest - now), 2147483647);
+  state.resultSizeExpiryTimer = setTimeout(expireResultDownloadSizes, delay);
+}
+
+function queueResultDownloadSizes(results) {
+  const currentIDs = new Set(results.map((run) => run.id));
+  for (const id of state.resultSizeUnavailable) if (!currentIDs.has(id)) state.resultSizeUnavailable.delete(id);
+  for (const run of results) {
+    materializeResultDownloadSizeExpiry(run);
+    discardExpiredResultDownloadSize(run);
+    if (!needsResultDownloadSize(run)) {
+      state.resultSizeUnavailable.delete(run.id);
+      continue;
+    }
+    enqueueResultDownloadSize(run);
+  }
+  pumpResultSizeQueue();
+  scheduleResultSizeExpiry();
+}
+
 function formatResultTime(value) {
   if (!value || String(value).startsWith("0001-")) return "—";
   const date = new Date(value);
@@ -377,16 +575,19 @@ async function refreshSavedResults() {
   renderSavedResults();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
+  let refreshed = false;
   try {
     const results = await api("/api/v1/results", { cache: "no-store", signal: controller.signal });
     if (!Array.isArray(results)) throw new Error("Unexpected saved results response.");
     state.savedResults = results.filter((run) => !state.deletedResultIDs.has(run.id));
+    refreshed = true;
   } catch (error) {
     state.resultsError = error.name === "AbortError" ? "Request timed out." : error.message;
   } finally {
     clearTimeout(timeout);
     state.resultsLoading = false;
-    renderSavedResults();
+    if (refreshed) queueResultDownloadSizes(state.savedResults || []);
+    renderResultSizeViews();
     if (state.resultsRefreshPending) {
       state.resultsRefreshPending = false;
       refreshSavedResults();
@@ -416,7 +617,7 @@ function renderSavedResults() {
       <td><span class="status-pill ${escapeHTML(run.state)}" title="${escapeHTML(stateHint)}">${escapeHTML(run.state)}</span></td>
       <td>${escapeHTML(formatResultTime(run.startedAt))}</td>
       <td>${escapeHTML(formatResultTime(run.finishedAt))}</td>
-      <td><div class="result-actions">${resultDownloadLink(run)}<button class="delete-result-button" type="button" data-delete-result="${escapeHTML(run.id)}" aria-label="${escapeHTML(`Delete saved result: ${run.name || run.id}`)}" title="${resultLocked(run) ? "Available after this run and its batch have stopped." : "Delete this run's saved result."}" ${resultLocked(run) || state.deletingResultId ? "disabled" : ""}>${state.deletingResultId === run.id ? "Deleting…" : "Delete"}</button></div></td>
+      <td><div class="result-actions">${resultDownloadLink(run)}${resultDownloadSize(run)}<button class="delete-result-button" type="button" data-delete-result="${escapeHTML(run.id)}" aria-label="${escapeHTML(`Delete saved result: ${run.name || run.id}`)}" title="${resultLocked(run) ? "Available after this run and its batch have stopped." : "Delete this run's saved result."}" ${resultLocked(run) || state.deletingResultId ? "disabled" : ""}>${state.deletingResultId === run.id ? "Deleting…" : "Delete"}</button></div></td>
     </tr>`;
   }).join("");
 }
@@ -506,8 +707,11 @@ function renderEvents(events) {
   }
   $("#eventList").innerHTML = recent.map((event) => {
     const latency = event.fields?.latencyAvailable === false ? "latency unavailable" : event.latencyMs > 0 ? `${formatNumber(event.latencyMs, 1)} ms` : "";
-    const detail = [event.nodeId, event.remotePeerId ? `← ${event.remotePeerId.slice(0, 10)}` : "", latency].filter(Boolean).join(" · ");
-    return `<li class="event-item"><time>${new Date(event.timestamp).toLocaleTimeString("en-US", { hour12: false })}</time><span class="event-type">${escapeHTML(event.type)}</span><span class="event-summary" title="${escapeHTML(detail)}">${escapeHTML(detail)}</span></li>`;
+    const nodePrefix = event.runId ? `${event.runId}-` : "";
+    const nodeLabel = nodePrefix && event.nodeId?.startsWith(nodePrefix) ? event.nodeId.slice(nodePrefix.length) : event.nodeId;
+    const detail = [nodeLabel, event.remotePeerId ? `← ${event.remotePeerId.slice(0, 10)}` : "", latency].filter(Boolean).join(" · ");
+    const runID = event.runId ? `<small class="event-run-id" title="${escapeHTML(`Experiment ID: ${event.runId}`)}">Experiment · ${escapeHTML(event.runId)}</small>` : "";
+    return `<li class="event-item"><time datetime="${escapeHTML(event.timestamp)}">${new Date(event.timestamp).toLocaleTimeString("en-US", { hour12: false })}</time><span class="event-type" title="${escapeHTML(event.type)}">${escapeHTML(event.type)}</span><span class="event-summary" title="${escapeHTML(detail)}">${escapeHTML(detail)}</span>${runID}</li>`;
   }).join("");
 }
 

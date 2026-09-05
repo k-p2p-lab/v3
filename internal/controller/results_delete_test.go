@@ -24,6 +24,9 @@ func TestResultDeleteRequiresAuthenticationAndRejectsDownloadLease(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := server.prepareResultArchive(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
 	defer snapshot.close()
 	request := func() *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodDelete, "/api/v1/results/"+experiment.ID, nil)
@@ -41,6 +44,12 @@ func TestResultDeleteRequiresAuthenticationAndRejectsDownloadLease(t *testing.T)
 	}
 	if _, err := os.Stat(filepath.Join(server.config.DataDir, "runs", experiment.ID)); !os.IsNotExist(err) {
 		t.Fatalf("saved directory remains: %v", err)
+	}
+	server.resultArchiveMu.Lock()
+	_, archiveInfoRemains := server.resultArchives[experiment.ID]
+	server.resultArchiveMu.Unlock()
+	if archiveInfoRemains {
+		t.Fatal("deleted result retained its archive-size cache")
 	}
 	if response := request(); response.Code != http.StatusNotFound {
 		t.Fatalf("second delete status=%d", response.Code)
@@ -149,6 +158,9 @@ func TestQueuedSavedResultBecomesInterruptedAfterControllerRestart(t *testing.T)
 		}
 		if len(results) != 1 || results[0].State != wantState || results[0].Active {
 			t.Fatalf("queued ownership: %+v", results)
+		}
+		if results[0].DownloadBytes != nil || results[0].DownloadSizeMaxAgeMS != nil {
+			t.Fatal("result list performed a cold archive measurement")
 		}
 	}
 	if data, err := os.ReadFile(filepath.Join(server.config.DataDir, "runs", experiment.ID, "experiment.json")); err != nil || string(data) != string(original) {

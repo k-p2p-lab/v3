@@ -31,7 +31,7 @@ Prometheus는 Controller와 두 Agent의 `/metrics`를 5초마다 수집합니�
 
 ## 실험 결과 다운로드
 
-Control Room의 실험 항목이나 **Saved results**에서 **Download results**를 선택합니다. 저장 목록은 Controller의 데이터 디렉터리를 읽으므로 Controller 재시작 후에도 결과에 접근할 수 있습니다. 백업 파일을 복원한 뒤에는 **Refresh**로 목록을 갱신합니다. 실행 중 실험에는 **Download snapshot**이 표시됩니다.
+Control Room의 실험 항목이나 **Saved results**에서 **Download results**를 선택합니다. 저장 목록은 Controller의 데이터 디렉터리를 읽으므로 Controller 재시작 후에도 결과에 접근할 수 있습니다. 백업 파일을 복원한 뒤에는 **Refresh**로 목록을 갱신합니다. 실행 중 실험에는 **Download snapshot**이 표시됩니다. 비활성 행의 ZIP 크기를 아직 모르면 UI가 백그라운드에서 측정한 뒤 표시합니다. 파일이 자주 바뀌는 실행·대기 중 행은 크기를 생략합니다. 이후 이벤트가 도착하거나 delivery deadline이 지나면 다음 snapshot과 크기가 달라질 수 있습니다.
 
 ZIP에는 다음 파일이 들어 있습니다.
 
@@ -44,6 +44,12 @@ ZIP에는 다음 파일이 들어 있습니다.
 | `export.json` | 내보내기 시각, 실험 상태, active/partial 여부와 원본 파일의 캡처된 크기 |
 
 Controller의 저장 잠금 안에서 파일 크기를 확보한 뒤 잠금을 해제하고 ZIP을 전송합니다. 이후 추가된 이벤트는 제외되며 느린 다운로드가 telemetry 파일 쓰기를 붙잡지 않습니다. 완료된 실험에도 지연된 telemetry가 도착할 수 있으므로 나중에 추가된 기록까지 필요하면 수집이 안정된 뒤 다시 다운로드하십시오. `partial: false`는 기록된 실험 상태가 종료 상태라는 의미이며 telemetry 무손실을 보장하지 않습니다. 메시지 본문, PCAP, Prometheus/Grafana 데이터베이스는 ZIP에 포함하지 않습니다.
+
+결과 목록 요청은 메타데이터를 읽고 파일 identity와 크기를 캡처한 뒤, 정확히 같은 파일·상태 버전에 대해 이전에 준비한 `downloadBytes`가 아직 유효할 때만 반환합니다. Cache miss에서는 ZIP을 만들지 않습니다. UI는 값이 없으면 `HEAD /api/v1/experiments/RUN_ID/download`로 준비합니다. HEAD는 실제 다운로드와 같은 스트리밍 ZIP encoder를 바이트 counter에 실행하고 본문 없이 정확한 `Content-Length`를 반환합니다. 이어지는 GET은 준비한 측정을 사용해 archive를 전송합니다. ZIP 자체는 메모리나 디스크에 보관하지 않습니다. 같은 run의 동시 cache miss는 한 번의 측정을 공유하며 서로 다른 run은 최대 두 개까지만 동시에 측정합니다.
+
+Pending publication이 없으면 파일과 상태가 같은 동안 측정한 바이트 수를 유지하면서 HEAD 또는 다운로드마다 정밀도를 유지한 새 export 시각을 기록합니다. 저장 방식이 고정된 `export.json`에는 고정 폭 시각 문자열을 사용하므로 시각이 바뀌어도 인코딩 길이는 같습니다. Stable 목록 행에는 `downloadSizeMaxAgeMs`가 없고 stable HEAD 응답에는 `X-KPL-Result-Size-Max-Age-Ms`가 없습니다. Pending publication이 있으면 바이트 수와 export 경계를 짧게 함께 재사용합니다. 목록 행은 `downloadSizeMaxAgeMs`를 포함하고 HEAD는 `X-KPL-Result-Size-Max-Age-Ms`를 제공합니다. 두 값은 서버의 남은 cache 유효 시간에서 응답 안전 여유 1초를 뺀 양의 밀리초이므로 client와 server의 시계가 일치하지 않아도 됩니다. 준비된 값을 처음 확인한 목록만 유효 시간을 한 번 연장하고, 연장한 경계에서 계산한 max age를 응답하므로 바로 이어지는 GET이 표시 크기와 일치합니다. 목록을 반복해서 새로고침해도 deadline이 계속 밀리지는 않습니다. 안전 여유를 제외하고 남은 유효 시간이 없으면 목록은 `downloadBytes`와 `downloadSizeMaxAgeMs`를 모두 생략하고, HEAD는 응답 전에 새 경계를 측정합니다.
+
+Controller 시작 후 첫 HEAD나 원본 파일·상태 변경 뒤에는 캡처한 파일을 읽고 지표를 다시 구성해야 하며, pending 결과는 짧은 cache가 만료된 뒤 이 작업을 반복합니다. 측정 slot을 기다리거나 측정하는 중 HTTP 요청을 취소하면 server error 응답 없이 요청도 취소됩니다. 저장한 이벤트 로그가 크면 측정 시간이 길어질 수 있습니다. 실행·대기 중 행은 백그라운드 HEAD 측정을 건너뛰지만 snapshot을 직접 다운로드할 때는 크기를 측정하여 정확한 `Content-Length`를 전송합니다.
 
 재시작 후 저장 상태가 `running` 또는 `queued`인 실험은 `interrupted`로 표시하며 ZIP 원본 메타데이터는 변경하지 않습니다. 이는 표시 상태이며 실제 Peer 종료를 증명하지 않습니다. 실시간 상태·카운터를 복원하거나 실행을 자동 재개하지 않지만 ZIP 지표는 보존된 로그에서 재계산합니다. 메타데이터를 읽을 수 없는 항목은 `unreadable`로 표시하므로 로그·저장 파일을 확인하십시오.
 

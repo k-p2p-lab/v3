@@ -13,9 +13,10 @@ import (
 // Join's fanout promotion all call Graft; RemovePeer deletes a peer from every
 // topic. Leave precedes its trailing Prune callbacks.
 type meshTracker struct {
-	mu      sync.RWMutex
-	enabled bool
-	topics  map[string]map[peer.ID]struct{}
+	mu             sync.RWMutex
+	enabled        bool
+	topics         map[string]map[peer.ID]struct{}
+	lastObservedAt time.Time
 }
 
 func (m *meshTracker) configure(enabled bool) {
@@ -67,8 +68,8 @@ func (m *meshTracker) leave(topic string) {
 }
 
 func (m *meshTracker) snapshot() (map[string][]string, time.Time) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	topics := make(map[string][]string, len(m.topics))
 	if m.enabled {
 		for topic, peers := range m.topics {
@@ -81,8 +82,15 @@ func (m *meshTracker) snapshot() (map[string][]string, time.Time) {
 		}
 	}
 	// The timestamp travels with this copy, so delayed status requests can be
-	// recognized downstream. It is not the time a telemetry event was received.
-	return topics, time.Now().UTC()
+	// recognized downstream. Keep it strictly increasing because downstream
+	// rejects equal timestamps as duplicate observations, while some system
+	// clocks can return the same value for consecutive calls.
+	observedAt := time.Now().UTC()
+	if !observedAt.After(m.lastObservedAt) {
+		observedAt = m.lastObservedAt.Add(time.Nanosecond)
+	}
+	m.lastObservedAt = observedAt
+	return topics, observedAt
 }
 
 func (s *Server) overlaySnapshot() ([]string, map[string][]string, time.Time) {

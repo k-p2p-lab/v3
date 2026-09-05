@@ -31,17 +31,21 @@ type ServerConfig struct {
 }
 
 type Server struct {
-	config          ServerConfig
-	state           *state
-	client          *http.Client
-	logger          *slog.Logger
-	cancelMu        sync.Mutex
-	cancels         map[string]context.CancelFunc
-	shuttingDown    bool
-	runs            sync.WaitGroup
-	nodeSeq         atomic.Uint64
-	repeatBatches   map[string]*repeatBatch
-	resultDownloads map[string]int
+	config               ServerConfig
+	state                *state
+	client               *http.Client
+	logger               *slog.Logger
+	cancelMu             sync.Mutex
+	cancels              map[string]context.CancelFunc
+	shuttingDown         bool
+	runs                 sync.WaitGroup
+	nodeSeq              atomic.Uint64
+	repeatBatches        map[string]*repeatBatch
+	resultDownloads      map[string]int
+	resultArchiveMu      sync.Mutex
+	resultArchives       map[string]resultArchiveInfo
+	resultArchiveFlights map[string]*resultArchiveFlight
+	resultArchiveSlots   chan struct{}
 }
 
 func New(config ServerConfig, logger *slog.Logger) *Server {
@@ -55,11 +59,14 @@ func New(config ServerConfig, logger *slog.Logger) *Server {
 		logger = slog.Default()
 	}
 	return &Server{
-		config:  config,
-		state:   newState(config.DataDir),
-		client:  &http.Client{Timeout: 10 * time.Second},
-		logger:  logger,
-		cancels: make(map[string]context.CancelFunc),
+		config:               config,
+		state:                newState(config.DataDir),
+		client:               &http.Client{Timeout: 10 * time.Second},
+		logger:               logger,
+		cancels:              make(map[string]context.CancelFunc),
+		resultArchives:       make(map[string]resultArchiveInfo),
+		resultArchiveFlights: make(map[string]*resultArchiveFlight),
+		resultArchiveSlots:   make(chan struct{}, resultArchiveMeasureLimit),
 	}
 }
 

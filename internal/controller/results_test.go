@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -119,8 +120,17 @@ func TestResultDownloadIncludesFullPersistedFilesAndOriginalInterruptedState(t *
 		t.Fatal(err)
 	}
 	response := resultRequest(server, http.MethodGet, "/api/v1/experiments/run-export/download")
-	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "application/zip" || response.Header().Get("Content-Disposition") != `attachment; filename="run-export.zip"` {
+	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "application/zip" || response.Header().Get("Content-Disposition") != `attachment; filename="run-export.zip"` || response.Header().Get("Content-Length") != strconv.Itoa(response.Body.Len()) {
 		t.Fatalf("download status=%d headers=%v body=%s", response.Code, response.Header(), response.Body)
+	}
+	archiveReader, err := zip.NewReader(bytes.NewReader(response.Body.Bytes()), int64(response.Body.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range archiveReader.File {
+		if file.Name == "export.json" && file.Method != zip.Store {
+			t.Fatalf("export.json compression method=%d, want Store", file.Method)
+		}
 	}
 	files := decodeResultZIP(t, response.Body.Bytes())
 	if len(files) != 5 || !json.Valid(files["metrics.json"]) || !bytes.Equal(files["experiment.json"], original) || !bytes.Equal(files["events.jsonl"], events) || string(files["scenario.yaml"]) != "version: 3\nname: original scenario\n" {
@@ -138,6 +148,426 @@ func TestResultDownloadIncludesFullPersistedFilesAndOriginalInterruptedState(t *
 	}
 	if exported.State != "interrupted" || exported.StoredState != "running" || !exported.Partial || exported.Active || exported.EventBytes != int64(len(events)) || exported.ExportedAt.IsZero() || exported.Files["events.jsonl"] != int64(len(events)) {
 		t.Fatalf("incorrect export metadata: %+v", exported)
+	}
+	var rawExport struct {
+		ExportedAt string `json:"exportedAt"`
+	}
+	if err := json.Unmarshal(files["export.json"], &rawExport); err != nil || len(rawExport.ExportedAt) != len("2026-09-05T12:34:56.123456789Z") {
+		t.Fatalf("export time is not fixed-width RFC3339: %q, %v", rawExport.ExportedAt, err)
+	}
+}
+
+func TestResultListReportsExactStableDownloadBytesWithFreshExportTime(t *testing.T) {
+	server := New(ServerConfig{DataDir: t.TempDir()}, nil)
+	experiment, _ := resultFixture(t, server, "run-sized", "completed", time.Now().UTC())
+	if err := server.state.appendEvents(model.EventBatch{Events: []model.TraceEvent{{
+		RunID: experiment.ID, Type: "operation_failed", Timestamp: time.Now().UTC(),
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	readListed := func() savedResult {
+		t.Helper()
+		response := resultRequest(server, http.MethodGet, "/api/v1/results")
+		if response.Code != http.StatusOK {
+			t.Fatalf("list status=%d body=%s", response.Code, response.Body)
+		}
+		var results []savedResult
+		if err := json.Unmarshal(response.Body.Bytes(), &results); err != nil {
+			t.Fatal(err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("saved result missing from list: %+v", results)
+		}
+		return results[0]
+	}
+	assertDownloadSize := func(want int64) time.Time {
+		t.Helper()
+		response := resultRequest(server, http.MethodGet, "/api/v1/experiments/"+experiment.ID+"/download")
+		if response.Code != http.StatusOK || int64(response.Body.Len()) != want || response.Header().Get("Content-Length") != strconv.FormatInt(want, 10) || response.Header().Get(resultSizeMaxAgeHeader) != "" {
+			t.Fatalf("download size: listed=%d status=%d header=%q body=%d", want, response.Code, response.Header().Get("Content-Length"), response.Body.Len())
+		}
+		files := decodeResultZIP(t, response.Body.Bytes())
+		var exported struct {
+			ExportedAt time.Time `json:"exportedAt"`
+		}
+		if err := json.Unmarshal(files["export.json"], &exported); err != nil {
+			t.Fatal(err)
+		}
+		return exported.ExportedAt
+	}
+
+	listed := readListed()
+	if listed.DownloadBytes != nil || listed.DownloadSizeMaxAgeMS != nil {
+		t.Fatalf("cold list synchronously measured a ZIP: %+v", listed)
+	}
+	server.resultArchiveMu.Lock()
+	_, cachedBeforeHead := server.resultArchives[experiment.ID]
+	server.resultArchiveMu.Unlock()
+	if cachedBeforeHead {
+		t.Fatal("cold list populated the archive cache")
+	}
+	head := resultRequest(server, http.MethodHead, "/api/v1/experiments/"+experiment.ID+"/download")
+	headBytes, err := strconv.ParseInt(head.Header().Get("Content-Length"), 10, 64)
+	if err != nil || head.Code != http.StatusOK || head.Body.Len() != 0 || headBytes <= 0 || head.Header().Get(resultSizeMaxAgeHeader) != "" {
+		t.Fatalf("HEAD did not prepare an exact size: status=%d headers=%v body=%d error=%v", head.Code, head.Header(), head.Body.Len(), err)
+	}
+	listed = readListed()
+	if listed.DownloadBytes == nil || *listed.DownloadBytes != headBytes || listed.DownloadSizeMaxAgeMS != nil {
+		t.Fatalf("prepared size missing from list: head=%d result=%+v", headBytes, listed)
+	}
+	server.resultArchiveMu.Lock()
+	cached := server.resultArchives[experiment.ID]
+	server.resultArchiveMu.Unlock()
+	if cached.pendingPublications != 0 || !cached.expiresAt.IsZero() {
+		t.Fatalf("stable archive received a TTL: %+v", cached)
+	}
+	time.Sleep(time.Millisecond)
+	downloadedAt := assertDownloadSize(headBytes)
+	if !downloadedAt.After(cached.exportedAt) {
+		t.Fatalf("stable cached size pinned an old export time: %s <= %s", downloadedAt, cached.exportedAt)
+	}
+}
+
+func TestPendingResultArchivePinsBoundaryAndListExtendsTTL(t *testing.T) {
+	server := New(ServerConfig{DataDir: t.TempDir()}, nil)
+	experiment, _ := resultFixture(t, server, "run-pending-size", "completed", time.Now().UTC())
+	publishedAt := time.Now().UTC()
+	if err := server.state.appendEvents(model.EventBatch{Events: []model.TraceEvent{{
+		RunID: experiment.ID, NodeID: "publisher", Type: "publish", Topic: "topic", MessageID: "message", Timestamp: publishedAt,
+		Fields: map[string]any{"measurementDefinition": sessionWindowDefinition, "deliveryWindow": "1h"},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	response := resultRequest(server, http.MethodGet, "/api/v1/results")
+	var listed []savedResult
+	if err := json.Unmarshal(response.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].DownloadBytes != nil || listed[0].DownloadSizeMaxAgeMS != nil {
+		t.Fatalf("cold pending result was synchronously measured: %s", response.Body)
+	}
+	head := resultRequest(server, http.MethodHead, "/api/v1/experiments/"+experiment.ID+"/download")
+	headBytes, err := strconv.ParseInt(head.Header().Get("Content-Length"), 10, 64)
+	if err != nil || head.Code != http.StatusOK || head.Body.Len() != 0 || headBytes <= 0 {
+		t.Fatalf("pending HEAD measurement failed: status=%d headers=%v body=%d error=%v", head.Code, head.Header(), head.Body.Len(), err)
+	}
+	headMaxAgeMS, err := strconv.ParseInt(head.Header().Get(resultSizeMaxAgeHeader), 10, 64)
+	maxAdvertisedAgeMS := (resultArchiveCacheTTL - resultArchiveResponseGrace).Milliseconds()
+	if err != nil || headMaxAgeMS <= 0 || headMaxAgeMS > maxAdvertisedAgeMS {
+		t.Fatalf("pending HEAD max age is missing or invalid: %q, %v", head.Header().Get(resultSizeMaxAgeHeader), err)
+	}
+	response = resultRequest(server, http.MethodGet, "/api/v1/results")
+	if err := json.Unmarshal(response.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].DownloadBytes == nil || *listed[0].DownloadBytes != headBytes || listed[0].DownloadSizeMaxAgeMS == nil || *listed[0].DownloadSizeMaxAgeMS <= 0 || *listed[0].DownloadSizeMaxAgeMS > maxAdvertisedAgeMS {
+		t.Fatalf("prepared pending size missing: head=%d list=%s", headBytes, response.Body)
+	}
+	server.resultArchiveMu.Lock()
+	cached := server.resultArchives[experiment.ID]
+	server.resultArchiveMu.Unlock()
+	if cached.pendingPublications != 1 || !cached.expiresAt.After(time.Now().UTC()) || !cached.listGraceExtended {
+		t.Fatalf("pending archive cache is not bounded: %+v", cached)
+	}
+
+	snapshot, err := server.captureResult(experiment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot.exportedAt = cached.exportedAt.Add(time.Second)
+	bytes, err := server.prepareResultArchive(context.Background(), snapshot)
+	if err != nil {
+		snapshot.close()
+		t.Fatal(err)
+	}
+	if bytes != cached.bytes || !snapshot.exportedAt.Equal(cached.exportedAt) {
+		snapshot.close()
+		t.Fatalf("pending cache did not pin its boundary: bytes=%d snapshot=%s cache=%+v", bytes, snapshot.exportedAt, cached)
+	}
+	snapshot.close()
+
+	server.resultArchiveMu.Lock()
+	cached = server.resultArchives[experiment.ID]
+	cached.expiresAt = time.Now().UTC().Add(resultArchiveResponseGrace + 2*time.Second)
+	cached.listGraceExtended = false
+	server.resultArchives[experiment.ID] = cached
+	server.resultArchiveMu.Unlock()
+	beforeRefresh := time.Now().UTC()
+	response = resultRequest(server, http.MethodGet, "/api/v1/results")
+	if response.Code != http.StatusOK {
+		t.Fatalf("refresh status=%d body=%s", response.Code, response.Body)
+	}
+	listed = nil
+	if err := json.Unmarshal(response.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	server.resultArchiveMu.Lock()
+	extended := server.resultArchives[experiment.ID]
+	server.resultArchiveMu.Unlock()
+	if !extended.listGraceExtended || extended.expiresAt.Before(beforeRefresh.Add(resultArchiveCacheTTL-time.Second)) {
+		t.Fatalf("list did not extend pending cache after preparing all rows: %s", extended.expiresAt)
+	}
+	if len(listed) != 1 || listed[0].DownloadSizeMaxAgeMS == nil || *listed[0].DownloadSizeMaxAgeMS != maxAdvertisedAgeMS {
+		t.Fatalf("list response omitted its extended relative max age: cache=%s list=%s", extended.expiresAt, response.Body)
+	}
+	firstExtendedExpiry := extended.expiresAt
+	firstMaxAgeMS := *listed[0].DownloadSizeMaxAgeMS
+	response = resultRequest(server, http.MethodGet, "/api/v1/results")
+	if response.Code != http.StatusOK {
+		t.Fatalf("second refresh status=%d body=%s", response.Code, response.Body)
+	}
+	server.resultArchiveMu.Lock()
+	notSlid := server.resultArchives[experiment.ID]
+	server.resultArchiveMu.Unlock()
+	if !notSlid.expiresAt.Equal(firstExtendedExpiry) {
+		t.Fatalf("repeated list refresh slid pending cache expiry: %s != %s", notSlid.expiresAt, firstExtendedExpiry)
+	}
+	listed = nil
+	if err := json.Unmarshal(response.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].DownloadSizeMaxAgeMS == nil || *listed[0].DownloadSizeMaxAgeMS <= 0 || *listed[0].DownloadSizeMaxAgeMS > firstMaxAgeMS {
+		t.Fatalf("repeated list returned an invalid relative max age: %s", response.Body)
+	}
+
+	server.resultArchiveMu.Lock()
+	expired := server.resultArchives[experiment.ID]
+	expired.expiresAt = time.Now().UTC().Add(resultArchiveResponseGrace / 2)
+	server.resultArchives[experiment.ID] = expired
+	server.resultArchiveMu.Unlock()
+	response = resultRequest(server, http.MethodGet, "/api/v1/results")
+	if response.Code != http.StatusOK {
+		t.Fatalf("expired refresh status=%d body=%s", response.Code, response.Body)
+	}
+	listed = nil
+	if err := json.Unmarshal(response.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].DownloadBytes != nil || listed[0].DownloadSizeMaxAgeMS != nil {
+		t.Fatalf("pending size inside the response grace was returned without HEAD: %s", response.Body)
+	}
+	server.resultArchiveMu.Lock()
+	afterList := server.resultArchives[experiment.ID]
+	server.resultArchiveMu.Unlock()
+	if !afterList.exportedAt.Equal(expired.exportedAt) {
+		t.Fatalf("list remeasured an expired pending archive: %s != %s", afterList.exportedAt, expired.exportedAt)
+	}
+	head = resultRequest(server, http.MethodHead, "/api/v1/experiments/"+experiment.ID+"/download")
+	if head.Code != http.StatusOK || head.Body.Len() != 0 || head.Header().Get("Content-Length") == "" {
+		t.Fatalf("near-expiry pending HEAD failed: status=%d headers=%v body=%d", head.Code, head.Header(), head.Body.Len())
+	}
+	refreshedMaxAgeMS, err := strconv.ParseInt(head.Header().Get(resultSizeMaxAgeHeader), 10, 64)
+	if err != nil || refreshedMaxAgeMS <= 0 || refreshedMaxAgeMS > maxAdvertisedAgeMS {
+		t.Fatalf("refreshed pending HEAD max age=%q: %v", head.Header().Get(resultSizeMaxAgeHeader), err)
+	}
+	server.resultArchiveMu.Lock()
+	refreshed := server.resultArchives[experiment.ID]
+	server.resultArchiveMu.Unlock()
+	if refreshed.listGraceExtended || !refreshed.expiresAt.After(expired.expiresAt.Add(3*time.Second)) {
+		t.Fatalf("near-expiry pending cache was not remeasured: refreshed=%+v expired=%+v header=%d", refreshed, expired, refreshedMaxAgeMS)
+	}
+	if !refreshed.expiresAt.After(time.Now().UTC().Add(resultArchiveResponseGrace)) {
+		t.Fatalf("refreshed HEAD cache has no server-side response grace: %+v", refreshed)
+	}
+}
+
+func TestResultArchiveRelativeMaxAgeReservesResponseGrace(t *testing.T) {
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	pending := resultArchiveInfo{
+		pendingPublications: 1,
+		expiresAt:           now.Add(resultArchiveResponseGrace + 1500*time.Millisecond),
+	}
+	if maxAgeMS, usable := resultArchiveSizeMaxAgeMS(pending, now); !usable || maxAgeMS != 1500 {
+		t.Fatalf("relative max age=(%d, %t), want (1500, true)", maxAgeMS, usable)
+	}
+	pending.expiresAt = now.Add(resultArchiveResponseGrace + time.Millisecond - time.Nanosecond)
+	if maxAgeMS, usable := resultArchiveSizeMaxAgeMS(pending, now); usable || maxAgeMS != 0 {
+		t.Fatalf("sub-millisecond max age=(%d, %t), want unusable", maxAgeMS, usable)
+	}
+}
+
+func TestResultArchiveInfoInvalidatesForChangedFilesAndHonorsCancellation(t *testing.T) {
+	server := New(ServerConfig{DataDir: t.TempDir()}, nil)
+	experiment, _ := resultFixture(t, server, "run-changing", "running", time.Now().UTC())
+	server.state.experiments[experiment.ID] = experiment
+	listed := resultRequest(server, http.MethodGet, "/api/v1/results")
+	var activeResults []savedResult
+	if err := json.Unmarshal(listed.Body.Bytes(), &activeResults); err != nil {
+		t.Fatal(err)
+	}
+	if len(activeResults) != 1 || activeResults[0].DownloadBytes != nil || activeResults[0].DownloadSizeMaxAgeMS != nil {
+		t.Fatalf("active result was measured during list refresh: %+v", activeResults)
+	}
+	server.resultArchiveMu.Lock()
+	_, activeCached := server.resultArchives[experiment.ID]
+	server.resultArchiveMu.Unlock()
+	if activeCached {
+		t.Fatal("active result list populated the archive cache")
+	}
+
+	first, err := server.captureResult(experiment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.prepareResultArchive(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	firstVersion := first.archiveVersion()
+	first.close()
+	activeDownload := resultRequest(server, http.MethodGet, "/api/v1/experiments/"+experiment.ID+"/download")
+	if activeDownload.Code != http.StatusOK || activeDownload.Header().Get("Content-Length") != strconv.Itoa(activeDownload.Body.Len()) {
+		t.Fatalf("active download has an inexact size: status=%d headers=%v body=%d", activeDownload.Code, activeDownload.Header(), activeDownload.Body.Len())
+	}
+
+	if err := server.state.appendEvents(model.EventBatch{Events: []model.TraceEvent{{
+		RunID: experiment.ID, Type: "operation_failed", Timestamp: time.Now().UTC(),
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := server.captureResult(experiment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sameResultArchiveVersion(firstVersion, changed.archiveVersion()) {
+		changed.close()
+		t.Fatal("an appended event did not invalidate the archive version")
+	}
+	if _, err := server.prepareResultArchive(context.Background(), changed); err != nil {
+		changed.close()
+		t.Fatal(err)
+	}
+	changed.close()
+
+	server.resultArchiveMu.Lock()
+	delete(server.resultArchives, experiment.ID)
+	server.resultArchiveMu.Unlock()
+	canceled, err := server.captureResult(experiment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = server.prepareResultArchive(ctx, canceled)
+	canceled.close()
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled measurement error=%v", err)
+	}
+	server.resultArchiveMu.Lock()
+	_, cachedAfterCancel := server.resultArchives[experiment.ID]
+	server.resultArchiveMu.Unlock()
+	if cachedAfterCancel {
+		t.Fatal("a canceled archive measurement was cached")
+	}
+}
+
+func TestCanceledResultDownloadStopsWithoutWritingAnErrorResponse(t *testing.T) {
+	var logs bytes.Buffer
+	server := New(ServerConfig{DataDir: t.TempDir()}, slog.New(slog.NewTextHandler(&logs, nil)))
+	resultFixture(t, server, "run-canceled-download", "completed", time.Now().UTC())
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/experiments/run-canceled-download/download", nil)
+	ctx, cancel := context.WithCancel(request.Context())
+	cancel()
+	response := httptest.NewRecorder()
+	server.Handler(context.Background()).ServeHTTP(response, request.WithContext(ctx))
+	if response.Body.Len() != 0 || response.Header().Get("Content-Type") != "" {
+		t.Fatalf("canceled download wrote a response: headers=%v body=%s", response.Header(), response.Body)
+	}
+	if strings.Contains(logs.String(), "measure saved result archive") {
+		t.Fatalf("canceled download was logged as a server failure: %s", logs.String())
+	}
+}
+
+func TestResultArchiveMeasurementSlotsLimitConcurrencyAndHonorCancellation(t *testing.T) {
+	server := New(ServerConfig{DataDir: t.TempDir()}, nil)
+	if cap(server.resultArchiveSlots) != resultArchiveMeasureLimit {
+		t.Fatalf("archive measurement capacity=%d", cap(server.resultArchiveSlots))
+	}
+	for range resultArchiveMeasureLimit {
+		if err := server.acquireResultArchiveSlot(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := server.acquireResultArchiveSlot(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("full measurement semaphore ignored cancellation: %v", err)
+	}
+	server.releaseResultArchiveSlot()
+	if err := server.acquireResultArchiveSlot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for range resultArchiveMeasureLimit {
+		server.releaseResultArchiveSlot()
+	}
+	if len(server.resultArchiveSlots) != 0 {
+		t.Fatalf("archive measurement slots leaked: %d", len(server.resultArchiveSlots))
+	}
+}
+
+func TestResultArchiveVersionIncludesExportedRunState(t *testing.T) {
+	base := resultArchiveVersion{active: true, state: "running", storedState: "running"}
+	for name, changed := range map[string]resultArchiveVersion{
+		"active":       {active: false, state: "running", storedState: "running"},
+		"state":        {active: true, state: "completed", storedState: "running"},
+		"stored state": {active: true, state: "running", storedState: "completed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if sameResultArchiveVersion(base, changed) {
+				t.Fatalf("archive version ignored %s", name)
+			}
+		})
+	}
+}
+
+func TestConcurrentResultArchiveMeasurementsShareOneBoundary(t *testing.T) {
+	server := New(ServerConfig{DataDir: t.TempDir()}, nil)
+	experiment, _ := resultFixture(t, server, "run-concurrent-size", "completed", time.Now().UTC())
+	if err := server.state.appendEvents(model.EventBatch{Events: []model.TraceEvent{{
+		RunID: experiment.ID, NodeID: "publisher", Type: "publish", Topic: "topic", MessageID: "message", Timestamp: time.Now().UTC(),
+		Fields: map[string]any{"measurementDefinition": sessionWindowDefinition, "deliveryWindow": "1h"},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	const workers = 12
+	type measurement struct {
+		bytes      int64
+		exportedAt time.Time
+		err        error
+	}
+	results := make(chan measurement, workers)
+	start := make(chan struct{})
+	var ready sync.WaitGroup
+	ready.Add(workers)
+	for range workers {
+		go func() {
+			snapshot, err := server.captureResult(experiment.ID)
+			ready.Done()
+			if err != nil {
+				results <- measurement{err: err}
+				return
+			}
+			defer snapshot.close()
+			<-start
+			bytes, err := server.prepareResultArchive(context.Background(), snapshot)
+			results <- measurement{bytes: bytes, exportedAt: snapshot.exportedAt, err: err}
+		}()
+	}
+	ready.Wait()
+	close(start)
+	var first measurement
+	for index := 0; index < workers; index++ {
+		measured := <-results
+		if measured.err != nil {
+			t.Fatal(measured.err)
+		}
+		if index == 0 {
+			first = measured
+			continue
+		}
+		if measured.bytes != first.bytes || !measured.exportedAt.Equal(first.exportedAt) {
+			t.Fatalf("concurrent measurements diverged: first=%+v current=%+v", first, measured)
+		}
 	}
 }
 
