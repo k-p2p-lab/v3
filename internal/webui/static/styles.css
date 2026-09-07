@@ -395,3 +395,30 @@ dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
 }
+
+/* Saved-run analysis stays independent of the live topology render loop. */
+.analysis-panel { margin-top: 1rem; scroll-margin-top: 6rem; }
+.analysis-toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: .75rem; padding: .8rem 1.2rem; }
+.analysis-toolbar label { display: flex; flex-direction: column; gap: .4rem; color: var(--muted); font-size: .8rem; min-width: 0; }
+.analysis-toolbar select { max-width: 30rem; min-height: 2.6rem; padding: .5rem; border: 1px solid var(--line); border-radius: .4rem; color: var(--text); background: var(--bg); font: inherit; }
+.analysis-toolbar select:focus-visible { outline: 2px solid var(--cyan); }
+.analyze-button, .analysis-runs button, .analysis-chart button { min-height: 2rem; padding: .3rem .6rem; border: 1px solid var(--line); border-radius: .4rem; color: var(--cyan); background: var(--surface-raised); font-size: .8rem; }
+.analysis-runs { display: flex; flex-wrap: wrap; gap: .5rem; padding: 0 1.2rem; list-style: none; }
+.analysis-runs li { display: flex; align-items: center; gap: .5rem; padding: .5rem; border: 1px solid var(--line); border-radius: .5rem; font-size: .8rem; overflow-wrap: anywhere; }
+.analysis-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; padding: 1rem 1.2rem; }
+.analysis-chart { min-width: 0; margin: 0; border: 1px solid var(--line); border-radius: .6rem; overflow: hidden; background: var(--bg-soft); }
+.analysis-chart header { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .7rem .8rem; }
+.analysis-chart h3 { margin: 0; font-size: .9rem; }
+.analysis-chart svg { display: block; width: 100%; height: auto; }
+.analysis-chart figcaption { padding: .5rem .8rem; color: var(--muted); font-size: .75rem; line-height: 1.5; }
+.analysis-chart circle:focus { outline: none; stroke: white; stroke-width: 3; }
+.analysis-sample { flex: 1; }
+.analysis-sample input { width: 100%; accent-color: var(--cyan); }
+#analysisSummary td { white-space: nowrap; font-variant-numeric: tabular-nums; }
+#analysisSummary small { display: block; color: var(--muted); margin-top: .25rem; }
+@media (max-width: 900px) { .analysis-charts { grid-template-columns: 1fr; } }
+@media (max-width: 600px) { .analysis-toolbar label, .analysis-toolbar select { width: 100%; max-width: 100%; } }
+
+.analysis-runs button { flex: 0 0 auto; white-space: nowrap; }
+@media (max-width: 860px) { .analysis-panel { scroll-margin-top: 10rem; } }
+@media (max-width: 620px) { .analysis-panel { scroll-margin-top: 14rem; } }

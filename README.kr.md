@@ -61,6 +61,7 @@ manager에도 Agent를 실행해야 한다면 `--workers` 대신 `--all`을 사�
 | [개발](docs/development.kr.md) | Go 빌드, 시나리오 검증, 테스트와 Swarm 개발 배포 |
 | [실험 지표](docs/experiment-metrics.kr.md) | churn 상황의 도달률 분모, 지연, 중복과 한계 |
 | [모니터링과 결과](docs/monitoring.kr.md) | Prometheus, Grafana, ZIP 내용, 보존 데이터와 삭제 |
+| [저장 결과 시각화](docs/visualization.kr.md) | 분포·시계열·실행 비교, JSON/CSV/SVG 내보내기 |
 | [토폴로지](docs/topology.kr.md) | Agent 영역, 그래프 레이어, topic 필터와 조작 방법 |
 | [Swarm churn 및 publish](docs/swarm-churn-publish.kr.md) | 다중 서버 연속 churn 실험 절차 |
 | [Prysm 블록 스코어와 churn](docs/swarm-churn-prysm-block.kr.md) | 세 지연 그룹의 동시 churn과 스코어 관측 |

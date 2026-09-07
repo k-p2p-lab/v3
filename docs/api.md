@@ -27,6 +27,7 @@ The Controller exposes the following public and operational endpoints. When `KPL
 | `GET` / `PUT` / `DELETE` | `/api/v1/scenarios/{id}` | Load, update, or delete one saved scenario |
 | `GET` | `/api/v1/results` | Saved experiment results, including runs from previous Controller sessions |
 | `DELETE` | `/api/v1/results/{id}` | Delete an inactive saved result; active batches and downloads are protected |
+| `GET` | `/api/v1/experiments/{id}/analysis` | Chart distributions, timelines and metrics from saved events and observations |
 | `GET` | `/api/v1/experiments/{id}/download` | Download a ZIP of the saved scenario, metadata, and collected events |
 | `POST` | `/api/v1/experiments` | Run YAML once, or JSON `{scenario, repetitions}` for 1–100 sequential runs |
 | `POST` | `/api/v1/experiments/{id}/stop` | Cancel a running experiment, then perform bounded job shutdown and generation-fenced Peer cleanup |
@@ -96,3 +97,5 @@ Internal endpoints may change independently of the operator API. Request and sna
 Enter the value in the dashboard's **Run experiment → API token** field. Running, saving, updating, or deleting through that dialog saves it in that origin's browser `localStorage` for later mutation requests; it does not expire automatically. REST clients send `Authorization: Bearer <token>`. GET reads, including state, events, SSE, and metrics, stay public. The stateless `POST /api/v1/scenarios/validate` is also public; this exception applies only to that exact method and path. The Controller also exempts HEAD; Agents and Peers only exempt GET. The token does not encrypt HTTP traffic.
 
 The same four job counters are present in `/api/v1/snapshot` and SSE snapshots. The dashboard displays them on each run, so active, successful, failed, and canceled background work is visible without inspecting Controller logs.
+
+See [visualization](visualization.md) for analysis responses, charts and export formats.

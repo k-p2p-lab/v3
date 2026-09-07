@@ -61,6 +61,7 @@ Start with the [Hub](https://github.com/k-p2p-lab/hub) for objectives, research,
 | [Development](docs/development.md) | Go build, scenario validation, tests, and development deployment on Swarm |
 | [Experiment metrics](docs/experiment-metrics.md) | Churn-aware delivery denominator, latency, duplicates, and limitations |
 | [Monitoring and results](docs/monitoring.md) | Prometheus, Grafana, ZIP contents, retained data, and deletion |
+| [Saved-result visualization](docs/visualization.md) | Distributions, timelines, run comparisons and JSON/CSV/SVG exports |
 | [Topology](docs/topology.md) | Agent sectors, graph layers, topic filters, and controls |
 | [Swarm churn and publish](docs/swarm-churn-publish.md) | Multi-server continuous-churn experiment walkthrough |
 | [Prysm block scoring under churn](docs/swarm-churn-prysm-block.md) | Three delay cohorts, concurrent churn, and score observation |

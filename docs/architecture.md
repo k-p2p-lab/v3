@@ -98,6 +98,8 @@ The Dashboard renders recent state and events from the Controller. The Controlle
 
 Metrics and topology are observations of received reports. A stale or unreachable Agent, telemetry queue loss, `scope: all` impairment, scrape timing, or forced shutdown can reduce what the control plane observes even while some P2P traffic occurred. Use [experiment metrics](experiment-metrics.md) for metric definitions, [monitoring and results](monitoring.md) for collection limits, and [topology](topology.md) for graph semantics.
 
+The Controller periodically saves topology and score observations in `observations.jsonl` during each run. The embedded Dashboard uses the [saved-result analysis API](visualization.md) to visualize distributions and timelines and compare runs from saved events and observations, independently of Prometheus retention.
+
 ## Supported deployment boundary
 
 The production target is rootful Docker Engine on Linux. Per-Peer network conditions depend on Linux network namespaces, `tc`, `NET_ADMIN`, and the required qdisc modules. Host preparation, placement, overlay requirements, Agent metrics reachability, storage, and cleanup are covered by the [Swarm deployment guide](swarm.md).

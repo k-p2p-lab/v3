@@ -23,6 +23,10 @@ Swarm은 Prometheus/Grafana 포트를 control 노드에 게시합니다. 각 Age
 
 대시보드 상단 메뉴는 Prometheus와 Grafana를 새 탭으로 엽니다. 현재 Dashboard의 scheme과 호스트를 유지하고 설정된 게시 포트로 바꿉니다. 브라우저가 사용하는 포트가 설정값과 같으면 직접 접속과 SSH 터널에서 동작합니다. Proxy가 scheme/path를 바꾸거나 로컬 forwarding에 다른 포트를 쓰면 실제 모니터링 주소를 별도로 여십시오.
 
+## Dashboard 내장 시각화
+
+**Saved results → Analyze**에서 전파 CDF, 지연 분포, 메시지·토폴로지·점수 시계열과 최대 4개 실행 비교를 확인할 수 있습니다. 이 화면은 저장 파일을 직접 분석하며 Prometheus와 독립적으로 동작합니다. [시각화 사용법](visualization.kr.md)을 참고하십시오.
+
 ## 실행과 분석
 
 1. 대시보드의 **Run experiment**에서 [`examples/monitoring.yaml`](../examples/monitoring.yaml)을 실행합니다. envelope 발행과 raw 발행을 함께 확인하는 작은 실험입니다.
@@ -43,6 +47,7 @@ ZIP에는 다음 파일이 들어 있습니다.
 | `scenario.yaml` | 실험 실행 시 제출한 시나리오 원문 |
 | `experiment.json` | 저장된 실험 메타데이터·상태·seed·job 카운터 원문 |
 | `events.jsonl` | 내보내기 기준 시점까지 저장된 전체 이벤트. 한 줄에 JSON 하나이며, 기록된 이벤트가 없으면 빈 파일 |
+| `observations.jsonl` | 새 실행에서 5초마다 저장한 그룹별 상태·차수·clustering·score 관측. 이전 결과에는 없을 수 있음 |
 | `metrics.json` | 동일 이벤트 로그 경계에서 재계산한 세션 기간 도달률 범위, 발행 시점 대상 결과, coverage, pending/unknown, 첫 원격 지연, 관측 중복 수. 과거 정의는 legacy 유지 |
 | `export.json` | 내보내기 시각, 실험 상태, active/partial 여부와 원본 파일의 캡처된 크기 |
 

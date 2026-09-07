@@ -23,6 +23,10 @@ Swarm publishes the Prometheus and Grafana ports on the control node. It also pu
 
 The Dashboard header links to Prometheus and Grafana in new tabs. It preserves the current Dashboard scheme and host and substitutes the configured published ports. Direct access and SSH tunnels work when those browser-facing ports match the configured values. If a proxy changes the scheme/path or local forwarding uses different ports, open the actual monitoring addresses separately.
 
+## Built-in Dashboard visualization
+
+**Saved results → Analyze** opens latency CDFs, histograms, message/topology/score timelines and comparisons of up to four runs. This screen analyzes saved files independently of Prometheus. See [visualization](visualization.md).
+
 ## Run and analyze an experiment
 
 1. Use **Run experiment** in the Dashboard to run [`examples/monitoring.yaml`](../examples/monitoring.yaml). This small experiment includes both envelope and raw publications.
@@ -43,6 +47,7 @@ Each ZIP contains:
 | `scenario.yaml` | Exact scenario submitted for the run |
 | `experiment.json` | Original saved experiment metadata, state, seed, and job counters |
 | `events.jsonl` | All event records saved at the export boundary; one JSON object per line, or an empty file when no events have been recorded |
+| `observations.jsonl` | Group state, degree, clustering and score observations recorded every 5 seconds for new runs; absent in older results |
 | `metrics.json` | Session-window delivery bounds, starting-cohort results, coverage, pending/unknown counts, first remote latency, and observed duplicates rebuilt from the same event-log prefix; historical definitions stay legacy |
 | `export.json` | Export time, run state, active/partial flags, and the captured source file sizes |
 

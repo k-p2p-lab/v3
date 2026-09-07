@@ -563,6 +563,8 @@ phases:
 	}
 
 	finished := waitForLifecycleExperiment(t, controller, experiment.ID)
+	// Terminal metadata precedes the runner's final log write.
+	controller.runs.Wait()
 	if finished.State != "canceled" {
 		t.Fatalf("experiment state=%q error=%q, want canceled", finished.State, finished.Error)
 	}

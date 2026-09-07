@@ -27,6 +27,7 @@ Controller는 아래 공개 및 운영 엔드포인트를 제공합니다. `KPL_
 | `GET` / `PUT` / `DELETE` | `/api/v1/scenarios/{id}` | 저장 시나리오 하나를 불러오기, 갱신 또는 삭제 |
 | `GET` | `/api/v1/results` | 이전 Controller 실행에서 저장한 실험을 포함하는 결과 목록 |
 | `DELETE` | `/api/v1/results/{id}` | 비활성 저장 결과 삭제. 진행 중 배치·다운로드 보호 |
+| `GET` | `/api/v1/experiments/{id}/analysis` | 저장 이벤트·관측치를 분석한 그래프 데이터와 집계 JSON |
 | `GET` | `/api/v1/experiments/{id}/download` | 저장된 시나리오·메타데이터·수집 이벤트를 ZIP으로 다운로드 |
 | `POST` | `/api/v1/experiments` | YAML 1회 실행 또는 JSON `{scenario, repetitions}`로 1~100회 순차 실행 |
 | `POST` | `/api/v1/experiments/{id}/stop` | 실행을 취소한 뒤 제한 시간 내 job 종료와 generation-fenced Peer cleanup 수행 |
@@ -96,3 +97,5 @@ Agent는 Controller가 cleanup에 사용하는 다음 endpoint도 제공합니�
 대시보드의 **Run experiment → API token**에 같은 값을 입력하십시오. 이 창에서 실행·저장·갱신·삭제하면 해당 origin의 브라우저 `localStorage`에 저장하여 이후 변경 요청에 사용하며 자동 만료되지 않습니다. REST 요청에는 `Authorization: Bearer <token>`을 붙입니다. 상태·이벤트·SSE·metrics 등 GET 조회는 토큰 설정 후에도 공개입니다. 상태를 바꾸지 않는 `POST /api/v1/scenarios/validate`도 공개이며 해당 method와 정확한 path에만 적용됩니다. Controller는 HEAD도 인증 검사에서 제외하고 Agent와 Peer는 GET만 제외합니다. 토큰 자체가 HTTP 전송을 암호화하지는 않습니다.
 
 같은 네 가지 job counter가 `/api/v1/snapshot`과 SSE snapshot에도 포함됩니다. 대시보드는 각 run에 이를 표시하므로 Controller 로그를 열지 않아도 실행 중, 성공, 실패, 취소된 background 작업 수를 확인할 수 있습니다.
+
+[시각화 가이드](visualization.kr.md)에서 분석 응답, 그래프와 내보내기 형식을 확인하십시오.

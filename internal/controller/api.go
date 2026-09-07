@@ -62,6 +62,11 @@ func (s *Server) serve(ctx context.Context, listener net.Listener) error {
 			}
 		}
 	}()
+	analysisDone := make(chan struct{})
+	go func() {
+		defer close(analysisDone)
+		s.recordAnalysisLoop(runCtx)
+	}()
 	s.logger.Info("controller listening", "address", s.config.Listen)
 	served := make(chan error, 1)
 	go func() { served <- server.Serve(listener) }()
@@ -89,6 +94,7 @@ func (s *Server) serve(ctx context.Context, listener net.Listener) error {
 	// the final experiment state. Returning sooner would let main exit while
 	// those goroutines still own resources, especially after Linux SIGTERM.
 	s.runs.Wait()
+	<-analysisDone
 	if errors.Is(err, http.ErrServerClosed) {
 		err = nil
 	}
@@ -540,6 +546,10 @@ func (s *Server) handleExperimentAction(w http.ResponseWriter, r *http.Request) 
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) != 2 || parts[0] == "" {
 		http.NotFound(w, r)
+		return
+	}
+	if parts[1] == "analysis" {
+		s.handleResultAnalysis(w, r, parts[0])
 		return
 	}
 	if parts[1] == "download" {

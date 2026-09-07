@@ -49,6 +49,7 @@ type Server struct {
 	resultArchives         map[string]resultArchiveInfo
 	resultArchiveFlights   map[string]*resultArchiveFlight
 	resultArchiveSlots     chan struct{}
+	analysisSlots          chan struct{}
 	scenarioMu             sync.Mutex
 	scenarioCacheMu        sync.Mutex
 	scenarioSummaries      map[string][]scenarioSummaryCacheEntry
@@ -81,6 +82,7 @@ func New(config ServerConfig, logger *slog.Logger) *Server {
 		resultArchives:         make(map[string]resultArchiveInfo),
 		resultArchiveFlights:   make(map[string]*resultArchiveFlight),
 		resultArchiveSlots:     make(chan struct{}, resultArchiveMeasureLimit),
+		analysisSlots:          make(chan struct{}, 1),
 		scenarioSummaries:      make(map[string][]scenarioSummaryCacheEntry),
 		scenarioSummaryFlights: make(map[string][]*scenarioSummaryFlight),
 		scenarioRecordCheck: func(data []byte) error {
@@ -246,6 +248,10 @@ func (s *Server) runScenario(parentCtx context.Context, experiment model.Experim
 		}
 	}
 	resultErr := errors.Join(runErr, cleanupErr)
+
+	if err := s.state.recordAnalysisObservation(experiment.ID, time.Now().UTC()); err != nil {
+		s.logger.Warn("record final analysis observation", "run", experiment.ID, "error", err)
+	}
 
 	finished := time.Now().UTC()
 	s.updateExperiment(experiment.ID, func(current *model.Experiment) {

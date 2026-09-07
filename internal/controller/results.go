@@ -553,10 +553,13 @@ func (s *Server) captureResultFiles(id string, download bool) (*resultSnapshot, 
 			return err
 		}
 		defer root.Close()
-		for _, name := range []string{"scenario.yaml", "experiment.json", "events.jsonl"} {
+		for _, name := range []string{"scenario.yaml", "experiment.json", "events.jsonl", "observations.jsonl"} {
 			file, err := openResultFile(root, name)
-			if err != nil && !(name == "events.jsonl" && errors.Is(err, os.ErrNotExist)) {
+			if err != nil && !((name == "events.jsonl" || name == "observations.jsonl") && errors.Is(err, os.ErrNotExist)) {
 				return fmt.Errorf("open %s: %w", name, err)
+			}
+			if name == "observations.jsonl" && file.file == nil {
+				continue
 			}
 			snapshot.files = append(snapshot.files, file)
 		}
