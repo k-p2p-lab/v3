@@ -11,6 +11,10 @@ Linux 환경의 저장소 루트에서 다음 명령을 실행하십시오.
 ```sh
 go build -o bin/kpl ./cmd/kpl
 go test -buildvcs=false ./... -timeout 120s
+sh scripts/test-swarm-agent.sh
+sh scripts/test-check-swarm.sh
+sh scripts/test-swarm-config.sh
+sh scripts/test-swarm.sh
 ```
 
 실행하지 않고 시나리오를 검증하는 명령은 다음과 같습니다.
@@ -19,16 +23,9 @@ go test -buildvcs=false ./... -timeout 120s
 ./bin/kpl validate --scenario examples/smoke.yaml
 ```
 
-Docker 없이 빠르게 개발하려면 별도 Linux 터미널에서 Controller와 Agent 하나를 실행합니다.
+## Swarm에서 개발 실험 실행
 
-```sh
-./bin/kpl controller --listen :8080
-./bin/kpl agent --runtime process --id local-a \
-  --advertise-url http://127.0.0.1:8090 \
-  --controller-url http://127.0.0.1:8080
-```
-
-process 런타임은 각 Peer를 자식 프로세스로 실행합니다. 네트워크 네임스페이스를 격리할 수 없으므로 Peer 네트워크 조건이 있는 시나리오를 거부합니다. 컨테이너 격리 또는 `tc` 동작을 검증할 때는 기본 Docker 런타임과 [Linux 사전 점검](linux-deployment.kr.md#서버-준비와-실행)을 사용하십시오.
+변경한 이미지를 빌드하고 게시한 뒤 [Swarm 절차](swarm.kr.md)로 배포하십시오. Linux 노드 하나로 개발용 Swarm을 구성할 수 있으며 `KPL_MIN_AGENTS=1`과 `deploy --all`을 사용합니다. Agent는 활성 Swarm 노드와 명시적으로 설정한 이미지 및 attachable Peer overlay를 요구합니다. 호스트 간 배치와 연결을 검증할 때에는 최소 두 Agent 노드에서 분산 smoke 시나리오를 실행하십시오.
 
 ## 컨테이너와 브라우저 회귀 검사
 

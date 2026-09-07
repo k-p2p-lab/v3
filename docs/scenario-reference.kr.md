@@ -106,7 +106,7 @@ GossipSub 전용 설정(`params`, score/inspection, `floodPublish`, `peerExchang
 
 v2 설정을 이식할 때는 이름과 달리 prefix로 사용됐던 v2 `protocol_id`를 v3 `kademlia.protocolPrefix`로 옮기십시오. v3의 `kademlia.protocolId`는 Kademlia V1 wire protocol ID 전체를 정확히 override하며 `protocolPrefix`, `protocolExtension`과 함께 사용할 수 없으므로 v2 prefix 값을 이 필드에 복사하면 안 됩니다. 기본 prefix `/k-p2p-lab/v3`는 의도적으로 새로 분리한 protocol namespace입니다. v2 namespace 호환이 필요한 실험에서만 `protocolPrefix: /k-p2p-lab/kad-dht`를 사용하십시오.
 
-RandomSub에서 `randomDegree`는 libp2p의 process-global `RandomSubD`를 통해 최소 연결/degree 목표를 설정합니다. 현재 KPL은 Peer마다 별도 프로세스를 사용하므로 이 global 값은 Peer 하나에만 적용됩니다. 여러 Peer를 한 프로세스에 넣는 runtime을 추가한다면 별도 격리가 필요합니다. `randomNetworkSize`는 `NewRandomSub`에 별도로 전달되는 추정 전체 네트워크 크기입니다.
+RandomSub에서 `randomDegree`는 libp2p의 process-global `RandomSubD`를 통해 최소 연결/degree 목표를 설정합니다. KPL은 Peer마다 별도 컨테이너를 사용하므로 이 global 값은 Peer 하나에만 적용됩니다. `randomNetworkSize`는 `NewRandomSub`에 별도로 전달되는 추정 전체 네트워크 크기입니다.
 
 `gossipsub.score`를 활성화하면 `scoreInspectInterval`의 기본값은 `1s`입니다. inspection이 실행될 때마다 노드의 `peerScores` 맵이 갱신됩니다. 이 값은 `/api/v1/nodes`, `/api/v1/network`, `/api/v1/snapshot`, SSE snapshot stream에서 제공되며 topology의 노드를 선택하면 세부 정보에 관측한 score 수와 평균이 표시됩니다.
 
@@ -114,7 +114,7 @@ RandomSub에서 `randomDegree`는 libp2p의 process-global `RandomSubD`를 통�
 
 ### 노드별 네트워크 조건
 
-Docker 런타임에서는 profile 또는 join 단계의 `node` 블록에 `network`를 추가할 수 있습니다. 기본 `scope: p2p`는 각 Peer 컨테이너 안에서 포트 `20000`의 송신 P2P TCP에만 적용합니다. v2처럼 제어 API·telemetry까지 포함한 전체 송신을 제한하려면 `scope: all`을 지정하십시오. `delay`는 편도 egress 추가 지연이며 왕복 지연의 목표값이 아닙니다.
+Profile 또는 join 단계의 `node` 블록에 `network`를 추가할 수 있습니다. 기본 `scope: p2p`는 각 Peer 컨테이너 안에서 포트 `20000`의 송신 P2P TCP에만 적용합니다. v2처럼 제어 API·telemetry까지 포함한 전체 송신을 제한하려면 `scope: all`을 지정하십시오. `delay`는 편도 egress 추가 지연이며 왕복 지연의 목표값이 아닙니다.
 
 ```yaml
 node:
@@ -143,14 +143,16 @@ node:
 
 v2 실험을 옮기실 때는 [재현 검토와 설정 대응표](v2-reproduction.kr.md), [churn 예제](../examples/v2-churn.yaml)를 참고하십시오. 여기에는 배치(`balanced`, 노드별 `random`, batch별 `single-agent`, 명시적 `agentId`), churn을 위한 `onError: continue`, 정확한 PubSub 데이터 크기를 위한 `payloadEncoding: raw`, 전체 topic 발행을 위한 `topic: '*'`를 설명합니다. Network scope와 payload encoding은 기존 기본값을 유지합니다. Worker bootstrap은 seed 기반 첫 연결 성공 선택을 사용하며 transport stack은 TCP/Noise/Yamux로 명시합니다.
 
-네트워크 조건을 적용하는 Peer에는 Linux `NET_ADMIN`과 호스트 커널의 `sch_netem` 지원이 필요합니다. Docker 런타임은 해당 Peer에만 `NET_ADMIN`을 추가합니다. 커널 지원이 없거나 `tc` 명령이 실패하면 노드 시작도 명시적인 오류로 실패합니다. process 런타임 Agent는 공유 호스트 인터페이스를 변경하지 않으며 네트워크 조건이 있는 요청을 거부합니다.
+네트워크 조건을 적용하는 Peer에는 Linux `NET_ADMIN`과 호스트 커널의 `sch_netem` 지원이 필요합니다. Docker 런타임은 해당 Peer에만 `NET_ADMIN`을 추가합니다. 커널 지원이 없거나 `tc` 명령이 실패하면 노드 시작도 명시적인 오류로 실패합니다.
 
 [`examples/network-conditions.yaml`](../examples/network-conditions.yaml)은 bootstrap 노드 두 개와 네트워크 조건이 적용된 worker 네 개를 생성하고, 초기화 대기와 메시지 발행 후 모든 노드를 종료합니다. 대시보드에서 실행하거나 다음과 같이 제출할 수 있습니다.
 
+`control-node:8080`은 `sh scripts/swarm.sh access`가 표시한 Controller 주소로 바꾸고, `sh scripts/swarm.sh credentials`가 표시한 토큰을 `KPL_API_TOKEN`으로 export하십시오.
+
 ```bash
-curl -X POST http://localhost:8080/api/v1/experiments \
+curl -X POST http://control-node:8080/api/v1/experiments \
   -H 'Content-Type: application/yaml' \
-  -H "Authorization: Bearer ${KPL_API_TOKEN:-}" \
+  -H "Authorization: Bearer ${KPL_API_TOKEN:?Set KPL_API_TOKEN}" \
   --data-binary @examples/network-conditions.yaml
 ```
 
@@ -182,16 +184,16 @@ curl -X POST http://localhost:8080/api/v1/experiments \
 | `role`, `profile`, `node` | `join` | Role은 `boot` 또는 기본값 `worker`이며 profile과 inline node 설정으로 preset을 조정합니다. |
 | `placement`, `agentId` | `join` | 기본값 `balanced`는 사용률로 선택하고 `random`은 노드마다, `single-agent`는 batch마다 Agent 하나를 선택합니다. 명시적 `agentId`는 배치를 고정하며 admission은 가용 용량을 기다립니다. |
 | `parallel`, `parallelism` | `join`, `publish`, `leave` | 기본값은 순차 실행입니다. Parallel을 켜고 parallelism을 생략하거나 0으로 설정하면 batch 전체의 동시 실행을 허용합니다. |
-| `interval`, `lifetime` | 간격이 있는 작업; lifetime은 `join`만 | 아래 시간 규칙을 따릅니다. Docker lifetime은 컨테이너 생성 성공 후 시작하므로 설정 복사, start, bootstrap을 포함합니다. Process runtime에서는 child process 시작 후부터 계산하며 background job 완료와 독립적입니다. |
+| `interval`, `lifetime` | 간격이 있는 작업; lifetime은 `join`만 | 아래 시간 규칙을 따릅니다. Peer lifetime은 컨테이너 생성 성공 후 시작하므로 설정 복사, start, bootstrap을 포함하며 background job 완료와 독립적입니다. |
 | `topic`, `payloadSize`, `payloadEncoding` | `publish` | Topic 기본값은 publisher의 첫 설정 topic이며 `'*'`는 설정한 모든 topic으로 발행합니다. 0 이하 `payloadSize`는 `32`로 처리합니다. 기본값 `envelope`는 JSON/base64 metadata를 추가하고 `raw`는 PubSub data를 정확히 `payloadSize` byte로 만듭니다. |
 | `deliveryWindow`, `onError` | `publish`; `onError`는 `leave`에도 적용 | Window 기본값은 `10s`입니다. 기본값 `onError: fail` 대신 `continue`를 사용하면 개별 작업 실패를 기록하고 churn을 계속합니다. Publish 후보가 없을 때 `continue`는 아무 작업 없이 성공합니다. |
 | `group`, `type`, `readyRatio`, `minCount`, `jobs`, `timeout` | `wait-ready` | 빈 group/type은 현재 generation의 모든 노드에 대응합니다. Ratio 기본값은 `1`, timeout 기본값은 `1m`이며 job 대기와 readiness를 함께 제한합니다. `minCount`는 cohort 크기의 하한입니다. |
 | `jobs`, `timeout` | `wait-jobs` | 빈 jobs는 추적하는 모든 job을 뜻하며 timeout 기본값은 `5m`입니다. |
 | `duration`; `message` | `wait` / `sleep`; `log` | 양수 대기 시간과 Controller 로그 메시지입니다. |
 
-phase 목록이 자연스럽게 끝났을 때 background job을 처리하는 방식은 최상위 `onExit`으로 결정합니다. 기본값 `cancel`은 남은 job을 취소한 다음 종료될 때까지 기다립니다. `onExit: drain`은 job이 자연스럽게 완료될 때까지 기다립니다. 단일 실행의 자연스러운 성공에는 이 job 정책만 적용하며, 명시적인 `stop-all` phase가 없으면 Peer 프로세스는 계속 실행됩니다. Dashboard/API에서 `repetitions > 1`로 제출한 배치는 마지막 iteration을 포함한 매 iteration 종료 때 Peer를 자동으로 fence하고 정리하여 다음 실행과 겹치지 않게 합니다. 이는 YAML phase의 `repeat`와 별개의 기능입니다.
+phase 목록이 자연스럽게 끝났을 때 background job을 처리하는 방식은 최상위 `onExit`으로 결정합니다. 기본값 `cancel`은 남은 job을 취소한 다음 종료될 때까지 기다립니다. `onExit: drain`은 job이 자연스럽게 완료될 때까지 기다립니다. 단일 실행의 자연스러운 성공에는 이 job 정책만 적용하며, 명시적인 `stop-all` phase가 없으면 Peer 컨테이너는 계속 실행됩니다. Dashboard/API에서 `repetitions > 1`로 제출한 배치는 마지막 iteration을 포함한 매 iteration 종료 때 Peer를 자동으로 fence하고 정리하여 다음 실행과 겹치지 않게 합니다. 이는 YAML phase의 `repeat`와 별개의 기능입니다.
 
-`jobShutdownTimeout`의 기본값은 `3m`입니다. 사용자 또는 API 요청이 scenario를 취소하거나 phase 또는 background job이 실패하면 Controller는 남은 job을 취소하고 이 제한 안에서 종료를 기다린 뒤, 모든 Agent에 현재 generation까지 generation fence를 설정하고 Peer를 정리하도록 요청합니다. 명시적인 `stop-all`도 같은 제한 시간 내 job 종료를 적용하고 job 추적 상태를 초기화한 뒤 현재 run generation을 fence로 설정합니다. Agent는 일치하는 프로세스를 종료하기 전에 단조 증가하는 fence를 기록합니다. 따라서 generation N의 늦은 create는 fence보다 먼저 완료되어 cleanup에 포함되거나, generation이 fence 이하이므로 거부됩니다. `stop-all`이 성공하면 scenario는 generation N+1로 진행하므로 이후 phase에서 같은 run ID로 새 노드를 만들고 job ID도 다시 사용할 수 있습니다.
+`jobShutdownTimeout`의 기본값은 `3m`입니다. 사용자 또는 API 요청이 scenario를 취소하거나 phase 또는 background job이 실패하면 Controller는 남은 job을 취소하고 이 제한 안에서 종료를 기다린 뒤, 모든 Agent에 현재 generation까지 generation fence를 설정하고 Peer를 정리하도록 요청합니다. 명시적인 `stop-all`도 같은 제한 시간 내 job 종료를 적용하고 job 추적 상태를 초기화한 뒤 현재 run generation을 fence로 설정합니다. Agent는 일치하는 컨테이너를 종료하기 전에 단조 증가하는 fence를 기록합니다. 따라서 generation N의 늦은 create는 fence보다 먼저 완료되어 cleanup에 포함되거나, generation이 fence 이하이므로 거부됩니다. `stop-all`이 성공하면 scenario는 generation N+1로 진행하므로 이후 phase에서 같은 run ID로 새 노드를 만들고 job ID도 다시 사용할 수 있습니다.
 
 `wait-ready`는 실패, 종료 중, 종료된 노드를 포함하여 현재 run generation에서 조건에 맞는 전체 cohort를 검사하며 이전 generation의 노드는 무시합니다. cohort에 실패한 노드가 하나라도 있으면 barrier는 성공하지 않으며, 준비 상태로 보고된 노드도 해당 Agent가 online일 때만 ready 수에 포함됩니다. 이 cohort 역시 지금까지 관측된 노드로만 구성되므로 `await: false` join 다음의 `wait-ready`에는 `jobs: [job-id]` 또는 `minCount` 중 하나가 필요합니다. `jobs`는 지정 producer job이 완료된 뒤 readiness를 검사합니다. `minCount`는 producer를 계속 실행하면서 일부만 생성된 그룹이 준비율을 너무 일찍 만족하지 못하게 합니다.
 

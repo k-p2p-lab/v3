@@ -69,12 +69,18 @@ func TestDockerCLIHelper(t *testing.T) {
 		}
 	}
 	switch args[0] {
-	case "info", "image":
+	case "info":
+		result := os.Getenv("KPL_DOCKER_INFO")
+		if result == "" {
+			result = `{"OSType":"linux","SwarmState":"active"}`
+		}
+		fmt.Print(result)
+	case "image":
 		fmt.Print("linux\n")
 	case "network":
 		result := os.Getenv("KPL_DOCKER_NETWORK")
 		if result == "" {
-			result = `[{"Name":"kpl-v3-peers","Driver":"bridge","Attachable":false}]`
+			result = `[{"Name":"kpl-v3-peers","Driver":"overlay","Attachable":true,"Scope":"swarm"}]`
 		}
 		fmt.Print(result)
 	case "create":
@@ -144,7 +150,7 @@ func TestDockerCLIHelper(t *testing.T) {
 func fakeDocker(t *testing.T, settings map[string]string) (*dockerRuntime, string) {
 	t.Helper()
 	logPath := filepath.Join(t.TempDir(), "docker.jsonl")
-	runtime := &dockerRuntime{binary: "fake-docker", image: "kpl-v3:local", network: "kpl-v3-peers"}
+	runtime := &dockerRuntime{binary: "fake-docker", image: "registry.example:5000/kpl-v3:test", network: "kpl-v3-peers"}
 	runtime.commandContext = func(ctx context.Context, binary string, args ...string) *exec.Cmd {
 		if binary != "fake-docker" {
 			t.Errorf("binary = %q", binary)
@@ -218,7 +224,7 @@ func TestDockerCreateIsolatesPeerAndCopiesConfiguration(t *testing.T) {
 			}
 			args := calls[0].Args
 			joined := strings.Join(args, " ")
-			for _, expected := range []string{"--network kpl-v3-peers", "--cap-drop ALL", "--security-opt no-new-privileges", "--label io.kpl.agent=agent-a", "--label io.kpl.run=run-a", "--label io.kpl.generation=3", "kpl-v3:local peer --config /etc/kpl-peer.json"} {
+			for _, expected := range []string{"--network kpl-v3-peers", "--cap-drop ALL", "--security-opt no-new-privileges", "--label io.kpl.agent=agent-a", "--label io.kpl.run=run-a", "--label io.kpl.generation=3", "registry.example:5000/kpl-v3:test peer --config /etc/kpl-peer.json"} {
 				if !strings.Contains(joined, expected) {
 					t.Errorf("missing %q in %s", expected, joined)
 				}
@@ -483,18 +489,20 @@ func TestDockerWaitReportsPeerFailureAndLogs(t *testing.T) {
 	}
 }
 
-func TestDockerCheckRejectsSharedNetworkAndNonAttachableOverlay(t *testing.T) {
+func TestDockerCheckRequiresSwarmAttachableOverlay(t *testing.T) {
 	for _, test := range []struct {
 		name, network, response string
 		valid                   bool
 	}{
-		{"bridge", "kpl-v3-peers", `[{"Name":"kpl-v3-peers","Driver":"bridge"}]`, true},
-		{"overlay", "kpl-v3-peers", `[{"Name":"kpl-v3-peers","Driver":"overlay","Attachable":true}]`, true},
+		{"bridge", "kpl-v3-peers", `[{"Name":"kpl-v3-peers","Driver":"bridge","Scope":"local"}]`, false},
+		{"overlay", "kpl-v3-peers", `[{"Name":"kpl-v3-peers","Driver":"overlay","Attachable":true,"Scope":"swarm"}]`, true},
+		{"local-overlay", "kpl-v3-peers", `[{"Name":"kpl-v3-peers","Driver":"overlay","Attachable":true,"Scope":"local"}]`, false},
+		{"missing-scope", "kpl-v3-peers", `[{"Name":"kpl-v3-peers","Driver":"overlay","Attachable":true}]`, false},
 		{"host", "host", "", false},
 		{"builtin", "bridge", "", false},
 		{"builtin-id", "network-id", `[{"Name":"bridge","Driver":"bridge"}]`, false},
 		{"missing-name", "network-id", `[{"Driver":"bridge"}]`, false},
-		{"non-attachable", "kpl-v3-peers", `[{"Name":"kpl-v3-peers","Driver":"overlay","Attachable":false}]`, false},
+		{"non-attachable", "kpl-v3-peers", `[{"Name":"kpl-v3-peers","Driver":"overlay","Attachable":false,"Scope":"swarm"}]`, false},
 		{"host-driver", "kpl-v3-peers", `[{"Name":"kpl-v3-peers","Driver":"host"}]`, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -597,5 +605,27 @@ func TestDockerPeerLogsRemainBounded(t *testing.T) {
 	}
 	if len(output) != 32*1024 {
 		t.Fatalf("peer logs length = %d, want diagnostic limit 32768", len(output))
+	}
+}
+
+func TestDockerCheckRejectsInactiveSwarmBeforeInspectingResources(t *testing.T) {
+	for _, response := range []string{
+		`{"OSType":"linux","SwarmState":"inactive"}`,
+		`{"OSType":"linux","SwarmState":"pending"}`,
+		`{"OSType":"linux","SwarmState":"locked"}`,
+		`{"OSType":"linux"}`,
+		`{"OSType":"windows","SwarmState":"active"}`,
+		`invalid`,
+	} {
+		t.Run(response, func(t *testing.T) {
+			d, path := fakeDocker(t, map[string]string{"INFO": response})
+			if err := d.check(context.Background()); err == nil {
+				t.Fatal("accepted an unsupported Docker daemon")
+			}
+			calls := dockerCalls(t, path)
+			if len(calls) != 1 || calls[0].Args[0] != "info" {
+				t.Fatalf("unsupported daemon reached image or network inspection: %v", calls)
+			}
+		})
 	}
 }

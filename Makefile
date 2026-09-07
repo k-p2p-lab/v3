@@ -1,4 +1,4 @@
-.PHONY: build test test-linux check-linux check-swarm swarm-init swarm-deploy swarm-status swarm-add-node swarm-remove-node swarm-remove validate run stop
+.PHONY: build test test-linux check-swarm swarm-init swarm-deploy swarm-status swarm-add-node swarm-remove-node swarm-remove validate
 .PHONY: swarm-nodes swarm-configure swarm-config swarm-credentials swarm-login swarm-publish swarm-check swarm-access swarm-logs swarm-scenario
 
 build:
@@ -9,9 +9,6 @@ test:
 
 test-linux:
 	docker build --target test -t kpl-v3:test .
-
-check-linux:
-	sh scripts/check-linux.sh
 
 check-swarm:
 	sh scripts/swarm.sh check
@@ -66,11 +63,3 @@ swarm-remove:
 
 validate:
 	go run ./cmd/kpl validate --scenario examples/smoke.yaml
-
-run:
-	docker compose up --build
-
-# Keep Agents available until the Controller finishes its experiment cleanup.
-stop:
-	docker compose stop controller
-	docker compose down

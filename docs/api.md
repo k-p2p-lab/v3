@@ -41,18 +41,18 @@ Repeated submissions reserve a separate run ID and result record for every itera
 
 The stop endpoint returns `202` once cancellation is requested, before cleanup completes. Observe `/api/v1/experiments` or the snapshot until the final state is recorded. A run with no remaining cancellation handle returns `404`. SSE sends an initial `event: snapshot`, subsequent full snapshots on state updates, and keepalive comments every 15 seconds; it does not provide event-ID replay. `/api/v1/events` contains at most the 300 most recent events across live Controller state.
 
-From the repository root:
+From the repository root, replace `control-node:8080` with the Controller address printed by `sh scripts/swarm.sh access` and export the token printed by `sh scripts/swarm.sh credentials` as `KPL_API_TOKEN`:
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/experiments \
+curl -X POST http://control-node:8080/api/v1/experiments \
   -H 'Content-Type: application/yaml' \
-  -H "Authorization: Bearer ${KPL_API_TOKEN:-}" \
+  -H "Authorization: Bearer ${KPL_API_TOKEN:?Set KPL_API_TOKEN}" \
   --data-binary @examples/smoke.yaml
 ```
 
 The scenario library endpoints store reusable editor inputs independently of experiment results. The list omits YAML, while individual GET, POST, and PUT responses include it. See the [scenario library guide](scenario-library.md) for the UI workflow, payloads, validation limits, and storage location.
 
-Raw events are stored at `data/runs/<run-id>/events.jsonl`; the exact input is stored as `scenario.yaml` and experiment metadata as `experiment.json` in the same directory. In Compose/Swarm, the persistent `controller-data` volume is mounted at `/var/lib/kpl/data`, and each run's files are under `/var/lib/kpl/data/runs/<run-id>`.
+Raw events are stored at `data/runs/<run-id>/events.jsonl`; the exact input is stored as `scenario.yaml` and experiment metadata as `experiment.json` in the same directory. In Swarm, the persistent `controller-data` volume is mounted at `/var/lib/kpl/data`, and each run's files are under `/var/lib/kpl/data/runs/<run-id>`.
 
 Use **Download results** in the Dashboard to export a run as ZIP. **Saved results** also lists files retained from previous Controller sessions; **Refresh** reloads that list. Running experiments offer **Download snapshot**, which contains the records saved when the download starts. These exports include the full saved event log, independently of the 300-event recent buffer. See [result downloads](monitoring.md#download-experiment-results) for archive contents and collection limits.
 
@@ -83,7 +83,7 @@ Internal endpoints may change independently of the operator API. Request and sna
 
 ## Authentication
 
-`KPL_API_TOKEN` is one shared Bearer credential for mutating KPL APIs, not a Swarm join token, Docker permission, or Grafana password. Use the same value for the Controller and every Agent; Agents pass it to their Peers automatically. It is required by the Swarm stack and optional in Compose/the CLI. An empty value disables the token check. There are no per-user roles or scoped tokens.
+`KPL_API_TOKEN` is one shared Bearer credential for mutating KPL APIs, not a Swarm join token, Docker permission, or Grafana password. Use the same value for the Controller and every Agent; Agents pass it to their Peers automatically. It is required by the Swarm stack. There are no per-user roles or scoped tokens.
 
 Enter the value in the dashboard's **Run experiment → API token** field. Running, saving, updating, or deleting through that dialog saves it in that origin's browser `localStorage` for later mutation requests; it does not expire automatically. REST clients send `Authorization: Bearer <token>`. GET reads, including state, events, SSE, and metrics, stay public. The Controller also exempts HEAD; Agents and Peers only exempt GET. The token does not encrypt HTTP traffic.
 

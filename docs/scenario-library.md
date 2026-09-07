@@ -33,12 +33,14 @@ All request and response bodies use JSON. List responses omit YAML so opening a 
 
 When `KPL_API_TOKEN` is configured, `POST`, `PUT`, and `DELETE` require `Authorization: Bearer <token>`. Reads remain public under the Controller's current authentication policy. Invalid input, including decoded YAML over 1 MiB, returns `400`. The JSON request envelope allows `6 * 1 MiB + 64 KiB` to accommodate escaped characters; exceeding that envelope returns `413`. Unknown JSON fields and trailing JSON values are rejected. A missing or invalid ID returns `404`; storage errors return `500`. IDs contain 32 lowercase hexadecimal characters.
 
-```sh
-curl --fail http://localhost:8080/api/v1/scenarios
+Replace `control-node:8080` with the Controller address printed by `sh scripts/swarm.sh access` and export the token printed by `sh scripts/swarm.sh credentials` as `KPL_API_TOKEN`.
 
-curl --fail -X POST http://localhost:8080/api/v1/scenarios \
+```sh
+curl --fail http://control-node:8080/api/v1/scenarios
+
+curl --fail -X POST http://control-node:8080/api/v1/scenarios \
   -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer ${KPL_API_TOKEN:-}" \
+  -H "Authorization: Bearer ${KPL_API_TOKEN:?Set KPL_API_TOKEN}" \
   --data-binary @- <<'JSON'
 {"name":"Smoke baseline","yaml":"version: 2\nname: smoke-baseline\nphases:\n  - action: stop-all\n"}
 JSON
@@ -46,7 +48,7 @@ JSON
 
 ## Storage and backup
 
-Records are stored as individual JSON files under `<data-dir>/scenarios`. Compose and Swarm mount the Controller's persistent data volume at `/var/lib/kpl/data`, so ordinary service restarts and `scripts/swarm.sh remove` preserve the library. Back up the entire Controller data directory to keep both the scenario library and experiment results. The library is local to that Controller and is not replicated between control nodes.
+Records are stored as individual JSON files under `<data-dir>/scenarios`. Swarm mounts the Controller's persistent data volume at `/var/lib/kpl/data`, so ordinary service restarts and `scripts/swarm.sh remove` preserve the library. Back up the entire Controller data directory to keep both the scenario library and experiment results. The library is local to that Controller and is not replicated between control nodes.
 
 The Controller writes each record through a temporary file and atomic filesystem operation. It rejects malformed or unexpected record content when listing or loading the library rather than returning a partially trusted scenario.
 

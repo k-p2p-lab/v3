@@ -17,7 +17,7 @@ import (
 	"github.com/k-p2p-lab/v3/internal/model"
 )
 
-// This opt-in test needs two disposable Linux containers on a private bridge.
+// This opt-in test needs two disposable Linux containers on an attachable Swarm overlay.
 // Run this test binary in the remote container with KPL_NETEM_ECHO_SERVER=1 and
 // -test.run=TestLinuxNetworkEchoServer. Run the client with NET_ADMIN,
 // KPL_NETEM_INTEGRATION=1, KPL_NETEM_REMOTE_IP=<remote container IPv4>, and

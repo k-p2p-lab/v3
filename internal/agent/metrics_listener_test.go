@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -57,7 +56,8 @@ func TestValidateMetricsEndpoint(t *testing.T) {
 
 func TestNewRequiresCompleteMetricsEndpoint(t *testing.T) {
 	_, err := New(Config{
-		Runtime: "process", ID: "agent", AdvertiseURL: "http://agent:8090", ControllerURL: "http://controller:8080",
+		DockerImage: "registry.example:5000/kpl-v3:test", DockerNetwork: "kpl-v3-peers",
+		ID: "agent", AdvertiseURL: "http://agent:8090", ControllerURL: "http://controller:8080",
 		MetricsListen: ":9091",
 	}, nil)
 	if err == nil || !strings.Contains(err.Error(), "configured together") {
@@ -66,7 +66,7 @@ func TestNewRequiresCompleteMetricsEndpoint(t *testing.T) {
 }
 
 func TestMetricsOnlyHandlerExposesNoControlRoutes(t *testing.T) {
-	s := &Server{config: Config{ID: "agent", Runtime: "docker", Capacity: 4, Token: "secret"}, processes: map[string]*process{}}
+	s := &Server{config: Config{ID: "agent", Capacity: 4, Token: "secret"}, processes: map[string]*process{}}
 	handler := s.metricsOnlyHandler()
 
 	response := httptest.NewRecorder()
@@ -106,7 +106,7 @@ func TestSnapshotAdvertisesMetricsURL(t *testing.T) {
 	}
 }
 
-func TestAgentRunServesAndGracefullyStopsMetricsEndpoint(t *testing.T) {
+func TestAgentServesAndGracefullyStopsMetricsEndpoint(t *testing.T) {
 	registered := make(chan model.Agent, 1)
 	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
@@ -127,26 +127,26 @@ func TestAgentRunServesAndGracefullyStopsMetricsEndpoint(t *testing.T) {
 	}))
 	defer controller.Close()
 
-	controlAddress := reserveTCPAddress(t)
-	metricsAddress := reserveTCPAddress(t)
+	// Keep both sockets bound until Serve takes ownership; releasing a chosen
+	// port before Agent startup allows the kernel to assign it again.
+	controlListener := listenMetricsTestTCP(t)
+	metricsListener := listenMetricsTestTCP(t)
+	controlAddress := controlListener.Addr().String()
+	metricsAddress := metricsListener.Addr().String()
 	_, metricsPort, err := net.SplitHostPort(metricsAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
 	metricsURL := "http://192.0.2.9:" + metricsPort + "/metrics"
 	scrapeURL := "http://" + metricsAddress + "/metrics"
-	s, err := New(Config{
-		Runtime: "process", ID: "agent", Name: "Agent", Listen: controlAddress,
-		AdvertiseURL: "http://" + controlAddress, ControllerURL: controller.URL,
-		MetricsListen: metricsAddress, MetricsURL: metricsURL,
-		DataDir: t.TempDir(), Executable: "unused",
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	s, _ := newContainerTestServer(t, nil)
+	s.config.Listen = controlAddress
+	s.config.ControllerURL = controller.URL
+	s.config.MetricsListen = metricsAddress
+	s.config.MetricsURL = metricsURL
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- s.Run(ctx) }()
+	go func() { done <- s.serve(ctx, controlListener, metricsListener) }()
 	defer cancel()
 
 	select {
@@ -192,9 +192,10 @@ func TestAgentRunRejectsOccupiedMetricsAddress(t *testing.T) {
 	}
 	defer occupied.Close()
 	s, err := New(Config{
-		Runtime: "process", ID: "agent", Listen: "127.0.0.1:0", AdvertiseURL: "http://agent:8090",
+		DockerImage: "registry.example:5000/kpl-v3:test", DockerNetwork: "kpl-v3-peers",
+		ID: "agent", Listen: "127.0.0.1:0", AdvertiseURL: "http://agent:8090",
 		ControllerURL: "http://controller:8080", MetricsListen: occupied.Addr().String(),
-		MetricsURL: "http://worker.example:9091/metrics", DataDir: t.TempDir(), Executable: "unused",
+		MetricsURL: "http://worker.example:9091/metrics", DataDir: t.TempDir(),
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -204,15 +205,12 @@ func TestAgentRunRejectsOccupiedMetricsAddress(t *testing.T) {
 	}
 }
 
-func reserveTCPAddress(t *testing.T) string {
+func listenMetricsTestTCP(t *testing.T) net.Listener {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	address := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return address
+	t.Cleanup(func() { _ = listener.Close() })
+	return listener
 }

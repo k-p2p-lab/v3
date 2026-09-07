@@ -18,24 +18,21 @@ import (
 
 func TestDockerP2PUsesAgentRouteAndPreservesExplicitListen(t *testing.T) {
 	for _, test := range []struct {
-		name, runtime, listen, localIP, want, wantError string
+		name, listen, localIP, want, wantError string
 	}{
-		{"overlay wildcard", "docker", "/ip4/0.0.0.0/tcp/20000", "10.1.0.7", "/ip4/10.1.0.7/tcp/20000", ""},
-		{"explicit overlay", "docker", "/ip4/10.1.0.7/tcp/20000", "10.1.0.7", "/ip4/10.1.0.7/tcp/20000", ""},
-		{"custom port", "docker", "/ip4/0.0.0.0/tcp/21000", "10.1.0.7", "/ip4/10.1.0.7/tcp/21000", ""},
-		{"wrong bridge", "docker", "/ip4/172.18.0.7/tcp/20000", "10.1.0.7", "", "must match"},
-		{"loopback route", "docker", "/ip4/0.0.0.0/tcp/20000", "127.0.0.1", "", "non-loopback IPv4 route"},
-		{"no IPv4 route", "docker", "/ip4/0.0.0.0/tcp/20000", "fd00::7", "", "non-loopback IPv4 route"},
-		{"explicit loopback", "docker", "/ip4/127.0.0.1/tcp/20000", "10.1.0.7", "", "non-loopback"},
-		{"IPv6 listen", "docker", "/ip6/::/tcp/20000", "10.1.0.7", "", "IPv4 TCP"},
-		{"UDP listen", "docker", "/ip4/0.0.0.0/udp/20000", "10.1.0.7", "", "IPv4 TCP"},
-		{"ephemeral port", "docker", "/ip4/0.0.0.0/tcp/0", "10.1.0.7", "", "port between"},
-		{"process wildcard", "process", "/ip4/0.0.0.0/tcp/20000", "", "/ip4/0.0.0.0/tcp/20000", ""},
-		{"process IPv6", "process", "/ip6/::1/tcp/0", "", "/ip6/::1/tcp/0", ""},
-		{"legacy process", "", "/ip4/127.0.0.1/tcp/0", "", "/ip4/127.0.0.1/tcp/0", ""},
+		{"overlay wildcard", "/ip4/0.0.0.0/tcp/20000", "10.1.0.7", "/ip4/10.1.0.7/tcp/20000", ""},
+		{"explicit overlay", "/ip4/10.1.0.7/tcp/20000", "10.1.0.7", "/ip4/10.1.0.7/tcp/20000", ""},
+		{"custom port", "/ip4/0.0.0.0/tcp/21000", "10.1.0.7", "/ip4/10.1.0.7/tcp/21000", ""},
+		{"wrong bridge", "/ip4/172.18.0.7/tcp/20000", "10.1.0.7", "", "must match"},
+		{"loopback route", "/ip4/0.0.0.0/tcp/20000", "127.0.0.1", "", "non-loopback IPv4 route"},
+		{"no IPv4 route", "/ip4/0.0.0.0/tcp/20000", "fd00::7", "", "non-loopback IPv4 route"},
+		{"explicit loopback", "/ip4/127.0.0.1/tcp/20000", "10.1.0.7", "", "non-loopback"},
+		{"IPv6 listen", "/ip6/::/tcp/20000", "10.1.0.7", "", "IPv4 TCP"},
+		{"UDP listen", "/ip4/0.0.0.0/udp/20000", "10.1.0.7", "", "IPv4 TCP"},
+		{"ephemeral port", "/ip4/0.0.0.0/tcp/0", "10.1.0.7", "", "port between"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			config := model.PeerProcessConfig{Runtime: test.runtime, P2PListen: test.listen, AgentURL: "http://agent-task:8090"}
+			config := model.PeerProcessConfig{P2PListen: test.listen, AgentURL: "http://agent-task:8090"}
 			routeCalls := 0
 			resolved, err := resolveDockerP2PListen(context.Background(), config, func(ctx context.Context, endpoint string) (net.IP, error) {
 				routeCalls++
@@ -56,8 +53,8 @@ func TestDockerP2PUsesAgentRouteAndPreservesExplicitListen(t *testing.T) {
 			if err != nil || resolved.P2PListen != test.want {
 				t.Fatalf("listen = %s, error = %v", resolved.P2PListen, err)
 			}
-			if test.runtime != "docker" && routeCalls != 0 {
-				t.Fatal("process mode unexpectedly performed Docker route discovery")
+			if routeCalls != 1 {
+				t.Fatalf("container address resolution performed %d route lookups, want 1", routeCalls)
 			}
 			if config.P2PListen != test.listen {
 				t.Fatal("original config was modified")
@@ -67,7 +64,7 @@ func TestDockerP2PUsesAgentRouteAndPreservesExplicitListen(t *testing.T) {
 }
 
 func TestDockerAddressDiscoveryPrecedesWholeInterfaceLoss(t *testing.T) {
-	config := model.PeerProcessConfig{Runtime: "docker", AgentURL: "http://agent:8090", P2PListen: "/ip4/0.0.0.0/tcp/20000",
+	config := model.PeerProcessConfig{AgentURL: "http://agent:8090", P2PListen: "/ip4/0.0.0.0/tcp/20000",
 		NodeConfig: model.NodeConfig{Network: model.NetworkConfig{Scope: "all", LossPercent: func() *float64 { value := 100.0; return &value }()}}}
 	var calls []string
 	resolved, err := preparePeerNetwork(context.Background(), config,
@@ -163,7 +160,7 @@ func TestDockerHostAndStatusAdvertiseOnlySelectedAddress(t *testing.T) {
 	}))
 	defer agent.Close()
 	noDHT := false
-	config := model.PeerProcessConfig{Runtime: "docker", P2PListen: want, AgentURL: agent.URL, ControllerURL: "http://controller:8080",
+	config := model.PeerProcessConfig{P2PListen: want, AgentURL: agent.URL, ControllerURL: "http://controller:8080",
 		Node:       model.Node{ID: "test-peer", RunID: "test-run", Addresses: []string{"/ip4/172.18.0.9/tcp/20000"}},
 		NodeConfig: model.NodeConfig{Kademlia: model.KademliaConfig{Enabled: &noDHT}}}
 	// Construct the server after route discovery, as Run does before netem.

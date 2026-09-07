@@ -39,7 +39,7 @@ flowchart TB
     operator -->|"view monitoring"| grafana
 ```
 
-Arrows show request or operation direction, with responses omitted; the libp2p link is bidirectional. Boxes show executable placement and storage, not separate Docker networks. The network table below defines actual attachments. In Compose, both example Agents and all Peers share one host; the other-host Peer box applies to Swarm.
+Arrows show request or operation direction, with responses omitted; the libp2p link is bidirectional. Boxes show executable placement and storage, not separate Docker networks. The network table below defines actual attachments. A single-node Swarm runs all components on one host; selecting multiple Agent nodes distributes Peers across hosts.
 
 ## Components
 
@@ -47,14 +47,12 @@ Arrows show request or operation direction, with responses omitted; the libp2p l
 |---|---|---|
 | **Dashboard** | Static web application embedded in and served by the Controller | Starts and stops runs, manages saved scenarios and results, and displays live Agent, Peer, topology, event, and summary data. |
 | **Controller** | One container; pinned to the configured control node in Swarm | Parses and schedules scenarios, reserves Agent capacity, issues Peer lifecycle and publish operations, maintains the bootstrap and topic-discovery registries, aggregates topology and telemetry, persists run records, serves the REST API and Dashboard, and exports Controller metrics. |
-| **Agent** | One service container per configured Compose Agent or one global-service task per selected Swarm node | Registers with the Controller, reports heartbeats, enforces local admission capacity, creates and removes Peer containers through the node-local Docker socket, proxies publish requests, forwards Peer telemetry, and exports host-local Agent metrics. |
-| **Peer** | One standalone Docker container per experimental Peer in the supported deployment runtime | Runs the actual libp2p application, including Kademlia and GossipSub; joins topics, publishes and receives messages, reports protocol and delivery events, and applies its own Linux traffic-control rules when configured. |
-| **Prometheus** | One container on the Compose host or configured Swarm control node | Scrapes Controller metrics and the metrics endpoints advertised by eligible Agents, then retains time series independently of saved experiment result archives. |
-| **Grafana** | One container on the Compose host or configured Swarm control node | Queries Prometheus through the provisioned data source and presents the bundled experiment-analysis dashboard. |
+| **Agent** | One global-service task per selected Swarm node | Registers with the Controller, reports heartbeats, enforces local admission capacity, creates and removes Peer containers through the node-local Docker socket, proxies publish requests, forwards Peer telemetry, and exports host-local Agent metrics. |
+| **Peer** | One standalone Docker container per experimental Peer | Runs the actual libp2p application, including Kademlia and GossipSub; joins topics, publishes and receives messages, reports protocol and delivery events, and applies its own Linux traffic-control rules when configured. |
+| **Prometheus** | One container on the configured Swarm control node | Scrapes Controller metrics and the metrics endpoints advertised by eligible Agents, then retains time series independently of saved experiment result archives. |
+| **Grafana** | One container on the configured Swarm control node | Queries Prometheus through the provisioned data source and presents the bundled experiment-analysis dashboard. |
 
 The Controller, Agent, and Peer modes are subcommands of the same `kpl` image. Swarm Agents resolve the exact local image ID of their running task and use it to create Peers, preventing a mutable tag from mixing binaries within one deployment.
-
-The Agent CLI also has a `process` runtime for development. It starts a Peer as a child process in the Agent's execution environment, without a separate container or network namespace, and rejects network impairment settings. The supplied Compose and Swarm deployments use the isolated Docker runtime.
 
 ## Control and experiment flow
 
@@ -62,7 +60,7 @@ The Agent CLI also has a `process` runtime for development. It starts a Peer as 
 2. The Controller calls the selected Agent's private HTTP API. The Agent creates one Peer container on its local Docker daemon, copies in that Peer's generated configuration, starts it, and reports lifecycle state to the Controller.
 3. The Peer asks the Controller for bootstrap peers, topic-discovery candidates, and Controller clock samples. Its Kademlia and GossipSub traffic then travels directly between Peer container addresses. A scheduled publish follows `Controller -> Agent -> target Peer` before the Peer sends the P2P message.
 4. Each Peer sends status and batched telemetry to its Agent. The Agent retains each source's session and sequence identity, retries failed batches in order, and sends periodic heartbeats to the Controller; events from different Peers can interleave. The Controller builds the live topology, run metrics, event stream, and persisted result files from these reports.
-5. Prometheus scrapes the Controller and Agents: Compose uses static Agent service targets, while Swarm discovers online registered Agents with valid advertised metrics URLs. Grafana queries Prometheus, while the embedded Dashboard reads the Controller API and live stream. Saved ZIP results come from Controller persistence and do not contain the Prometheus time-series database.
+5. Prometheus scrapes the Controller and discovers online registered Agents with valid advertised metrics URLs. Grafana queries Prometheus, while the embedded Dashboard reads the Controller API and live stream. Saved ZIP results come from Controller persistence and do not contain the Prometheus time-series database.
 
 Control is centralized, but experimental P2P messages do not pass through the Controller or Agent.
 
@@ -72,23 +70,23 @@ v3 uses two application networks. They are separate Docker networks, but they sh
 
 | Network or endpoint plane | Attached components | Traffic and exposure |
 |---|---|---|
-| **Peer network (`peers`)** | Controller, Agents, and every Peer | A user-defined bridge in Compose (`kpl-v3-peers`) or an external attachable overlay in Swarm (`KPL_PEER_NETWORK`). It carries direct libp2p TCP traffic on container port 20000. It also carries Peer-to-Agent status/telemetry, Peer-to-Controller bootstrap/discovery/clock requests, and Controller-to-Agent operations because Peers need private reachability to those services. Peer P2P and control ports are not published on the host. |
-| **Monitoring network (`monitoring`)** | Controller, Agents, Prometheus, and Grafana; no Peers | A private bridge in Compose and a stack-scoped overlay in Swarm. Prometheus reaches the Controller here. Compose scrapes Agent `/metrics` endpoints by service name. In Swarm, each Agent advertises its node address and host-mode metrics port, and the Controller exposes those targets through HTTP service discovery so Prometheus does not depend on a Peer-overlay address. Grafana reaches Prometheus through this network. |
-| **Operator endpoints** | Browser or API client to the control host | Controller/Dashboard 8080, Prometheus 9090, and Grafana 3000 are the intended operator endpoints. Compose binds them to loopback by default. Swarm publishes them in host mode on the configured control node. Agent metrics use host port 9091 by default in Swarm; the Agent control API remains private. |
+| **Peer network (`peers`)** | Controller, Agents, and every Peer | An external attachable Swarm overlay (`KPL_PEER_NETWORK`). It carries direct libp2p TCP traffic on container port 20000. It also carries Peer-to-Agent status/telemetry, Peer-to-Controller bootstrap/discovery/clock requests, and Controller-to-Agent operations because Peers need private reachability to those services. Peer P2P and control ports are not published on the host. |
+| **Monitoring network (`monitoring`)** | Controller, Agents, Prometheus, and Grafana; no Peers | A stack-scoped Swarm overlay. Prometheus reaches the Controller here. Each Agent advertises its node address and host-mode metrics port, and the Controller exposes those targets through HTTP service discovery so Prometheus does not depend on a Peer-overlay address. Grafana reaches Prometheus through this network. |
+| **Operator endpoints** | Browser or API client to the control host | Controller/Dashboard 8080, Prometheus 9090, and Grafana 3000 are the intended operator endpoints. Swarm publishes them in host mode on the configured control node. Agent metrics use host port 9091 by default in Swarm; the Agent control API remains private. |
 
 Docker Swarm's own manager and node control plane is infrastructure used to deploy the services. v3 does not create each experimental Peer as a Swarm service: the Agent creates a standalone container on its own node. Consequently, Swarm does not migrate or automatically reschedule an active Peer to another host.
 
 ## Per-Peer isolation and network dynamics
 
-Every Docker-runtime Peer has its own container and Linux network namespace. Peer creation uses a user-defined bridge or attachable overlay and rejects host networking, the default bridge, and non-attachable overlays. Peer containers receive no Docker socket, host bind mounts, or published host ports. They drop all Linux capabilities, enable `no-new-privileges`, and receive only `NET_ADMIN` when that Peer has network conditions to install. They are not privileged containers.
+Every Peer has its own container and Linux network namespace. Agents require an active Swarm node and create Peers only on an explicitly configured, attachable Swarm overlay. Host networking, bridge networks, and non-attachable overlays are rejected. Peer containers receive no Docker socket, host bind mounts, or published host ports. They drop all Linux capabilities, enable `no-new-privileges`, and receive only `NET_ADMIN` when that Peer has network conditions to install. They are not privileged containers.
 
 The Peer applies `tc` rules inside its own namespace before opening P2P connections. Supported outbound conditions include delay, jitter, loss, duplication, corruption, reordering, netem rate limiting, and optional TBF shaping. With the default `scope: p2p`, filters target TCP port 20000 so the Peer HTTP control and telemetry path bypasses impairment. With `scope: all`, impairment applies to the full non-loopback interface and can therefore delay or drop control and telemetry as part of the experiment.
 
 This boundary prevents one Peer's traffic-control rules from changing another Peer or the host interface. It is process and network isolation, not dedicated hardware or a multi-tenant security boundary: Peers on the same server still share the host kernel, CPU, memory, storage, Docker daemon, and underlay path. The supplied configuration does not assign dedicated CPU or memory limits per Peer. The Agent is a trusted host-management component because access to the Docker socket grants broad control over that Docker node.
 
-## Compose and Swarm placement
+## Swarm placement
 
-The supplied `compose.yaml` is a single-host layout with one Controller, two example Agents, Prometheus, and Grafana. Those Agent containers create sibling Peer containers on the same Docker Engine and attach them to the shared bridge.
+A single-node Swarm uses the same stack and overlay as a deployment across multiple hosts. Select the manager as an Agent node with `deploy --all` and set `KPL_MIN_AGENTS=1` for that setup.
 
 `stack.swarm.yaml` places one Controller, Prometheus, and Grafana replica on `KPL_CONTROL_NODE_ID`. The Agent is a global service constrained to the nodes selected by `scripts/swarm.sh`. Each Agent controls only its node-local Docker daemon, and the Controller distributes new Peers across registered Agents according to available admission capacity. Existing Peers are not rebalanced when an Agent is added. Removing an Agent node stops that Agent's Peers, so node removal must follow the cleanup procedure in the [Swarm deployment guide](swarm.md).
 
@@ -102,13 +100,13 @@ Metrics and topology are observations of received reports. A stale or unreachabl
 
 ## Supported deployment boundary
 
-The production target is rootful Docker Engine on Linux. Per-Peer network conditions depend on Linux network namespaces, `tc`, `NET_ADMIN`, and the required qdisc modules. Single-host setup is covered by the [Linux deployment guide](linux-deployment.md); multi-server placement, overlay requirements, Agent metrics reachability, and cleanup are covered by the [Swarm deployment guide](swarm.md).
+The production target is rootful Docker Engine on Linux. Per-Peer network conditions depend on Linux network namespaces, `tc`, `NET_ADMIN`, and the required qdisc modules. Host preparation, placement, overlay requirements, Agent metrics reachability, storage, and cleanup are covered by the [Swarm deployment guide](swarm.md).
 
 ## Implementation map
 
 | Behavior | Source of truth |
 |---|---|
-| Runtime modes and deployment placement | [`cmd/kpl/main.go`](../cmd/kpl/main.go), [`compose.yaml`](../compose.yaml), [`stack.swarm.yaml`](../stack.swarm.yaml) |
+| Component entry points and Swarm placement | [`cmd/kpl/main.go`](../cmd/kpl/main.go), [`stack.swarm.yaml`](../stack.swarm.yaml) |
 | API, scenario scheduling, admission, run cleanup | [`internal/controller/api.go`](../internal/controller/api.go), [`internal/controller/runner.go`](../internal/controller/runner.go), [`internal/controller/repeat.go`](../internal/controller/repeat.go) |
 | Agent lifecycle and Docker isolation | [`internal/agent/agent.go`](../internal/agent/agent.go), [`internal/agent/docker.go`](../internal/agent/docker.go) |
 | Peer protocols, transport discovery, traffic control | [`internal/peer/peer.go`](../internal/peer/peer.go), [`internal/peer/discovery.go`](../internal/peer/discovery.go), [`internal/netem/netem.go`](../internal/netem/netem.go) |

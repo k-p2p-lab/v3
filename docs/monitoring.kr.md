@@ -2,24 +2,24 @@
 
 [English](monitoring.md) | 한국어
 
-[Linux 배포 준비](linux-deployment.kr.md)에 따라 `.env` 설정과 Linux 사전 점검을 마친 뒤 기본 Compose stack을 시작합니다. Controller, 같은 호스트의 Agent 두 개, Prometheus, Grafana를 함께 실행하며 데이터 소스와 **KP2PLab Experiment Analysis** 대시보드는 자동 등록됩니다. 다중 호스트 설치는 [Swarm 배포 가이드](swarm.kr.md)를 사용하십시오.
+[Swarm 배포 가이드](swarm.kr.md)에 따라 stack을 배포하십시오. Controller, 선택한 노드마다 Agent 하나, Prometheus와 Grafana를 실행하며 데이터 소스와 **KP2PLab Experiment Analysis** 대시보드는 자동 등록됩니다. `sh scripts/swarm.sh access`로 control 노드의 게시 주소를 확인하십시오. 아래 예제의 `control-node`는 해당 호스트 주소로 바꿉니다.
 
-대시보드는 영어로 작성되어 있으며, Compose/Swarm은 `GF_USERS_DEFAULT_LANGUAGE=en-US`로 Grafana UI 기본 언어를 영어로 설정합니다. 사용자나 조직의 언어 설정이 있으면 해당 UI 기본값보다 우선합니다. [Grafana 언어 설정 문서](https://grafana.com/docs/grafana/latest/administration/organization-preferences/#change-grafana-language)
+대시보드는 영어로 작성되어 있으며, Swarm stack은 `GF_USERS_DEFAULT_LANGUAGE=en-US`로 Grafana UI 기본 언어를 영어로 설정합니다. 사용자나 조직의 언어 설정이 있으면 해당 UI 기본값보다 우선합니다. [Grafana 언어 설정 문서](https://grafana.com/docs/grafana/latest/administration/organization-preferences/#change-grafana-language)
 
-Grafana는 최초 실행 시 SQLite 데이터베이스를 초기화하므로 디스크 성능에 따라 준비까지 수 분이 걸릴 수 있습니다. `docker compose logs -f grafana`에서 초기화 진행 상황을 확인할 수 있으며, 이후 시작에서는 기존 데이터베이스를 사용합니다.
+Grafana는 최초 실행 시 SQLite 데이터베이스를 초기화하므로 디스크 성능에 따라 준비까지 수 분이 걸릴 수 있습니다. `sh scripts/swarm.sh logs grafana`에서 초기화 진행 상황을 확인할 수 있으며, 이후 시작에서는 기존 데이터베이스를 사용합니다.
 
 로컬 SQLite 데이터베이스에는 WAL 모드를 사용합니다. 데이터베이스와 WAL 파일은 같은 Grafana named volume에 보존됩니다. [Grafana 데이터베이스 설정](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/#wal)
 
 | 화면 | 기본 주소 |
 |---|---|
-| KPL Dashboard | http://localhost:8080 |
-| Grafana 실험 분석 | http://localhost:3000/d/kpl-experiments |
-| Prometheus 쿼리/수집 상태 | http://localhost:9090 |
-| Controller 지표 원문 | http://localhost:8080/metrics |
+| KPL Dashboard | http://control-node:8080 |
+| Grafana 실험 분석 | http://control-node:3000/d/kpl-experiments |
+| Prometheus 쿼리/수집 상태 | http://control-node:9090 |
+| Controller 지표 원문 | http://control-node:8080/metrics |
 
-Compose는 기본적으로 읽기 전용 Grafana 익명 접속을 허용하며 기본 Swarm stack은 익명 접속을 비활성화합니다. Compose 관리자 계정은 `.env` 또는 shell 환경의 `GRAFANA_ADMIN_USER`/`GRAFANA_ADMIN_PASSWORD`를 사용하고, 모두 미설정이면 `admin`/`admin`을 기본값으로 사용합니다. 최초 실행 전에 [`.env.example`](../.env.example)을 참고해 비밀번호를 설정하십시오. Swarm은 `GRAFANA_ADMIN_PASSWORD`를 필수로 요구하며 설정 helper가 manager 설정에 자격 증명을 저장합니다. 이미 생성된 Grafana 데이터 볼륨의 비밀번호는 환경 변수만 바꾸어도 갱신되지 않습니다.
+Swarm stack은 Grafana 익명 접속을 비활성화하고 `GRAFANA_ADMIN_PASSWORD`를 필수로 요구합니다. 설정 helper가 manager 설정에 자격 증명을 저장하며 `sh scripts/swarm.sh credentials`로 설정된 로그인 정보를 확인할 수 있습니다. 이미 생성된 Grafana 데이터 볼륨의 비밀번호는 환경 변수만 바꾸어도 갱신되지 않습니다.
 
-Docker Compose는 Prometheus/Grafana 포트를 `127.0.0.1`에만 게시하고, Swarm은 control 노드에 게시합니다. Swarm은 각 Agent의 전용 metrics listener도 해당 노드의 `KPL_AGENT_METRICS_PORT`(기본 `9091`)로 게시합니다. Compose 포트는 `.env`의 `PROMETHEUS_PORT`, `GRAFANA_PORT`로 바꾸고 Swarm 포트는 `scripts/swarm.sh configure`를 사용하십시오. Compose의 익명 열람을 끄려면 `GRAFANA_ANONYMOUS_ENABLED=false`로 지정합니다.
+Swarm은 Prometheus/Grafana 포트를 control 노드에 게시합니다. 각 Agent의 전용 metrics listener도 해당 노드의 `KPL_AGENT_METRICS_PORT`(기본 `9091`)로 게시합니다. `scripts/swarm.sh configure`로 `PROMETHEUS_PORT`, `GRAFANA_PORT` 또는 Agent metrics 포트를 변경한 뒤 다시 배포해 적용하십시오.
 
 대시보드 상단 메뉴는 Prometheus와 Grafana를 새 탭으로 엽니다. 현재 Dashboard의 scheme과 호스트를 유지하고 설정된 게시 포트로 바꿉니다. 브라우저가 사용하는 포트가 설정값과 같으면 직접 접속과 SSH 터널에서 동작합니다. Proxy가 scheme/path를 바꾸거나 로컬 forwarding에 다른 포트를 쓰면 실제 모니터링 주소를 별도로 여십시오.
 
@@ -30,7 +30,7 @@ Docker Compose는 Prometheus/Grafana 포트를 `127.0.0.1`에만 게시하고, S
 2. Grafana에서 **Run**(run_id), **Agent**, **Topic**을 선택합니다. 여러 run을 고르면 선택한 실험의 트래픽·지연을 합산하며, 네트워크 설정 시계열은 범례에서 run별로 구분합니다.
 3. 실험이 끝난 뒤에도 시간 범위를 해당 실행 구간으로 지정하면 시계열을 볼 수 있습니다. 기본 새로고침은 5초입니다.
 
-Prometheus는 Controller와 Agent의 `/metrics`를 5초마다 수집합니다. Compose는 두 Agent의 고정 service 이름을 사용합니다. Swarm에서는 Controller가 등록된 Agent의 metrics URL을 HTTP service discovery로 반환하고, Prometheus가 service VIP 대신 각 Agent의 host-mode 포트에 직접 접근합니다. Peer를 직접 scrape하거나 각 컨테이너에 exporter를 추가하지 않습니다. Controller는 기존 Peer telemetry를 누적 집계하므로 `scope: all`에서 telemetry가 손실되면 Controller가 만드는 Peer 지표도 영향을 받습니다. 모니터링 서비스는 별도 Docker network에 있으며 Peer에는 추가 네트워크·권한을 부여하지 않습니다.
+Prometheus는 Controller와 Agent의 `/metrics`를 5초마다 수집합니다. Controller가 등록된 Agent의 metrics URL을 HTTP service discovery로 반환하고, Prometheus가 service VIP 대신 각 Agent의 host-mode 포트에 직접 접근합니다. Peer를 직접 scrape하거나 각 컨테이너에 exporter를 추가하지 않습니다. Controller는 기존 Peer telemetry를 누적 집계하므로 `scope: all`에서 telemetry가 손실되면 Controller가 만드는 Peer 지표도 영향을 받습니다. 모니터링 서비스는 별도 Docker network에 있으며 Peer에는 추가 네트워크·권한을 부여하지 않습니다.
 
 ## 실험 결과 다운로드
 
@@ -61,9 +61,9 @@ Controller 시작 후 첫 HEAD나 원본 파일·상태 변경 뒤에는 캡처�
 저장 결과 목록과 다운로드에도 기존 공개 GET 정책이 적용됩니다. API에서는 다음과 같이 사용할 수 있습니다.
 
 ```bash
-curl --fail http://localhost:8080/api/v1/results
+curl --fail http://control-node:8080/api/v1/results
 curl --fail --output run-results.zip \
-  http://localhost:8080/api/v1/experiments/RUN_ID/download
+  http://control-node:8080/api/v1/experiments/RUN_ID/download
 ```
 
 `RUN_ID`를 저장 목록의 실험 ID로 바꾸십시오. Swarm에서는 control 노드 주소를 사용합니다. `KPL_STACK_NAME=kpl`이면 원본은 해당 노드의 `kpl_controller-data` 볼륨에 있습니다. 이 볼륨을 Controller 내부 `/var/lib/kpl/data`에 마운트하며, 실험별 파일은 그 아래 `runs/<run-id>`에 저장됩니다. 매니저의 `swarm.sh remove`는 이 볼륨을 보존합니다. 원시 이벤트의 자동 보존 기한이나 노드 간 복제는 없으므로 디스크 공간과 백업을 별도로 관리하십시오.
@@ -140,20 +140,18 @@ Linux에서 새 실행을 검증하고 ZIP, 코드 revision 또는 image digest,
 
 Prometheus 시계열은 `prometheus-data`, Grafana 설정은 `grafana-data` named volume에 저장됩니다. 일반적인 컨테이너 재생성 후에도 유지됩니다. Prometheus 보존 설정은 15일/5GB이며 먼저 도달한 정책이 적용됩니다. 5GB는 디스크 사용량의 엄격한 상한이 아니며 WAL·head·압축 작업에는 추가 공간이 필요합니다. [Prometheus 저장소 문서](https://prometheus.io/docs/prometheus/latest/storage/)
 
-Compose bind mount는 `monitoring/grafana/dashboards`의 JSON 수정 사항을 30초 간격으로 반영합니다. Swarm config는 불변이므로 Prometheus와 dashboard 설정 변경은 버전이 붙은 config 참조를 사용하며 stack을 다시 배포해야 적용됩니다. 배포된 원본은 파일로 관리하며 별도 대시보드를 저장하려면 관리자 로그인 후 복사본을 사용하십시오. [Grafana provisioning 문서](https://grafana.com/docs/grafana/latest/administration/provisioning/)
+Swarm config는 불변이므로 Prometheus와 dashboard 설정 변경은 버전이 붙은 config 참조를 사용하며 stack을 다시 배포해야 적용됩니다. 배포된 원본은 파일로 관리하며 별도 대시보드를 저장하려면 관리자 로그인 후 복사본을 사용하십시오. [Grafana provisioning 문서](https://grafana.com/docs/grafana/latest/administration/provisioning/)
 
 ```bash
 # 수집 대상 상태 확인
-curl http://localhost:9090/api/v1/targets
+curl http://control-node:9090/api/v1/targets
 
-# Prometheus 설정 검사
-docker compose exec prometheus promtool check config /etc/prometheus/prometheus.yml
-
-# 서비스 상태/로그 확인
-docker compose ps
-docker compose logs --tail=100 prometheus grafana
+# manager에서 서비스 상태와 로그를 확인합니다.
+sh scripts/swarm.sh status
+sh scripts/swarm.sh logs prometheus
+sh scripts/swarm.sh logs grafana
 ```
 
-Compose 설정은 의도적으로 고정 Agent service 이름을 사용하며 원격 호스트를 탐색하지 않습니다. 기본 Swarm stack은 대신 `GET /api/v1/prometheus/agent-targets`에서 등록된 target을 탐색합니다. `sh scripts/swarm.sh access`로 광고 주소를 확인하고, 설정한 포트가 선택된 모든 Agent 노드에서 비어 있으며 control 노드에서 TCP 접근이 허용되는지 확인하십시오. 운영자가 Agent metrics 링크를 직접 열 때에는 브라우저가 속한 신뢰 관리망에서도 접근을 허용하고 신뢰하지 않는 출발지는 차단하십시오. `up{job="kpl-agent"}`를 보면 등록되었지만 방화벽이나 잘못된 Swarm `NodeAddr` 때문에 접근할 수 없는 target을 성공한 scrape와 구분할 수 있습니다.
+Swarm stack은 `GET /api/v1/prometheus/agent-targets`에서 등록된 target을 탐색합니다. `sh scripts/swarm.sh access`로 광고 주소를 확인하고, 설정한 포트가 선택된 모든 Agent 노드에서 비어 있으며 control 노드에서 TCP 접근이 허용되는지 확인하십시오. 운영자가 Agent metrics 링크를 직접 열 때에는 브라우저가 속한 신뢰 관리망에서도 접근을 허용하고 신뢰하지 않는 출발지는 차단하십시오. `up{job="kpl-agent"}`를 보면 등록되었지만 방화벽이나 잘못된 Swarm `NodeAddr` 때문에 접근할 수 없는 target을 성공한 scrape와 구분할 수 있습니다.
 
 현재 이미지 버전은 Prometheus `v3.13.2`와 Grafana `13.2.1`로 고정했습니다. 업데이트 시 공식 [Prometheus 다운로드](https://prometheus.io/download/)와 [Grafana Docker 설치 문서](https://grafana.com/docs/grafana/latest/setup-grafana/installation/docker/)를 참고하고 설정·대시보드를 재검증하십시오.

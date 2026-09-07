@@ -50,13 +50,11 @@ func (s *Server) handleRunAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.stopRunGeneration(parts[0], generation)
-	if s.config.Runtime == "docker" {
-		cleanupCtx, cancel := context.WithTimeout(r.Context(), containerStopTimeout)
-		defer cancel()
-		if err := s.waitRunContainers(cleanupCtx, parts[0], generation); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
+	cleanupCtx, cancel := context.WithTimeout(r.Context(), containerStopTimeout)
+	defer cancel()
+	if err := s.waitRunContainers(cleanupCtx, parts[0], generation); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	w.WriteHeader(http.StatusAccepted)
 }
@@ -154,21 +152,14 @@ func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) proxyPublish(ctx context.Context, nodeID string, request model.PublishRequest) error {
-	s.mu.Lock()
+	s.mu.RLock()
 	proc, ok := s.processes[nodeID]
 	if !ok || proc.exited || proc.node.State != model.NodeReady {
-		s.mu.Unlock()
+		s.mu.RUnlock()
 		return fmt.Errorf("node %q is not ready", nodeID)
 	}
-	proc.proxyRefs++
 	apiURL := proc.apiURL
-	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		proc.proxyRefs--
-		s.releaseProcessPortsLocked(proc)
-		s.mu.Unlock()
-	}()
+	s.mu.RUnlock()
 	data, err := json.Marshal(request)
 	if err != nil {
 		return err

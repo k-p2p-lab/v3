@@ -106,7 +106,7 @@ The base mesh defaults are `D=6`, `DLow=5`, `DHigh=12`, `DScore=4`, `DOut=2`, `D
 
 When migrating a v2 configuration, map v2's misleadingly named `protocol_id` to v3 `kademlia.protocolPrefix`: v2 used that value as a prefix. In v3, `kademlia.protocolId` instead overrides the exact Kademlia V1 wire protocol ID; it is mutually exclusive with `protocolPrefix` and `protocolExtension`, so do not copy a v2 prefix into it. The default prefix `/k-p2p-lab/v3` is an intentional new protocol namespace. Use `protocolPrefix: /k-p2p-lab/kad-dht` only when an experiment requires the legacy v2 namespace.
 
-For RandomSub, `randomDegree` sets the minimum connection/degree target through libp2p's process-global `RandomSubD`. KPL currently isolates each Peer in its own process, so that global applies to one Peer; an in-process multi-peer runtime would need additional isolation. `randomNetworkSize` is the separate estimated network-size argument passed to `NewRandomSub`.
+For RandomSub, `randomDegree` sets the minimum connection/degree target through libp2p's process-global `RandomSubD`. KPL isolates each Peer in its own container, so that global applies to one Peer. `randomNetworkSize` is the separate estimated network-size argument passed to `NewRandomSub`.
 
 When `gossipsub.score` is enabled, `scoreInspectInterval` defaults to `1s`. Each inspection updates the node's `peerScores` map. It is returned by `/api/v1/nodes`, `/api/v1/network`, `/api/v1/snapshot`, and the SSE snapshot stream; selecting a node in the topology displays the observed score count and average in its details.
 
@@ -114,7 +114,7 @@ When `gossipsub.score` is enabled, `scoreInspectInterval` defaults to `1s`. Each
 
 ### Per-node network conditions
 
-With the Docker runtime, add `network` to a profile or a join phase's `node` block. The default `scope: p2p` shapes outgoing P2P TCP on port `20000` inside each Peer container. Select `scope: all` to reproduce v2's shaping of all egress, including control HTTP and telemetry. A configured delay is a one-way egress delay, not a round-trip latency target.
+Add `network` to a profile or a join phase's `node` block. The default `scope: p2p` shapes outgoing P2P TCP on port `20000` inside each Peer container. Select `scope: all` to reproduce v2's shaping of all egress, including control HTTP and telemetry. A configured delay is a one-way egress delay, not a round-trip latency target.
 
 ```yaml
 node:
@@ -143,14 +143,16 @@ node:
 
 See the [v2 reproduction audit and mapping](v2-reproduction.md) and [churn example](../examples/v2-churn.yaml). They cover placement (`balanced`, per-node `random`, batch `single-agent`, or explicit `agentId`), `onError: continue` for churn, `payloadEncoding: raw` for exact PubSub data length, and `topic: '*'` for all topics. Network scope and payload encoding retain their existing defaults. Worker bootstrap now uses seeded first-success selection, and the transport stack is explicitly TCP/Noise/Yamux.
 
-Peers with network conditions require Linux `NET_ADMIN` and host-kernel `sch_netem` support. The Docker runtime adds `NET_ADMIN` only to those Peers. Missing kernel support or a failed `tc` command fails node startup explicitly. A process-runtime Agent rejects network conditions rather than applying rules to its shared host interface.
+Peers with network conditions require Linux `NET_ADMIN` and host-kernel `sch_netem` support. The Docker runtime adds `NET_ADMIN` only to those Peers. Missing kernel support or a failed `tc` command fails node startup explicitly.
 
 [`examples/network-conditions.yaml`](../examples/network-conditions.yaml) creates two bootstrap nodes and four constrained workers, waits for initialization, publishes sample messages, and stops all nodes. Run it from the dashboard or submit it with:
 
+Replace `control-node:8080` with the Controller address printed by `sh scripts/swarm.sh access` and export the token printed by `sh scripts/swarm.sh credentials` as `KPL_API_TOKEN`.
+
 ```bash
-curl -X POST http://localhost:8080/api/v1/experiments \
+curl -X POST http://control-node:8080/api/v1/experiments \
   -H 'Content-Type: application/yaml' \
-  -H "Authorization: Bearer ${KPL_API_TOKEN:-}" \
+  -H "Authorization: Bearer ${KPL_API_TOKEN:?Set KPL_API_TOKEN}" \
   --data-binary @examples/network-conditions.yaml
 ```
 
@@ -182,16 +184,16 @@ For `join`, `count` is the exact number of create operations. For `publish` and 
 | `role`, `profile`, `node` | `join` | Role is `boot` or `worker` (default); profile and inline node settings customize the preset. |
 | `placement`, `agentId` | `join` | `balanced` (default) chooses by utilization, `random` chooses per node, and `single-agent` chooses one Agent per batch; explicit `agentId` pins placement. Admission waits for available capacity. |
 | `parallel`, `parallelism` | `join`, `publish`, `leave` | Default is sequential. Omitted/zero parallelism allows the whole batch to run concurrently when parallel is enabled. |
-| `interval`, `lifetime` | Paced operations; lifetime only on `join` | See timing rules below. Docker lifetime starts after successful container creation and includes configuration copy, start, and bootstrap; process-runtime lifetime starts after the child process starts. It is independent of background job completion. |
+| `interval`, `lifetime` | Paced operations; lifetime only on `join` | See timing rules below. Peer lifetime starts after successful container creation and includes configuration copy, start, and bootstrap. It is independent of background job completion. |
 | `topic`, `payloadSize`, `payloadEncoding` | `publish` | Topic defaults to the publisher's first configured topic; `'*'` publishes to all its configured topics. Non-positive `payloadSize` resolves to `32`. Default `envelope` adds JSON/base64 metadata; `raw` makes PubSub data exactly `payloadSize` bytes. |
 | `deliveryWindow`, `onError` | `publish`; `onError` also on `leave` | Window defaults to `10s`. `onError: fail` is the default; `continue` records individual operation failures and continues churn. A publish with no eligible candidate is a no-op under `continue`. |
 | `group`, `type`, `readyRatio`, `minCount`, `jobs`, `timeout` | `wait-ready` | Empty group/type matches all current-generation nodes. Ratio defaults to `1`; timeout defaults to `1m` and covers both job waiting and readiness. `minCount` is a cohort-size floor. |
 | `jobs`, `timeout` | `wait-jobs` | Empty jobs means all tracked jobs; timeout defaults to `5m`. |
 | `duration`; `message` | `wait` / `sleep`; `log` | Positive wait duration; Controller log message. |
 
-Background-job behavior at the natural end of the phase list is controlled by top-level `onExit`. Its default, `cancel`, cancels remaining jobs and then waits for them to stop. `onExit: drain` instead waits for them to complete naturally. A naturally successful single run applies this job policy but leaves Peer processes running unless the scenario contains an explicit `stop-all`. A Dashboard/API batch submitted with `repetitions > 1` automatically fences and cleans up Peers after every iteration, including the last, so they cannot overlap the next run. This is separate from a YAML phase's `repeat` field.
+Background-job behavior at the natural end of the phase list is controlled by top-level `onExit`. Its default, `cancel`, cancels remaining jobs and then waits for them to stop. `onExit: drain` instead waits for them to complete naturally. A naturally successful single run applies this job policy but leaves Peer containers running unless the scenario contains an explicit `stop-all`. A Dashboard/API batch submitted with `repetitions > 1` automatically fences and cleans up Peers after every iteration, including the last, so they cannot overlap the next run. This is separate from a YAML phase's `repeat` field.
 
-`jobShutdownTimeout` defaults to `3m`. When a user or API request cancels a scenario, or when any scenario phase or background job fails, the Controller cancels outstanding jobs and waits for their termination within this bound, then asks every Agent to generation-fence and clean up Peer processes through the current generation. An explicit `stop-all` uses the same bounded job shutdown, resets job tracking, and fences the current run generation. The Agent records the monotonically increasing fence before stopping matching processes: a late create at generation N either committed before the fence and is included in cleanup, or is rejected because its generation is at or below the fence. After `stop-all` succeeds, the scenario advances to generation N+1, so later phases may create new nodes under the same run ID and may reuse job IDs.
+`jobShutdownTimeout` defaults to `3m`. When a user or API request cancels a scenario, or when any scenario phase or background job fails, the Controller cancels outstanding jobs and waits for their termination within this bound, then asks every Agent to generation-fence and clean up Peer containers through the current generation. An explicit `stop-all` uses the same bounded job shutdown, resets job tracking, and fences the current run generation. The Agent records the monotonically increasing fence before stopping matching containers: a late create at generation N either committed before the fence and is included in cleanup, or is rejected because its generation is at or below the fence. After `stop-all` succeeds, the scenario advances to generation N+1, so later phases may create new nodes under the same run ID and may reuse job IDs.
 
 `wait-ready` evaluates the complete matching cohort in the current run generation, including failed, stopping, and stopped nodes; nodes from previous generations are ignored. A failed cohort member prevents the barrier from succeeding, and a node reported as ready contributes to the ready count only while its Agent is online. Because the cohort still contains only nodes observed so far, `wait-ready` after an `await: false` join must specify either `jobs: [job-id]` or `minCount`. `jobs` waits for the selected producer jobs to finish before checking readiness; `minCount` leaves them running but prevents a partially created group from satisfying the ratio too early.
 

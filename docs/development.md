@@ -11,6 +11,10 @@ Run the following commands from the repository root in Linux:
 ```sh
 go build -o bin/kpl ./cmd/kpl
 go test -buildvcs=false ./... -timeout 120s
+sh scripts/test-swarm-agent.sh
+sh scripts/test-check-swarm.sh
+sh scripts/test-swarm-config.sh
+sh scripts/test-swarm.sh
 ```
 
 Validate a scenario without running it:
@@ -19,16 +23,9 @@ Validate a scenario without running it:
 ./bin/kpl validate --scenario examples/smoke.yaml
 ```
 
-For quick development without Docker, run the Controller and one Agent in separate Linux terminals:
+## Run development experiments on Swarm
 
-```sh
-./bin/kpl controller --listen :8080
-./bin/kpl agent --runtime process --id local-a \
-  --advertise-url http://127.0.0.1:8090 \
-  --controller-url http://127.0.0.1:8080
-```
-
-The process runtime starts each Peer as a child process. It cannot isolate network namespaces and rejects scenarios that configure Peer network conditions. Use the default Docker runtime and the [Linux preflight](linux-deployment.md#prepare-and-start-the-server) when validating container isolation or `tc` behavior.
+Build and publish the updated image, then deploy it with the [Swarm workflow](swarm.md). A single Linux node can host a development Swarm: use `KPL_MIN_AGENTS=1` and `deploy --all`. Agents require an active Swarm node and an explicitly configured image and attachable Peer overlay. Run the distributed smoke scenario on at least two Agent nodes when checking cross-host placement and connectivity.
 
 ## Container and Browser Regression Checks
 

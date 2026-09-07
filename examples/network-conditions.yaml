@@ -2,7 +2,7 @@ version: 2
 name: per-peer-network-conditions
 seed: 42
 
-# Run with the Docker Agent runtime. Each worker's Linux netem rules affect
+# Run on the Swarm stack. Each worker's Linux netem rules affect
 # only its outgoing P2P TCP traffic; Agent and Peer control HTTP bypass them.
 profiles:
   network-boot:

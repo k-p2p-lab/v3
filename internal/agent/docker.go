@@ -48,17 +48,28 @@ type dockerRuntime struct {
 
 func (d *dockerRuntime) check(ctx context.Context) error {
 	if !dockerNetworkName.MatchString(d.network) || d.network == "host" || d.network == "none" || d.network == "bridge" {
-		return fmt.Errorf("docker peer network must be a user-defined bridge or attachable overlay network")
+		return fmt.Errorf("docker peer network must be a Swarm attachable overlay network")
 	}
 	if d.image == "" || strings.HasPrefix(d.image, "-") {
 		return fmt.Errorf("docker peer image is required")
 	}
-	output, err := d.run(ctx, nil, "info", "--format", "{{.OSType}}")
+	infoFormat := `{"OSType":{{json .OSType}},"SwarmState":{{json .Swarm.LocalNodeState}}}`
+	output, err := d.run(ctx, nil, "info", "--format", infoFormat)
 	if err != nil {
 		return fmt.Errorf("connect to Docker daemon: %w", err)
 	}
-	if strings.TrimSpace(string(output)) != "linux" {
+	var daemon struct {
+		OSType     string
+		SwarmState string
+	}
+	if err := json.Unmarshal(output, &daemon); err != nil {
+		return fmt.Errorf("invalid Docker daemon info response: %w", err)
+	}
+	if daemon.OSType != "linux" {
 		return fmt.Errorf("Docker peer runtime requires a Linux Docker daemon")
+	}
+	if daemon.SwarmState != "active" {
+		return fmt.Errorf("Docker peer runtime requires an active Swarm node")
 	}
 	output, err = d.run(ctx, nil, "image", "inspect", "--format", "{{.Os}}", d.image)
 	if err != nil {
@@ -69,7 +80,7 @@ func (d *dockerRuntime) check(ctx context.Context) error {
 	}
 	// Full network inspection includes every attached container. Select only
 	// startup requirements so large experiments fit the diagnostic output limit.
-	networkFormat := `[{"Name":{{json .Name}},"Driver":{{json .Driver}},"Attachable":{{json .Attachable}}}]`
+	networkFormat := `[{"Name":{{json .Name}},"Driver":{{json .Driver}},"Attachable":{{json .Attachable}},"Scope":{{json .Scope}}}]`
 	output, err = d.run(ctx, nil, "network", "inspect", "--format", networkFormat, d.network)
 	if err != nil {
 		return fmt.Errorf("inspect peer network %q (create it first): %w", d.network, err)
@@ -78,15 +89,16 @@ func (d *dockerRuntime) check(ctx context.Context) error {
 		Name       string
 		Driver     string
 		Attachable bool
+		Scope      string
 	}
 	if err := json.Unmarshal(output, &networks); err != nil || len(networks) != 1 {
 		return fmt.Errorf("invalid Docker network inspect response for %q", d.network)
 	}
 	network := networks[0]
-	if !dockerNetworkName.MatchString(network.Name) || network.Name == "bridge" || (network.Driver != "bridge" && network.Driver != "overlay") {
-		return fmt.Errorf("peer network %q must use a user-defined bridge or overlay driver", d.network)
+	if !dockerNetworkName.MatchString(network.Name) || network.Driver != "overlay" || network.Scope != "swarm" {
+		return fmt.Errorf("peer network %q must use a Swarm overlay driver", d.network)
 	}
-	if network.Driver == "overlay" && !network.Attachable {
+	if !network.Attachable {
 		return fmt.Errorf("peer overlay network %q must be attachable", d.network)
 	}
 	// Docker accepts a network ID as well as a name, but container inspection

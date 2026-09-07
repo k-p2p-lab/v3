@@ -9,8 +9,8 @@ import (
 )
 
 func topologyStatusServer() *Server {
-	return &Server{config: Config{Runtime: "process"}, processes: map[string]*process{
-		"node": {node: model.Node{ID: "node", State: model.NodeStarting, Metadata: map[string]string{"owned": "agent"}}},
+	return &Server{processes: map[string]*process{
+		"node": {apiURL: "http://peer:18000", node: model.Node{ID: "node", State: model.NodeStarting, Metadata: map[string]string{"owned": "agent"}}},
 	}}
 }
 

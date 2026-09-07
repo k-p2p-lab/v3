@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -124,11 +123,8 @@ func TestServerRunWaitsForFinalMeasurementDrain(t *testing.T) {
 	}
 	apiAddress := port.Addr().String()
 	_ = port.Close()
-	config := model.PeerProcessConfig{Node: model.Node{ID: "node", RunID: "run", Role: "boot"}, AgentURL: endpoint.URL, ControllerURL: endpoint.URL, APListen: apiAddress, P2PListen: "/ip4/127.0.0.1/tcp/0", NodeConfig: model.NodeConfig{Kademlia: model.KademliaConfig{Enabled: &disabled}, GossipSub: model.GossipSubConfig{TopicMode: "subscribe", Topics: []string{"topic-a"}}}}
-	server, err := New(ctx, config, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	config := model.PeerProcessConfig{Node: model.Node{ID: "node", RunID: "run", Role: "boot"}, AgentURL: endpoint.URL, ControllerURL: endpoint.URL, APListen: apiAddress, NodeConfig: model.NodeConfig{Kademlia: model.KademliaConfig{Enabled: &disabled}, GossipSub: model.GossipSubConfig{TopicMode: "subscribe", Topics: []string{"topic-a"}}}}
+	server := newRunTestServer(t, config)
 	defer server.Close()
 	server.telemetry.shutdownTimeout = 2 * time.Second
 	done := make(chan error, 1)

@@ -15,14 +15,14 @@ import (
 	"github.com/k-p2p-lab/v3/internal/model"
 )
 
-func TestDockerIsDefaultAndRequiresContainerReachableURLs(t *testing.T) {
-	config := Config{ID: "test", AdvertiseURL: "http://agent:8090", ControllerURL: "http://controller:8080"}
+func TestAgentRequiresContainerReachableURLs(t *testing.T) {
+	config := Config{DockerImage: "registry.example:5000/kpl-v3:test", DockerNetwork: "kpl-v3-peers", ID: "test", AdvertiseURL: "http://agent:8090", ControllerURL: "http://controller:8080"}
 	server, err := New(config, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if server.config.Runtime != "docker" || server.docker == nil || server.config.SelfURL != config.AdvertiseURL {
-		t.Fatalf("Docker defaults not applied: %+v", server.config)
+	if server.docker == nil || server.config.SelfURL != config.AdvertiseURL {
+		t.Fatalf("Docker configuration not applied: %+v", server.config)
 	}
 	for _, endpoint := range []string{"http://localhost:8090", "http://127.0.0.1:8090", "http://[::1]:8090", "http://0.0.0.0:8090"} {
 		config.SelfURL = endpoint
@@ -32,22 +32,9 @@ func TestDockerIsDefaultAndRequiresContainerReachableURLs(t *testing.T) {
 	}
 }
 
-func TestProcessRuntimeRejectsNetworkConditions(t *testing.T) {
-	server := newRuntimeTestServer(t, 18000, 20000)
-	_, err := server.createNode(context.Background(), model.CreateNodeRequest{
-		ID: "peer", RunID: "run", Group: "workers", Config: model.NodeConfig{Network: model.NetworkConfig{Delay: "20ms"}},
-	})
-	if err == nil || !strings.Contains(err.Error(), "require the docker runtime") {
-		t.Fatalf("error = %v", err)
-	}
-	if len(server.nodes()) != 0 {
-		t.Fatal("process was started despite unsupported network conditions")
-	}
-}
-
 func newContainerTestServer(t *testing.T, settings map[string]string) (*Server, string) {
 	t.Helper()
-	server, err := New(Config{ID: "agent", AdvertiseURL: "http://agent:8090", ControllerURL: "http://controller:8080", DataDir: t.TempDir()}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server, err := New(Config{DockerImage: "registry.example:5000/kpl-v3:test", DockerNetwork: "kpl-v3-peers", ID: "agent", AdvertiseURL: "http://agent:8090", ControllerURL: "http://controller:8080", DataDir: t.TempDir()}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,10 +77,10 @@ func TestContainerLifecycleStopsAndReportsCleanupFailures(t *testing.T) {
 			waitDockerCall(t, path, "wait")
 			server.mu.RLock()
 			proc := server.processes[node.ID]
-			configPath, containerID, lease := proc.configPath, proc.containerID, proc.lease
+			configPath, containerID := proc.configPath, proc.containerID
 			server.mu.RUnlock()
-			if containerID != fakeContainerID || lease != nil {
-				t.Fatal("Docker peer must have a container and no host port lease")
+			if containerID != fakeContainerID {
+				t.Fatal("Docker peer must retain its container identity")
 			}
 			data, err := os.ReadFile(configPath)
 			if err != nil {
@@ -103,7 +90,7 @@ func TestContainerLifecycleStopsAndReportsCleanupFailures(t *testing.T) {
 			if err := json.Unmarshal(data, &config); err != nil {
 				t.Fatal(err)
 			}
-			if config.Runtime != "docker" || config.APListen != "0.0.0.0:18000" || config.P2PListen != "/ip4/0.0.0.0/tcp/20000" || config.AgentURL != "http://agent:8090" {
+			if config.APListen != "0.0.0.0:18000" || config.P2PListen != "/ip4/0.0.0.0/tcp/20000" || config.AgentURL != "http://agent:8090" {
 				t.Fatalf("container configuration = %+v", config)
 			}
 			server.stopRunGeneration("run", 2)
@@ -262,4 +249,21 @@ func TestDelayedDockerAdmissionDoesNotConsumeStartupBudget(t *testing.T) {
 	}
 	waitForNodeState(t, server, "peer", model.NodeStopped)
 	waitDockerCall(t, path, "rm")
+}
+
+func TestAgentRequiresExplicitSwarmImageAndNetwork(t *testing.T) {
+	base := Config{ID: "agent", AdvertiseURL: "http://agent:8090", ControllerURL: "http://controller:8080", DockerImage: "registry.example:5000/kpl-v3:test", DockerNetwork: "kpl-v3-peers"}
+	for _, field := range []string{"image", "network"} {
+		t.Run(field, func(t *testing.T) {
+			config := base
+			if field == "image" {
+				config.DockerImage = ""
+			} else {
+				config.DockerNetwork = ""
+			}
+			if _, err := New(config, nil); err == nil {
+				t.Fatalf("accepted missing %s", field)
+			}
+		})
+	}
 }

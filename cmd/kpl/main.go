@@ -101,18 +101,15 @@ func runAgent(ctx context.Context, logger *slog.Logger, args []string) error {
 	advertiseURL := flags.String("advertise-url", "", "controller-reachable agent URL")
 	metricsListen := flags.String("metrics-listen", "", "optional metrics-only HTTP listen address")
 	metricsURL := flags.String("metrics-url", "", "public metrics URL advertised to the Controller")
-	selfURL := flags.String("self-url", "", "agent URL reachable from peer containers (defaults to advertise-url in Docker mode)")
-	controllerURL := flags.String("controller-url", "http://127.0.0.1:8080", "controller URL")
+	selfURL := flags.String("self-url", "", "agent overlay URL reachable from peer containers (defaults to advertise-url)")
+	controllerURL := flags.String("controller-url", "", "controller URL on the Swarm peer overlay")
 	capacity := flags.Int("capacity", 100, "maximum active peers")
 	dataDir := flags.String("data-dir", "data-agent", "agent data directory")
 	token := flags.String("token", os.Getenv("KPL_API_TOKEN"), "optional shared API token")
-	peerAPIPort := flags.Int("peer-api-port", 18000, "first peer control API port")
-	peerP2PPort := flags.Int("peer-p2p-port", 20000, "first peer libp2p port")
 	labels := flags.String("labels", "", "comma-separated key=value labels")
-	runtime := flags.String("runtime", "docker", "peer runtime: docker or process")
 	dockerBinary := flags.String("docker-binary", "docker", "Docker CLI executable")
-	dockerImage := flags.String("docker-image", "kpl-v3:local", "local Docker image for peer containers")
-	dockerNetwork := flags.String("docker-network", "kpl-v3-peers", "user-defined bridge or attachable overlay network")
+	dockerImage := flags.String("docker-image", "", "peer image resolved from the running Swarm Agent task")
+	dockerNetwork := flags.String("docker-network", "", "attachable Swarm peer overlay network")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -120,8 +117,8 @@ func runAgent(ctx context.Context, logger *slog.Logger, args []string) error {
 		ID: *id, Name: *name, Listen: *listen, AdvertiseURL: *advertiseURL,
 		MetricsListen: *metricsListen, MetricsURL: *metricsURL, SelfURL: *selfURL,
 		ControllerURL: *controllerURL, Capacity: *capacity, DataDir: *dataDir, Token: *token,
-		PeerAPIPort: *peerAPIPort, PeerP2PPort: *peerP2PPort, Labels: parseLabels(*labels),
-		Runtime: *runtime, DockerBinary: *dockerBinary, DockerImage: *dockerImage, DockerNetwork: *dockerNetwork,
+		Labels:       parseLabels(*labels),
+		DockerBinary: *dockerBinary, DockerImage: *dockerImage, DockerNetwork: *dockerNetwork,
 	}, logger)
 	if err != nil {
 		return err
@@ -131,7 +128,7 @@ func runAgent(ctx context.Context, logger *slog.Logger, args []string) error {
 
 func runPeer(ctx context.Context, logger *slog.Logger, args []string) error {
 	flags := flag.NewFlagSet("peer", flag.ContinueOnError)
-	configPath := flags.String("config", "", "peer process JSON config")
+	configPath := flags.String("config", "", "peer container JSON config")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -178,8 +175,11 @@ func usage() {
 
 Usage:
   kpl controller [--listen :8080] [--data-dir data]
-  kpl agent --id ID --advertise-url URL [--controller-url URL]
+  kpl agent --id ID --advertise-url URL --controller-url URL --docker-image IMAGE --docker-network OVERLAY
   kpl peer --config FILE
   kpl validate --scenario FILE
-  kpl version`)
+  kpl version
+
+Deploy and manage the Swarm stack with sh scripts/swarm.sh.
+Controller, Agent and Peer commands are container entrypoints.`)
 }

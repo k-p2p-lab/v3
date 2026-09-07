@@ -72,25 +72,6 @@ func TestResolveCreateNodeConfigCustomTypeInheritsWorkerDefaults(t *testing.T) {
 	}
 }
 
-func TestStoppingProcessesDoNotConsumeCapacity(t *testing.T) {
-	nodes := []model.Node{
-		{State: model.NodeReady},
-		{State: model.NodeStopping},
-		{State: model.NodeStopped},
-		{State: model.NodeFailed},
-	}
-	if got := activeNodeCount(nodes); got != 1 {
-		t.Fatalf("active node count = %d, want 1", got)
-	}
-	processes := map[string]*process{
-		"ready":    {node: nodes[0]},
-		"stopping": {node: nodes[1]},
-	}
-	if got := activeNodeCountLocked(processes); got != 1 {
-		t.Fatalf("locked active node count = %d, want 1", got)
-	}
-}
-
 func TestPeerScoreStatusIsRetainedForHeartbeat(t *testing.T) {
 	server := &Server{processes: map[string]*process{
 		"node": {node: model.Node{ID: "node", State: model.NodeStarting}},

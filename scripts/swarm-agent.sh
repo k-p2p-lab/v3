@@ -45,4 +45,4 @@ exec kpl agent \
     --metrics-listen :9091 --metrics-url "http://$metrics_host:$metrics_port/metrics" \
     --controller-url "${KPL_CONTROLLER_URL:-http://controller:8080}" \
     --capacity "${KPL_AGENT_CAPACITY:-20}" --data-dir /var/lib/kpl/agent \
-    --runtime docker --docker-image "$image" --docker-network "$KPL_PEER_NETWORK"
+    --docker-image "$image" --docker-network "$KPL_PEER_NETWORK"

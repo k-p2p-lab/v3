@@ -287,15 +287,11 @@ func TestServerRunContinuesWithoutInitialClockSync(t *testing.T) {
 	disabled := false
 	config := model.PeerProcessConfig{
 		Node: model.Node{ID: "node", RunID: "run", Role: "boot"}, AgentURL: endpoint.URL, ControllerURL: endpoint.URL,
-		APListen: apiAddress, P2PListen: "/ip4/127.0.0.1/tcp/0",
+		APListen:   apiAddress,
 		NodeConfig: model.NodeConfig{Kademlia: model.KademliaConfig{Enabled: &disabled}, GossipSub: model.GossipSubConfig{Enabled: &disabled}},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	server, err := New(ctx, config, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		cancel()
-		t.Fatal(err)
-	}
+	server := newRunTestServer(t, config)
 	defer server.Close()
 	server.telemetry.shutdownTimeout = time.Second
 	done := make(chan error, 1)

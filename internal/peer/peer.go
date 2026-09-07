@@ -90,14 +90,6 @@ func Run(ctx context.Context, configPath string, logger *slog.Logger) error {
 	return server.Run(ctx)
 }
 
-func New(ctx context.Context, config model.PeerProcessConfig, logger *slog.Logger) (*Server, error) {
-	config, err := resolveDockerP2PListen(ctx, config, agentRouteSourceIPv4)
-	if err != nil {
-		return nil, err
-	}
-	return newServer(ctx, config, logger)
-}
-
 func newServer(ctx context.Context, config model.PeerProcessConfig, logger *slog.Logger) (*Server, error) {
 	if config.Node.ID == "" || config.Node.RunID == "" || config.AgentURL == "" || config.ControllerURL == "" {
 		return nil, fmt.Errorf("peer config requires node, run, agent, and controller")
@@ -118,18 +110,16 @@ func newServer(ctx context.Context, config model.PeerProcessConfig, logger *slog
 		return nil, err
 	}
 	options = append(options, libp2p.Identity(identity), libp2p.ListenAddrStrings(config.P2PListen))
-	if config.Runtime == "docker" {
-		address, err := multiaddr.NewMultiaddr(config.P2PListen)
-		if err != nil {
-			return nil, fmt.Errorf("Docker P2P address: %w", err)
-		}
-		// Overlay containers can also have a host-local docker_gwbridge
-		// address. Neither that address nor observed NAT/relay addresses
-		// should enter Identify or the bootstrap registry for this peer.
-		options = append(options, libp2p.AddrsFactory(func([]multiaddr.Multiaddr) []multiaddr.Multiaddr {
-			return []multiaddr.Multiaddr{address}
-		}))
+	address, err := multiaddr.NewMultiaddr(config.P2PListen)
+	if err != nil {
+		return nil, fmt.Errorf("Docker P2P address: %w", err)
 	}
+	// Overlay containers can also have a host-local docker_gwbridge
+	// address. Neither that address nor observed NAT/relay addresses
+	// should enter Identify or the bootstrap registry for this peer.
+	options = append(options, libp2p.AddrsFactory(func([]multiaddr.Multiaddr) []multiaddr.Multiaddr {
+		return []multiaddr.Multiaddr{address}
+	}))
 	h, err := libp2p.New(options...)
 	if err != nil {
 		return nil, fmt.Errorf("create libp2p host: %w", err)

@@ -5,8 +5,8 @@ onExit: cancel
 jobShutdownTimeout: 3m
 
 # Scaled adaptation of v2 exp-2603_churn-02.sh, with explicit network conditions.
-# Two Compose Agents share one Docker host; use one Agent per physical host and
-# an attachable overlay for multi-host comparisons.
+# Swarm places one Agent on each selected host and connects Peers through the
+# shared attachable overlay for multi-host comparisons.
 profiles:
   legacy-boot:
     type: boot

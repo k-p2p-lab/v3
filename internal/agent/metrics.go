@@ -127,20 +127,15 @@ func (c *localCollector) Collect(ch chan<- prometheus.Metric) {
 	s := c.server
 	s.mu.RLock()
 	agentID, capacity := s.config.ID, s.config.Capacity
-	defaultRuntime := metricsRuntime(s.config.Runtime)
+	const defaultRuntime = "docker"
 	counts := make(map[nodeKey]int)
 	for _, state := range []string{model.NodeStarting, model.NodeReady, model.NodeStopping, model.NodeStopped, model.NodeFailed} {
 		counts[nodeKey{state, defaultRuntime}] = 0
 	}
 	cleanupPending := 0
 	for _, proc := range s.processes {
-		runtime := proc.node.Metadata["runtime"]
-		if runtime == "" {
-			runtime = defaultRuntime
-		}
-		runtime = metricsRuntime(runtime)
-		counts[nodeKey{metricsNodeState(proc.node.State), runtime}]++
-		if runtime == "docker" && (proc.cleanupErr != nil || !proc.exited && proc.node.State == model.NodeStopping) {
+		counts[nodeKey{metricsNodeState(proc.node.State), defaultRuntime}]++
+		if proc.cleanupErr != nil || !proc.exited && proc.node.State == model.NodeStopping {
 			cleanupPending++
 		}
 	}
@@ -154,13 +149,6 @@ func (c *localCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(c.capacity, prometheus.GaugeValue, float64(capacity), agentID)
 	ch <- prometheus.MustNewConstMetric(c.cleanupPending, prometheus.GaugeValue, float64(cleanupPending), agentID)
 	ch <- prometheus.MustNewConstMetric(c.telemetryQueue, prometheus.GaugeValue, float64(queued), agentID)
-}
-
-func metricsRuntime(value string) string {
-	if value == "docker" || value == "process" {
-		return value
-	}
-	return "unknown"
 }
 
 func metricsNodeState(value string) string {

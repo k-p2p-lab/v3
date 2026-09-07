@@ -1,6 +1,6 @@
 version: "3.8"
 
-# Deploy with docker stack deploy, not docker compose up. See docs/swarm.md.
+# Deploy with scripts/swarm.sh. See docs/swarm.md.
 # scripts/swarm.sh resolves a configured tag to one digest for this deployment.
 services:
   controller:

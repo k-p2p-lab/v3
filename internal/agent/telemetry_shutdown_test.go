@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -39,10 +38,9 @@ func TestAgentRunDrainsTelemetryWhoseBodyCompletesDuringShutdown(t *testing.T) {
 	}
 	address := port.Addr().String()
 	_ = port.Close()
-	server, err := New(Config{Runtime: "process", ID: "agent", Listen: address, AdvertiseURL: "http://" + address, ControllerURL: controller.URL, DataDir: t.TempDir()}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	server, _ := newContainerTestServer(t, nil)
+	server.config.Listen = address
+	server.config.ControllerURL = controller.URL
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	finished := make(chan struct{})

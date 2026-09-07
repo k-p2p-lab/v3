@@ -41,18 +41,18 @@ Bootstrap 응답은 `{nodeId, peerId, addresses}` 항목 배열이며 비어 있
 
 중지 endpoint는 cleanup 완료 전, 취소 요청을 접수하면 `202`를 반환합니다. `/api/v1/experiments` 또는 snapshot에서 최종 상태를 확인하십시오. 취소 handle이 더 이상 없는 run은 `404`입니다. SSE는 최초 `event: snapshot`, 상태 변경 시 전체 snapshot, 15초마다 keepalive comment를 보내며 event ID 기반 replay는 제공하지 않습니다. `/api/v1/events`는 현재 Controller 상태에서 가장 최근 event 최대 300개를 포함합니다.
 
-저장소 루트에서 실행하는 예시입니다.
+저장소 루트에서 실행하는 예시입니다. `control-node:8080`은 `sh scripts/swarm.sh access`가 표시한 Controller 주소로 바꾸고, `sh scripts/swarm.sh credentials`가 표시한 토큰을 `KPL_API_TOKEN`으로 export하십시오.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/experiments \
+curl -X POST http://control-node:8080/api/v1/experiments \
   -H 'Content-Type: application/yaml' \
-  -H "Authorization: Bearer ${KPL_API_TOKEN:-}" \
+  -H "Authorization: Bearer ${KPL_API_TOKEN:?Set KPL_API_TOKEN}" \
   --data-binary @examples/smoke.yaml
 ```
 
 시나리오 라이브러리 endpoint는 재사용할 편집기 입력을 실험 결과와 별도로 저장합니다. 목록에서는 YAML을 제외하고, 개별 GET·POST·PUT 응답에는 포함합니다. UI 사용 순서, payload, 검증 제한과 저장 위치는 [시나리오 라이브러리 안내](scenario-library.kr.md)를 참고하십시오.
 
-원시 이벤트는 `data/runs/<run-id>/events.jsonl`, 실행 입력은 같은 디렉터리의 `scenario.yaml`, 실험 메타데이터는 `experiment.json`에 저장됩니다. Compose/Swarm에서는 영구 `controller-data` 볼륨을 `/var/lib/kpl/data`에 마운트하며, 실험별 파일은 그 아래 `runs/<run-id>`에 저장됩니다.
+원시 이벤트는 `data/runs/<run-id>/events.jsonl`, 실행 입력은 같은 디렉터리의 `scenario.yaml`, 실험 메타데이터는 `experiment.json`에 저장됩니다. Swarm에서는 영구 `controller-data` 볼륨을 `/var/lib/kpl/data`에 마운트하며, 실험별 파일은 그 아래 `runs/<run-id>`에 저장됩니다.
 
 대시보드의 **Download results**로 실험 결과를 ZIP으로 받을 수 있습니다. **Saved results**에는 이전 Controller 실행에서 보존된 결과도 표시되며, **Refresh**로 목록을 다시 읽습니다. 실행 중 실험의 **Download snapshot**은 다운로드 시작 시점까지 저장된 기록을 담습니다. 최근 300개 이벤트 버퍼와 별개로 저장된 전체 이벤트 로그를 내보냅니다. 파일 구성과 수집 한계는 [실험 결과 다운로드](monitoring.kr.md#실험-결과-다운로드)를 참고하십시오.
 
@@ -83,7 +83,7 @@ Agent는 Controller가 cleanup에 사용하는 다음 endpoint도 제공합니�
 
 ## 인증
 
-`KPL_API_TOKEN`은 KPL 변경 API에 쓰는 공통 Bearer 토큰이며 Swarm join token, Docker 권한, Grafana 비밀번호와는 별개입니다. Controller와 모든 Agent에 같은 값을 설정하면 Agent가 Peer에도 전달합니다. Swarm stack에서는 필수이고 Compose/CLI에서는 선택 사항입니다. 빈 값이면 토큰 검사를 비활성화하며, 사용자·역할별 권한 분리는 없습니다.
+`KPL_API_TOKEN`은 KPL 변경 API에 쓰는 공통 Bearer 토큰이며 Swarm join token, Docker 권한, Grafana 비밀번호와는 별개입니다. Controller와 모든 Agent에 같은 값을 설정하면 Agent가 Peer에도 전달합니다. Swarm stack에서 필수이며 사용자·역할별 권한 분리는 없습니다.
 
 대시보드의 **Run experiment → API token**에 같은 값을 입력하십시오. 이 창에서 실행·저장·갱신·삭제하면 해당 origin의 브라우저 `localStorage`에 저장하여 이후 변경 요청에 사용하며 자동 만료되지 않습니다. REST 요청에는 `Authorization: Bearer <token>`을 붙입니다. 상태·이벤트·SSE·metrics 등 GET 조회는 토큰 설정 후에도 공개입니다. Controller는 HEAD도 인증 검사에서 제외하고 Agent와 Peer는 GET만 제외합니다. 토큰 자체가 HTTP 전송을 암호화하지는 않습니다.
 

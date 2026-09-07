@@ -1,8 +1,8 @@
-# Swarm 다중 서버 배포와 운영
+# Swarm 배포와 운영
 
 [English](swarm.md) | 한국어
 
-`compose.yaml`은 단일 Docker 호스트용입니다. 다중 서버에서는 manager에서 `scripts/swarm.sh`로 `stack.swarm.yaml`을 배포·관리합니다. Swarm은 **선택한 서버마다 Agent 하나**를 유지하고, Controller가 실험의 Peer를 Agent에 배분합니다. Peer는 해당 서버의 독립 Docker 컨테이너입니다. Swarm 서비스처럼 Peer를 다른 서버로 자동 재배치하지 않습니다.
+하나 이상의 Linux 서버에서 활성 Swarm manager의 `scripts/swarm.sh`로 `stack.swarm.yaml`을 배포·관리합니다. Swarm은 **선택한 서버마다 Agent 하나**를 유지하고, Controller가 실험의 Peer를 Agent에 배분합니다. Peer는 해당 서버의 독립 Docker 컨테이너입니다. Swarm 서비스처럼 Peer를 다른 서버로 자동 재배치하지 않습니다.
 
 실행 가능한 배포 근거는 [`stack.swarm.yaml`](../stack.swarm.yaml), [`scripts/swarm.sh`](../scripts/swarm.sh), [`scripts/swarm-config.sh`](../scripts/swarm-config.sh)입니다. 실제 서비스·네트워크 대응은 [v3 아키텍처](architecture.kr.md)를, 개념 아키텍처는 [Hub](https://github.com/k-p2p-lab/hub)를 참고하십시오.
 
@@ -15,6 +15,20 @@ Swarm 가입은 이미지 registry 생성을 의미하지 않습니다. manager�
 서버 간 TCP 2377(manager), TCP/UDP 7946, UDP 4789 통신이 필요합니다. control 노드의 Prometheus가 선택된 모든 Agent 노드 주소의 TCP `KPL_AGENT_METRICS_PORT`(기본 `9091`)에도 접근할 수 있어야 합니다. 운영자가 Agent metrics 링크를 직접 열 경우 운영자 브라우저가 속한 신뢰 관리망에서도 이 포트를 허용하십시오. VXLAN과 metrics 접근은 신뢰하는 네트워크 안으로 제한하고 VPN·클라우드망에서는 underlay MTU와 VXLAN overhead를 확인하십시오. smoke 실험에는 네트워크 조건 적용을 위한 커널 지원도 필요합니다. [Docker overlay 요구사항](https://docs.docker.com/engine/network/drivers/overlay/)
 
 분산 smoke 검증에는 Agent를 실행할 노드가 최소 두 대 필요합니다. manager 한 대와 worker 두 대이면 `--workers`로 manager를 실험에서 제외합니다. manager 한 대와 worker 한 대이면 대신 `--all`을 사용해 두 노드에 Agent를 배치하십시오. 이 경우 manager도 실험과 CPU·메모리를 공유합니다. 전체 과정에서 같은 사용자와 Docker context를 사용하십시오. Docker 접근에 sudo가 필요하다면 `init`, `login`, `publish`, 배포 명령을 포함해 일관되게 `sudo sh scripts/swarm.sh ...`로 실행합니다.
+
+### Linux 호스트와 Peer 격리 요구사항
+
+Agent는 활성 Swarm 노드와 명시적으로 설정한 Docker 이미지 및 Peer 네트워크를 요구합니다. Peer 네트워크는 Swarm scope의 attachable overlay여야 합니다. 각 Agent는 자기 노드의 `/var/run/docker.sock`으로 standalone Peer 컨테이너를 생성합니다. Rootless Docker와 userns-remap은 지원하는 배포 기준에 포함되지 않습니다.
+
+Docker socket은 Agent에만 전달하며 Agent는 `0:0`으로 실행합니다. Socket 접근은 해당 Docker 노드에 대한 넓은 제어 권한을 부여합니다. Peer도 비공개 설정을 읽기 위해 `0:0`으로 실행하지만 Docker socket, 호스트 디렉터리 mount와 published host port를 받지 않습니다. 모든 기본 capability를 제거하고 `no-new-privileges`를 활성화하며 네트워크 조건이 있는 Peer에만 `NET_ADMIN`을 추가합니다. Privileged 모드를 부여하거나 socket을 누구나 쓸 수 있도록 바꾸지 마십시오. SELinux 또는 AppArmor 호스트에서는 전역 enforcement를 끄거나 시스템 디렉터리를 relabel하지 말고 호스트 정책에 따라 Agent socket 접근을 허용하십시오.
+
+네트워크 조건에는 Linux `sch_prio`, `sch_netem`, `cls_u32`와 TBF를 사용할 때의 `sch_tbf`가 필요합니다. 커널에 내장될 수도 있으므로 `lsmod`만으로 지원 여부를 판단할 수 없습니다. Peer는 호스트 커널에 모듈을 적재할 수 없으므로 선택한 모든 노드의 커널을 준비하십시오. `tc` 명령이 실패하면 Peer 시작도 명시적인 오류로 실패합니다.
+
+Peer는 overlay IPv4 주소의 TCP 20000으로 통신하며 Peer 제어 HTTP는 TCP 18000을 사용합니다. 기본 `scope: p2p`는 Peer network namespace의 송신 TCP 20000 트래픽을 제어하고 `scope: all`은 제어·telemetry 트래픽에도 영향을 줍니다. IPv6 전용 Peer 실험은 지원 기준 밖입니다. 허용하는 최대 jitter는 `2.147483647s`이며 시나리오 seed가 커널 패킷 조건과 스케줄링까지 결정적으로 만들지는 않습니다. 지연을 비교할 때는 모든 호스트의 시계를 chrony/NTP로 동기화하십시오.
+
+### 단일 노드 Swarm
+
+Linux 노드 하나에서도 같은 stack과 attachable overlay로 개발 또는 작은 실험을 수행할 수 있습니다. 활성 Swarm manager를 준비하고 아래 `init` 명령의 `KPL_MIN_AGENTS=1`을 설정한 뒤 `deploy --all`을 사용하십시오. Controller, 모니터링 서비스, Agent와 Peer가 해당 호스트 자원을 공유합니다. Registry, 커널, 인증과 정리 요구사항은 동일합니다. Smoke 시나리오를 실행할 수 있지만 호스트 간 분산과 연결을 검증하려면 Agent 노드가 최소 두 개 필요합니다.
 
 ## 첫 배포부터 실험과 다운로드까지
 
@@ -102,7 +116,7 @@ sh scripts/swarm.sh config
 
 `KPL_CONTROL_NODE_ID`는 **데이터 volume을 보관하는 노드의 정확한 Node ID**로 고정하여 Controller·Prometheus·Grafana가 빈 로컬 volume을 가진 다른 서버로 이동하지 않게 하십시오. `nodes`로 선택할 노드를 조회합니다. helper의 기본 최소 Agent 수는 1이며 위 절차에서는 `KPL_MIN_AGENTS=2`를 명시했습니다. 사전 검사의 최소 수 조건은 UI에서 실제 등록과 여유 슬롯을 확인하는 절차를 대체하지 않습니다.
 
-helper는 `.env.swarm`의 허용된 `KEY=VALUE` 항목을 **문자 그대로** 읽으며 파일을 source하거나 셸 표현식을 실행하지 않습니다. 바깥쪽 한 쌍의 따옴표는 제거하지만 변수·명령 치환·escape를 확장하지 않습니다. export된 환경변수가 파일보다 우선하므로 파일 변경이 적용되지 않은 것 같으면 `config`를 확인하십시오. `sudo`는 환경변수를 제거할 수 있으므로 같은 계정을 사용하고 일상 설정은 helper 파일에 보관합니다. 다른 파일은 `sh scripts/swarm.sh --env-file /path/to/lab.env config`로 선택합니다. Compose의 `.env`는 읽지 않습니다.
+helper는 `.env.swarm`의 허용된 `KEY=VALUE` 항목을 **문자 그대로** 읽으며 파일을 source하거나 셸 표현식을 실행하지 않습니다. 바깥쪽 한 쌍의 따옴표는 제거하지만 변수·명령 치환·escape를 확장하지 않습니다. export된 환경변수가 파일보다 우선하므로 파일 변경이 적용되지 않은 것 같으면 `config`를 확인하십시오. `sudo`는 환경변수를 제거할 수 있으므로 같은 계정을 사용하고 일상 설정은 helper 파일에 보관합니다. 다른 파일은 `sh scripts/swarm.sh --env-file /path/to/lab.env config`로 선택합니다.
 
 `publish`에서 사용자 지정 설정 파일을 사용하려면 저장소 밖이나 [`.dockerignore`](../.dockerignore)가 제외하는 루트의 `.env.*` 경로에 두십시오. helper는 빌드 전에 지정 경로와 symlink의 최종 대상을 검사하고, 제외 여부를 확인할 수 없는 저장소 내부 경로와 `Dockerfile.dockerignore` override를 거부합니다. 이를 통해 helper의 자격 증명 파일이 이미지 build context에 전달되지 않도록 합니다.
 
@@ -185,7 +199,7 @@ Makefile은 `NODES`를 그대로 전달하므로 `make swarm-add-node NODES='--w
 
 `sh scripts/swarm.sh credentials`로 유효 `KPL_API_TOKEN`을 확인하고 Controller 화면의 **Run experiment → API token**에 실제 배포에 적용한 값을 입력하십시오. 설정을 변경했다면 다시 배포해야 서비스가 새 토큰을 사용합니다. **Run** 버튼을 누르면 브라우저의 해당 origin `localStorage`에 저장되어 이후 실행·중지 요청에 사용됩니다. REST 요청에는 `Authorization: Bearer <token>` 헤더를 붙입니다. 토큰은 만료되거나 자동 교체되지 않습니다.
 
-토큰을 설정해도 대시보드, 상태·이벤트·SSE·metrics 등 GET 조회는 공개입니다. Controller는 GET/HEAD, Agent와 Peer는 GET을 인증 검사에서 제외합니다. CLI나 Compose에서 토큰을 비우면 변경 요청의 토큰 검사도 비활성화됩니다. 토큰은 Swarm 서비스 환경변수와 Peer의 `0600` 설정 JSON에 저장되며, HTTP 전송 자체를 암호화하지는 않습니다.
+토큰을 설정해도 대시보드, 상태·이벤트·SSE·metrics 등 GET 조회는 공개입니다. Controller는 GET/HEAD, Agent와 Peer는 GET을 인증 검사에서 제외합니다. 토큰은 Swarm 서비스 환경변수와 Peer의 `0600` 설정 JSON에 저장되며, HTTP 전송 자체를 암호화하지는 않습니다.
 
 ## 이전 v3 stack에서 전환
 
@@ -237,7 +251,7 @@ Prometheus는 5초마다 Controller의 HTTP service-discovery endpoint에 등록
 
 Go process 지표는 Controller·Agent 자체만 나타내며 Peer 전체의 자원 사용량이 아닙니다. 호스트 모니터링 또는 별도 container exporter로 Peer 부하를 확인하십시오. 전체 노드 상태 보고·Controller 저장/집계·중앙 HTTP 수집, Docker CLI의 생성/삭제 비용도 확장 한계입니다. 종료된 노드 기록과 실행별 Prometheus series가 유지되므로 긴 churn 실험은 메모리와 수집 지연을 함께 측정해야 합니다.
 
-Swarm의 published port는 Compose의 `127.0.0.1` 바인딩과 다릅니다. 이 stack은 host mode로 control 노드의 8080·9090·3000과 선택된 모든 Agent 노드의 `KPL_AGENT_METRICS_PORT`(기본 9091)를 게시합니다. Agent metrics 포트는 모든 대상 노드에서 비어 있어야 하며 같은 노드를 공유하는 별도 stack에는 서로 다른 포트를 지정해야 합니다. 또한 `KPL_HTTP_PORT`, `PROMETHEUS_PORT`, `GRAFANA_PORT` 및 Swarm TCP 포트 2377·7946과 달라야 하며 config helper와 배포 사전검사가 이러한 충돌을 거부합니다. control 노드와, 직접 브라우저 접근이 필요한 경우 운영자의 신뢰 관리망에서 이 포트를 허용하십시오. metrics endpoint는 읽기 전용이지만 인증되지 않으므로 신뢰하지 않는 출발지는 차단해야 합니다. Agent control API 8090과 Peer 포트는 내부에 유지하며 게시하지 않습니다. control 노드 포트는 관리망 방화벽이나 인증 reverse proxy로 접근을 제한하십시오. `KPL_API_TOKEN`은 변경 API만 보호하고 GET 조회는 보호하지 않습니다. Grafana 익명 접속은 이 stack에서 비활성화했습니다. [Swarm host mode 게시](https://docs.docker.com/engine/swarm/services/#publish-ports)
+이 stack은 host mode로 control 노드의 8080·9090·3000과 선택된 모든 Agent 노드의 `KPL_AGENT_METRICS_PORT`(기본 9091)를 게시합니다. Agent metrics 포트는 모든 대상 노드에서 비어 있어야 하며 같은 노드를 공유하는 별도 stack에는 서로 다른 포트를 지정해야 합니다. 또한 `KPL_HTTP_PORT`, `PROMETHEUS_PORT`, `GRAFANA_PORT` 및 Swarm TCP 포트 2377·7946과 달라야 하며 config helper와 배포 사전검사가 이러한 충돌을 거부합니다. control 노드와, 직접 브라우저 접근이 필요한 경우 운영자의 신뢰 관리망에서 이 포트를 허용하십시오. metrics endpoint는 읽기 전용이지만 인증되지 않으므로 신뢰하지 않는 출발지는 차단해야 합니다. Agent control API 8090과 Peer 포트는 내부에 유지하며 게시하지 않습니다. control 노드 포트는 관리망 방화벽이나 인증 reverse proxy로 접근을 제한하십시오. `KPL_API_TOKEN`은 변경 API만 보호하고 GET 조회는 보호하지 않습니다. Grafana 익명 접속은 이 stack에서 비활성화했습니다. [Swarm host mode 게시](https://docs.docker.com/engine/swarm/services/#publish-ports)
 
 모니터링 설정은 Swarm configs로 전달하므로 모든 서버에 저장소를 복사할 필요가 없습니다. Swarm config는 immutable이므로 설정 파일 변경 시 `stack.swarm.yaml`의 config key와 해당 참조를 함께 버전명으로 바꾸어 새 config를 배포하십시오. 데이터 volume은 같은 control Node ID에서 유지됩니다.
 
@@ -251,13 +265,21 @@ Controller는 단일 인스턴스이며 공유 DB/leader election을 구현하�
 
 전체 철거에는 `sh scripts/swarm.sh remove`를 사용하십시오. Controller 정지만으로 종료되지 않는 Peer도 이후 Agent 종료 단계에서 정리합니다.
 
+SIGTERM을 받으면 Controller는 새 실험 수락을 중단하고 HTTP 연결, 실험 job, Peer 정리와 최종 상태 저장을 기다립니다. 기본 `jobShutdownTimeout: 3m`은 job 종료와 Peer 정리에 각각 적용되므로 stack은 Controller 종료 유예를 `7m`로 설정합니다. Agent에는 최대 175초의 Peer 정리, HTTP handler 종료와 제한된 telemetry drain을 포함하는 `4m`를 제공합니다. 시나리오의 `jobShutdownTimeout`을 늘리면 Controller 유예도 함께 늘리고 외부 서비스 관리자가 이 시간을 단축하지 않도록 하십시오.
+
+### 데이터 저장소와 재시작
+
+Controller 기록, Prometheus 시계열과 Grafana 데이터는 `KPL_CONTROL_NODE_ID`의 별도 named volume에 저장됩니다. 일반 서비스 재생성과 `swarm.sh remove`는 이 volume을 보존합니다. 시나리오, 실행 기록과 삭제 표식을 유지하려면 Controller 데이터 디렉터리 전체를 보존하고 Prometheus 이력과 Grafana 설정이 필요하면 별도로 백업하십시오. Volume 삭제는 일반 종료 절차에 포함되지 않습니다. 사용자 지정 저장소나 bind mount를 사용하면 컨테이너 UID/GID의 쓰기 권한을 확인하고 경로가 Docker daemon 호스트에서 해석됨을 고려하십시오.
+
+Controller 데이터 디렉터리에 쓸 수 없으면 시작이 실패합니다. 실행 메타데이터는 임시 파일에 쓴 뒤 같은 파일시스템에서 rename하여 부분 JSON 읽기를 방지하며 이벤트 로그는 append로 기록합니다. 쓰기마다 강제로 디스크에 동기화하지 않으므로 전원 장애 때 최근 기록을 잃을 수 있습니다. 재시작 후 보존 결과에 접근할 수 있지만 실시간 실행과 counter는 복원하지 않습니다.
+
 ## 검증 범위
 
 현재 Go 회귀 suite와 셸 회귀 네 개인 `test-swarm-agent.sh`, `test-check-swarm.sh`, `test-swarm-config.sh`, `test-swarm.sh`는 `make test-linux` 또는 `docker build --target test -t kpl-v3:test .`로 실행합니다. 셸 테스트는 Docker 응답을 모사하여 철거 순서, 다른 stack 변경 방지, 실패·이력 부재·조회 오류 시 중단, 재시도와 설정 파일 처리를 검증하며 실제 클러스터를 배포하지 않습니다. 별도 브라우저 테스트와 명시적으로 활성화하는 커널 테스트는 [개발 검사](development.kr.md#컨테이너와-브라우저-회귀-검사)를 참고하십시오.
 
 이전 검증 기록은 별도 Docker 29.7.2 daemon에서 SIGTERM 종료용 Controller·Agent 테스트 서비스로 `remove-node`, `add-node`, 전체 `remove`를 실행했다고 보고합니다. 정상 종료의 `shutdown / PID 0 / exit 0`, 재배치 후 새 task, 최종 stack 서비스 0개, 다른 노드를 제외할 때 영향 없는 실행 중 task ID 유지가 기록되어 있습니다. 원본 실행 산출물은 이 저장소에 포함되어 있지 않으므로 현재 checkout이나 전체 registry·Peer 실험의 검증 결과가 아닌 과거 보고입니다. 현재 helper가 Controller의 replica 수를 유지한 채 배치를 중지하고, 노드에 할당되지 않은 대기·취소 task를 종료 확인에서 제외하는 동작은 [`scripts/swarm.sh`](../scripts/swarm.sh)에서 확인할 수 있습니다.
 
-일반 Swarm 사전 검사는 `sh scripts/swarm.sh check`를 사용하십시오. helper가 설정을 불러와 배포 검사를 실행합니다. [Linux 가이드](linux-deployment.kr.md#서버-준비와-실행)의 별도 호스트 로컬 커널 검사는 선택적 문제 진단이며, 모든 worker에 이 저장소를 복사해야 한다는 뜻은 아닙니다. 추가 로컬 도구가 필요하고 일회용 컨테이너를 검사합니다. 배포 사전 검사나 로컬 커널 검사만으로 분산 smoke 실험·실제 cross-host VXLAN 통신·처리량 측정을 대체할 수는 없습니다.
+Swarm 사전 검사는 `sh scripts/swarm.sh check`를 사용하십시오. helper가 설정을 불러와 배포 검사를 실행합니다. 설정·배치·overlay를 검사하지만 모든 Agent 노드에 커널 규칙을 설치하거나 호스트 간 트래픽을 검증하지는 않습니다. 실제 네트워크 조건은 선택한 Swarm 노드에서 시나리오를 실행해 검증하십시오. 배포 사전 검사나 패키지 테스트만으로 분산 smoke 실험·실제 cross-host VXLAN 통신·처리량 측정을 대체할 수는 없습니다.
 
 최소 두 서버에서 [분산 실험 예제](../examples/swarm-smoke.yaml)를 실행해 서로 다른 Agent에 ready Peer가 생기는지, 광고 주소가 Peer overlay에 속하는지, publish/deliver가 양쪽 서버에서 발생하는지 확인하십시오. 예제는 boot 1개와 worker 5개를 생성하므로 총 capacity 6 이상이 필요합니다. 그 뒤 목표 Peer 수를 단계적으로 올려 ready 지연·실패율·분배·자원 사용량을 기록하십시오. 네트워크 단절/Agent 재시작 시 stale 제외·잔존 컨테이너 정리와 Prometheus 대상 교체도 확인해야 합니다.
 

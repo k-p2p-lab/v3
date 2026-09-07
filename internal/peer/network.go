@@ -31,9 +31,6 @@ func preparePeerNetwork(ctx context.Context, config model.PeerProcessConfig, rou
 }
 
 func resolveDockerP2PListen(ctx context.Context, config model.PeerProcessConfig, route routeSource) (model.PeerProcessConfig, error) {
-	if config.Runtime != "docker" {
-		return config, nil
-	}
 	ip, port, err := dockerP2PAddress(config.P2PListen)
 	if err != nil {
 		return config, err
@@ -103,32 +100,35 @@ func agentRouteSourceIPv4(ctx context.Context, agentURL string) (net.IP, error) 
 	return append(net.IP(nil), address.IP...), nil
 }
 
-// Apply impairments before opening any P2P connections. Process mode must never
-// change the shared host (or Agent container) network namespace. The Agent's
-// Docker runtime must validate the network driver and create a private peer
-// namespace: /.dockerenv alone does not distinguish --network=host or shared
-// container namespaces from an isolated container.
+// Apply impairments before opening any P2P connections. The Agent validates
+// the Swarm overlay and creates a private peer namespace: /.dockerenv alone
+// does not distinguish --network=host or shared container namespaces from an
+// isolated container.
 func prepareNetwork(ctx context.Context, config model.PeerProcessConfig) error {
 	if err := config.NodeConfig.WithDefaults().Validate(); err != nil {
 		return fmt.Errorf("validate peer config before network setup: %w", err)
 	}
+	if err := requirePeerContainer(runtime.GOOS, os.Stat); err != nil {
+		return err
+	}
 	if !config.NodeConfig.Network.Enabled() {
 		return nil
-	}
-	if config.Runtime != "docker" {
-		return fmt.Errorf("network conditions require an isolated Docker peer")
-	}
-	if runtime.GOOS != "linux" {
-		return fmt.Errorf("network conditions require Linux Docker containers")
-	}
-	if _, err := os.Stat("/.dockerenv"); err != nil {
-		return fmt.Errorf("refusing network changes outside a Docker container: %w", err)
 	}
 	if _, port, err := dockerP2PAddress(config.P2PListen); err != nil || port != netem.DefaultP2PPort {
 		return fmt.Errorf("Docker network conditions require the fixed P2P TCP port 20000")
 	}
 	if err := netem.Apply(ctx, config.NodeConfig.Network, 20000); err != nil {
 		return fmt.Errorf("apply peer network conditions: %w", err)
+	}
+	return nil
+}
+
+func requirePeerContainer(goos string, stat func(string) (os.FileInfo, error)) error {
+	if goos != "linux" {
+		return fmt.Errorf("peers require Linux Docker containers on a Swarm overlay")
+	}
+	if _, err := stat("/.dockerenv"); err != nil {
+		return fmt.Errorf("refusing peer startup outside a Docker container: %w", err)
 	}
 	return nil
 }

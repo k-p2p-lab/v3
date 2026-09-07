@@ -4,7 +4,7 @@ English | [Korean](README.kr.md)
 
 [K-P2PLab Hub](https://github.com/k-p2p-lab/hub) contains the project-wide concepts and research context; this repository owns the runnable v3 implementation, deployment procedures, configuration, and version-specific behavior.
 
-K-P2PLab v3 runs configurable libp2p Kademlia and PubSub experiments across one or more Linux hosts. The Controller schedules scenarios and serves the web Dashboard; Agents create and manage Peer containers through the local Docker daemon. The supplied Compose deployment starts two Agents on one host, while Swarm starts one Agent per selected host. In both supplied deployments, each Peer has its own container and network namespace. Prometheus/Grafana expose collected telemetry, and the Controller retains downloadable run results.
+K-P2PLab v3 runs configurable libp2p Kademlia and PubSub experiments on Docker Swarm across one or more Linux hosts. The Controller schedules scenarios and serves the web Dashboard; Agents create and manage Peer containers through the local Docker daemon. Docker Swarm starts one Agent per selected host, and each Peer has its own container and network namespace. Prometheus/Grafana expose collected telemetry, and the Controller retains downloadable run results.
 
 English is the default language for code, the UI, and documentation. Korean documentation is maintained in matching `.kr.md` files.
 
@@ -13,35 +13,21 @@ English is the default language for code, the UI, and documentation. Korean docu
 - Version 1 and 2 YAML scenarios with joins, leaves, readiness barriers, publishing, repeated phases, background jobs, and seeded distributions
 - Kademlia configuration and selectable GossipSub, FloodSub, and RandomSub routers
 - Isolated Peer containers with per-Peer delay, jitter, loss, duplication, corruption, reordering, and bandwidth controls
-- Single-host Docker Compose and multi-server Docker Swarm deployment with capacity-aware Peer placement
+- Docker Swarm deployment with capacity-aware Peer placement on one or more nodes
 - Live Kademlia, GossipSub GRAFT, and transport topology with Agent sectors and topic filters
 - Churn-aware delivery, latency, duplicate, coverage, and observation-quality metrics
 - Reusable scenario library plus repeat runs, persisted results, ZIP export, and deletion
 
 ## Prerequisites
 
-- Linux with rootful Docker Engine and Docker Compose v2; the supplied deployment does not support userns-remap
+- Linux with rootful Docker Engine in an active Swarm; the supplied deployment does not support userns-remap
 - `NET_ADMIN` and the kernel `sch_prio`, `sch_netem`, `cls_u32`, and optional `sch_tbf` modules for network conditions
 - Go 1.25 or later only for development outside Docker
-- For Swarm: an active manager and an image registry reachable and trusted by every selected node
+- An active Swarm manager and an image registry reachable and trusted by every selected node
 
-See the [Linux deployment guide](docs/linux-deployment.md) for permissions, remote access, storage, and safe shutdown.
+See the [Swarm deployment guide](docs/swarm.md) for host preparation, permissions, remote access, storage, and safe shutdown.
 
-The [development process runtime](docs/development.md) runs Peers as child processes and rejects Peer network conditions; it does not provide Docker namespace isolation. A fixed scenario seed repeats distribution inputs, but does not make execution timing, generated payloads, Peer identities, or protocol outcomes deterministic.
-
-## Local quick start
-
-```sh
-test -f .env || cp .env.example .env
-# Set KPL_API_TOKEN and GRAFANA_ADMIN_PASSWORD in .env.
-docker compose build controller
-sh scripts/check-linux.sh
-docker compose up -d --no-build
-```
-
-Open the [Dashboard](http://localhost:8080), [Grafana](http://localhost:3000/d/kpl-experiments), or [Prometheus](http://localhost:9090). Run the default scenario from the Dashboard. Stop cleanly with `make stop`.
-
-For an explicit monitoring example, run [`examples/monitoring.yaml`](examples/monitoring.yaml). Follow [monitoring and results](docs/monitoring.md) to select the run in Grafana and download its event log and derived metrics. Saved run files remain downloadable after Controller restarts; live execution and counters are not restored from those files.
+A fixed scenario seed repeats distribution inputs, but does not make execution timing, generated payloads, Peer identities, or protocol outcomes deterministic.
 
 ## Swarm quick start
 
@@ -57,7 +43,9 @@ sh scripts/swarm.sh credentials
 sh scripts/swarm.sh scenario
 ```
 
-Use `--all` instead of `--workers` when the manager must also run an Agent. Open the Controller URL printed by `access`, paste the scenario printed by `scenario`, and use the API token printed by `credentials`. `access` also lists the metrics URL on every selected Agent node. Allow TCP `KPL_AGENT_METRICS_PORT` (default `9091`) from the control node and, when operators open those links directly, from their trusted management network. The helper resolves and pins the current image digest during deployment, so tag updates do not require manual SHA edits. Read the [complete Swarm workflow](docs/swarm.md) before operating or removing a production cluster.
+Use `--all` instead of `--workers` when the manager must also run an Agent. For a single-node Swarm, set `KPL_MIN_AGENTS=1` during `init` and deploy with `--all`. Open the Controller URL printed by `access`, paste the scenario printed by `scenario`, and use the API token printed by `credentials`. `access` also lists the metrics URL on every selected Agent node. Allow TCP `KPL_AGENT_METRICS_PORT` (default `9091`) from the control node and, when operators open those links directly, from their trusted management network. The helper resolves and pins the current image digest during deployment, so tag updates do not require manual SHA edits. Read the [complete Swarm workflow](docs/swarm.md) before operating or removing a production cluster.
+
+For a monitoring example, run [`examples/monitoring.yaml`](examples/monitoring.yaml). Follow [monitoring and results](docs/monitoring.md) to select the run in Grafana and download its event log and derived metrics. Saved run files remain downloadable after Controller restarts; live execution and counters are not restored from those files. Stop services with `sh scripts/swarm.sh remove`, which waits for Controller and Agent cleanup.
 
 ## Documentation
 
@@ -66,12 +54,11 @@ Start with the [Hub](https://github.com/k-p2p-lab/hub) for objectives, research,
 | Guide | Contents |
 |---|---|
 | [Implementation architecture](docs/architecture.md) | v3 components, control and experiment paths, Docker networks, placement, and isolation boundaries |
-| [Linux deployment](docs/linux-deployment.md) | Single-host preparation, permissions, storage, remote access, and shutdown |
-| [Swarm deployment](docs/swarm.md) | Registry setup, node selection, deployment, updates, scaling, and removal |
+| [Swarm deployment](docs/swarm.md) | Linux requirements, registry setup, node selection, deployment, storage, updates, and removal |
 | [Scenario configuration](docs/scenario-reference.md) | YAML actions, profiles, protocol controls, distributions, and network conditions |
 | [Scenario library](docs/scenario-library.md) | Save, name, load, update, and delete reusable scenarios |
 | [REST API](docs/api.md) | Controller endpoints, authentication, results, and internal cleanup API |
-| [Development](docs/development.md) | Go build, validation, tests, and the local process runtime |
+| [Development](docs/development.md) | Go build, scenario validation, tests, and development deployment on Swarm |
 | [Experiment metrics](docs/experiment-metrics.md) | Churn-aware delivery denominator, latency, duplicates, and limitations |
 | [Monitoring and results](docs/monitoring.md) | Prometheus, Grafana, ZIP contents, retained data, and deletion |
 | [Topology](docs/topology.md) | Agent sectors, graph layers, topic filters, and controls |

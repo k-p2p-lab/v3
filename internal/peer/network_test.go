@@ -4,19 +4,50 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/k-p2p-lab/v3/internal/model"
 )
 
-func TestPrepareNetworkCannotModifyProcessNamespace(t *testing.T) {
-	config := model.PeerProcessConfig{Runtime: "process", NodeConfig: model.NodeConfig{Network: model.NetworkConfig{Delay: "100ms"}}}
-	if err := prepareNetwork(context.Background(), config); err == nil || !strings.Contains(err.Error(), "isolated Docker peer") {
-		t.Fatalf("process network preparation = %v", err)
+func TestRequirePeerContainerRejectsHostStartup(t *testing.T) {
+	for _, test := range []struct {
+		name, goos, wantError string
+		statErr               error
+	}{
+		{"non-Linux", "darwin", "Linux Docker containers", nil},
+		{"host", "linux", "outside a Docker container", os.ErrNotExist},
+		{"container", "linux", "", nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := requirePeerContainer(test.goos, func(path string) (os.FileInfo, error) {
+				if path != "/.dockerenv" {
+					t.Fatalf("unexpected container marker: %s", path)
+				}
+				return nil, test.statErr
+			})
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("container check = %v, want %s", err, test.wantError)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
-	config.NodeConfig.Network.Delay = "0s"
-	if err := prepareNetwork(context.Background(), config); err != nil {
+}
+
+func TestDisabledNetworkStillRequiresPeerContainer(t *testing.T) {
+	config := model.PeerProcessConfig{NodeConfig: model.NodeConfig{Network: model.NetworkConfig{Delay: "0s"}}}
+	err := prepareNetwork(context.Background(), config)
+	containerErr := requirePeerContainer(runtime.GOOS, os.Stat)
+	if containerErr != nil {
+		if err == nil || err.Error() != containerErr.Error() {
+			t.Fatalf("disabled network bypassed the container requirement: %v", err)
+		}
+	} else if err != nil {
 		t.Fatalf("disabled network should not invoke tc: %v", err)
 	}
 }

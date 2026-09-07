@@ -38,6 +38,12 @@ grep -qx -- ':9091' "$KPL_TEST_ARGUMENTS"
 grep -qx -- 'http://192.0.2.9:9091/metrics' "$KPL_TEST_ARGUMENTS"
 grep -qx 'sha256:0123456789abcdef' "$KPL_TEST_ARGUMENTS"
 grep -qx '37' "$KPL_TEST_ARGUMENTS"
+grep -qx -- '--docker-network' "$KPL_TEST_ARGUMENTS"
+grep -qx -- "$KPL_PEER_NETWORK" "$KPL_TEST_ARGUMENTS"
+if grep -Eq '^--(runtime|peer-api-port|peer-p2p-port)$' "$KPL_TEST_ARGUMENTS"; then
+    echo 'Swarm Agent received a removed local runtime option' >&2
+    exit 1
+fi
 KPL_AGENT_METRICS_PORT=19091 KPL_TEST_NODE_ADDR='fd00::9' sh "$root/scripts/swarm-agent.sh"
 grep -Fqx -- 'http://[fd00::9]:19091/metrics' "$KPL_TEST_ARGUMENTS"
 if KPL_AGENT_METRICS_PORT=0 sh "$root/scripts/swarm-agent.sh" 2>/dev/null; then

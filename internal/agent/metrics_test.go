@@ -46,14 +46,13 @@ func localMetricLabelsMatch(actual []*dto.LabelPair, expected map[string]string)
 }
 
 func TestLocalMetricsReflectLifecycleCleanupAndQueue(t *testing.T) {
-	s := &Server{config: Config{ID: "agent-a", Runtime: "docker", Capacity: 12}, processes: map[string]*process{
+	s := &Server{config: Config{ID: "agent-a", Capacity: 12}, processes: map[string]*process{
 		"ready-a":        {node: model.Node{State: model.NodeReady}},
 		"ready-b":        {node: model.Node{State: model.NodeReady}},
 		"starting":       {node: model.Node{State: model.NodeStarting}},
 		"removing":       {node: model.Node{State: model.NodeStopping}},
 		"cleanup-failed": {node: model.Node{State: model.NodeFailed}, exited: true, cleanupErr: errors.New("daemon unavailable")},
 		"stopped":        {node: model.Node{State: model.NodeStopped}, exited: true},
-		"process":        {node: model.Node{State: model.NodeReady, Metadata: map[string]string{"runtime": "process"}}},
 	}, events: make([]model.TraceEvent, 7)}
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(newLocalCollector(s))
@@ -69,9 +68,6 @@ func TestLocalMetricsReflectLifecycleCleanupAndQueue(t *testing.T) {
 	}
 	if value := localMetricGauge(t, registry, "kpl_local_nodes", map[string]string{"agent_id": "agent-a", "state": "ready", "runtime": "docker"}); value != 2 {
 		t.Fatalf("Docker ready=%v", value)
-	}
-	if value := localMetricGauge(t, registry, "kpl_local_nodes", map[string]string{"agent_id": "agent-a", "state": "ready", "runtime": "process"}); value != 1 {
-		t.Fatalf("process ready=%v", value)
 	}
 	if value := localMetricGauge(t, registry, "kpl_local_nodes", map[string]string{"agent_id": "agent-a", "state": "stopped", "runtime": "docker"}); value != 1 {
 		t.Fatalf("retained stopped=%v", value)
@@ -95,8 +91,8 @@ func TestLocalMetricsReflectLifecycleCleanupAndQueue(t *testing.T) {
 }
 
 func TestAgentMetricsRegistriesAreIndependentAndExposeAgentRuntime(t *testing.T) {
-	first := &Server{config: Config{ID: "first", Runtime: "docker", Capacity: 3}, processes: map[string]*process{}}
-	second := &Server{config: Config{ID: "second", Runtime: "docker", Capacity: 9}, processes: map[string]*process{}}
+	first := &Server{config: Config{ID: "first", Capacity: 3}, processes: map[string]*process{}}
+	second := &Server{config: Config{ID: "second", Capacity: 9}, processes: map[string]*process{}}
 	for _, s := range []*Server{first, second, first} {
 		registry := newAgentMetricsRegistry(s)
 		if value := localMetricGauge(t, registry, "kpl_local_capacity", map[string]string{"agent_id": s.config.ID}); value != float64(s.config.Capacity) {
@@ -132,7 +128,7 @@ func TestAgentMetricsRegistriesAreIndependentAndExposeAgentRuntime(t *testing.T)
 }
 
 func TestAgentMetricsRouteCanBeScrapedWithoutMutationAuthorization(t *testing.T) {
-	s := &Server{config: Config{ID: "agent", Runtime: "docker", Capacity: 4, Token: "secret"}, processes: map[string]*process{}}
+	s := &Server{config: Config{ID: "agent", Capacity: 4, Token: "secret"}, processes: map[string]*process{}}
 	response := httptest.NewRecorder()
 	s.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Header().Get("Content-Type"), "text/plain") {
