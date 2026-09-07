@@ -88,6 +88,6 @@ Agent는 Controller가 cleanup에 사용하는 다음 endpoint도 제공합니�
 
 `KPL_API_TOKEN`은 KPL 변경 API에 쓰는 공통 Bearer 토큰이며 Swarm join token, Docker 권한, Grafana 비밀번호와는 별개입니다. Controller와 모든 Agent에 같은 값을 설정하면 Agent가 Peer에도 전달합니다. Swarm stack에서 필수이며 사용자·역할별 권한 분리는 없습니다.
 
-대시보드의 **Run experiment → API token**에 같은 값을 입력하십시오. 이 창에서 실행·저장·갱신·삭제하면 해당 origin의 브라우저 `localStorage`에 저장하여 이후 변경 요청에 사용하며 자동 만료되지 않습니다. REST 요청에는 `Authorization: Bearer <token>`을 붙입니다. 상태·이벤트·SSE·metrics 등 GET 조회는 토큰 설정 후에도 공개입니다. Controller는 HEAD도 인증 검사에서 제외하고 Agent와 Peer는 GET만 제외합니다. 토큰 자체가 HTTP 전송을 암호화하지는 않습니다.
+대시보드의 **Run experiment → API token**에 같은 값을 입력하십시오. 이 창에서 실행·저장·갱신·삭제하면 해당 origin의 브라우저 `localStorage`에 저장하여 이후 변경 요청에 사용하며 자동 만료되지 않습니다. REST 요청에는 `Authorization: Bearer <token>`을 붙입니다. 상태·이벤트·SSE·metrics 등 GET 조회는 토큰 설정 후에도 공개입니다. 상태를 바꾸지 않는 `POST /api/v1/scenarios/validate`도 공개이며 해당 method와 정확한 path에만 적용됩니다. Controller는 HEAD도 인증 검사에서 제외하고 Agent와 Peer는 GET만 제외합니다. 토큰 자체가 HTTP 전송을 암호화하지는 않습니다.
 
 같은 네 가지 job counter가 `/api/v1/snapshot`과 SSE snapshot에도 포함됩니다. 대시보드는 각 run에 이를 표시하므로 Controller 로그를 열지 않아도 실행 중, 성공, 실패, 취소된 background 작업 수를 확인할 수 있습니다.
