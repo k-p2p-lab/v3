@@ -22,6 +22,7 @@ Controller는 아래 공개 및 운영 엔드포인트를 제공합니다. `KPL_
 | `GET` | `/api/v1/stream` | `peerScores`를 포함한 실시간 snapshot SSE |
 | `GET` | `/api/v1/experiments` | 실험 상태와 `activeJobs`, `completedJobs`, `failedJobs`, `canceledJobs` counter |
 | `GET` / `POST` | `/api/v1/scenarios` | 시나리오 요약 목록 조회 또는 검증한 `{name, yaml}` 저장 |
+| `POST` | `/api/v1/scenarios/validate` | 원본 YAML을 저장·실행 없이 검증. 공개 endpoint로 토큰 불필요 |
 | `GET` / `PUT` / `DELETE` | `/api/v1/scenarios/{id}` | 저장 시나리오 하나를 불러오기, 갱신 또는 삭제 |
 | `GET` | `/api/v1/results` | 이전 Controller 실행에서 저장한 실험을 포함하는 결과 목록 |
 | `DELETE` | `/api/v1/results/{id}` | 비활성 저장 결과 삭제. 진행 중 배치·다운로드 보호 |
@@ -34,6 +35,8 @@ Controller는 아래 공개 및 운영 엔드포인트를 제공합니다. `KPL_
 Bootstrap 응답은 `{nodeId, peerId, addresses}` 항목 배열이며 비어 있으면 `null`입니다. Discovery와 달리 bootstrap은 Agent online 상태로 필터링하지 않습니다. Discovery는 후보가 없을 때 빈 배열을 반환하며 각 항목에는 `subscribed` flag도 포함합니다. 조건에 맞는 전체 후보를 반환하고, 요청하는 Peer가 [토폴로지](topology.kr.md#bootstrap과-topic-discovery)에 설명한 rendezvous 순위, connection budget과 retry를 적용합니다.
 
 ## 실행 제출, 중지와 관측
+
+`POST /api/v1/scenarios/validate`는 원본 YAML 본문(`Content-Type: application/yaml`)을 최대 1 MiB까지 받습니다. 유효하면 `200`과 `{valid: true, name, phases}`를 반환합니다. 빈 입력, YAML 문법 오류, 알 수 없는 필드, 잘못된 설정, 여러 YAML 문서는 `400`과 `{error: "…"}`를 반환하며 파서가 제공하는 줄 번호를 보존합니다. 본문 한도 초과는 `413`입니다. 저장·실행과 같은 파서를 사용하지만 기록이나 job을 만들지 않고 토큰도 요구하지 않습니다. 설정 검증이며 Agent 용량이나 실행 시 연결성을 검사하지는 않습니다.
 
 `POST /api/v1/experiments`는 첫 run의 experiment 객체와 `202`를 반환합니다. `{scenario, repetitions}`를 제출하려면 `Content-Type: application/json`을 사용하십시오. `scenario`는 YAML 문자열이며 `repetitions`를 생략하면 기본값은 `1`입니다. 다른 content type은 원시 YAML로 처리합니다. 원시 YAML과 JSON에서 해석한 `scenario` 문자열의 한도는 각각 1 MiB입니다. JSON 요청 본문은 escape를 고려해 `6 * 1 MiB + 64 KiB`까지 허용합니다. 요청 본문 자체가 한도를 넘으면 `413`, 해석한 YAML 문자열이 한도를 넘거나 scenario/repetition이 유효하지 않으면 `400`입니다.
 

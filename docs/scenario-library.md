@@ -19,6 +19,12 @@ Names are trimmed, required, limited to 128 Unicode characters, and cannot conta
 
 The library name and YAML's top-level `name` are independent: the former labels the saved editor input, while the latter names experiment runs. Saving validates the [scenario schema](scenario-reference.md); it does not reserve Agent capacity or test Docker, kernel support, or connectivity.
 
+## Validate editor contents
+
+Click **Validate** beside **YAML scenario** to check the current text with the same parser used for saving and running. The panel below the editor shows success with the scenario name and phase count, or the reason validation failed. YAML diagnostics include line numbers when available; configuration errors identify the relevant field or phase. Long errors can be scrolled and copied.
+
+Validation requires neither a saved scenario name nor an API token and does not save or start anything. YAML must contain a single document and fit within 1 MiB. Editing the YAML, choosing **New**, or loading another scenario clears the previous result; late responses for older text are ignored. Request/network failures are distinguished from invalid YAML. A successful check does not test Agent capacity, Docker support, or runtime connectivity.
+
 ## REST API
 
 All request and response bodies use JSON. List responses omit YAML so opening a large library remains inexpensive; fetch an individual record before editing it.

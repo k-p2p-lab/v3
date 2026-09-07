@@ -3,6 +3,7 @@ package scenario
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -61,6 +62,13 @@ func Parse(data []byte) (Scenario, error) {
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&s); err != nil {
 		return s, fmt.Errorf("decode scenario: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err != nil {
+			return s, fmt.Errorf("decode scenario: %w", err)
+		}
+		return s, fmt.Errorf("scenario must contain exactly one YAML document")
 	}
 	if err := s.Validate(); err != nil {
 		return s, err

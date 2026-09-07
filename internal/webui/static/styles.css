@@ -307,9 +307,19 @@ dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
 .scenario-item-actions .load-scenario-button { color: var(--cyan); }
 .scenario-item-actions .delete-scenario-button { margin-left: auto; color: var(--red); }
 .scenario-item-actions .confirm-delete-scenario { color: #210b09; border-color: transparent; background: var(--red); font-weight: 700; }
-.scenario-editor { display: grid; grid-template-rows: auto auto auto auto minmax(10rem, 1fr) auto; gap: 0.65rem; min-height: 0; padding: 0 0.9rem 0.9rem; }
+.scenario-editor { display: grid; grid-template-rows: auto auto auto auto minmax(8rem, 1fr) auto auto; gap: 0.65rem; min-height: 0; overflow-y: auto; padding: 0 0.9rem 0.9rem; }
 .scenario-editor-heading { margin-inline: -0.9rem; padding-inline: 0.9rem; }
 .scenario-editor textarea { height: 100%; min-height: 0; }
+.scenario-yaml-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.65rem; }
+.scenario-yaml-heading button { min-height: 2rem; padding: 0.35rem 0.65rem; font-size: 0.75rem; }
+.scenario-validation { min-width: 0; padding: 0.7rem 0.8rem; border: 1px solid var(--line); border-left: 3px solid var(--muted); border-radius: 0.5rem; background: #07131c; }
+.scenario-validation strong { display: block; color: var(--muted); font-size: 0.8rem; }
+.scenario-validation.success { border-left-color: var(--green); }
+.scenario-validation.success strong { color: var(--green); }
+.scenario-validation.error { border-left-color: var(--red); }
+.scenario-validation.error strong { color: var(--red); }
+.scenario-validation pre { max-height: 8rem; margin: 0.35rem 0 0; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); font: 0.75rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.scenario-editor textarea[aria-invalid="true"] { border-color: var(--red); }
 .scenario-save-row { justify-content: flex-end; flex-wrap: wrap; }
 .scenario-save-row .dialog-error { margin-right: auto; overflow-wrap: anywhere; }
 .run-repetitions { display: flex; align-items: center; gap: 0.5rem; }

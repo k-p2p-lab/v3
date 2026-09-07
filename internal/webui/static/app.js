@@ -5,6 +5,7 @@ const state = {
   resultsRefreshTimer: null, resultsRefreshPending: false, runStates: null,
   savedScenarios: null, scenariosLoading: false, scenariosError: "", scenarioActionError: "",
   selectedScenarioId: null, scenarioLoadingId: null, scenarioSaving: false,
+  scenarioValidating: false, scenarioValidation: null, scenarioValidationVersion: 0,
   scenarioDeletingId: null, pendingScenarioDeleteId: null, scenarioLoadVersion: 0, scenarioSubmitting: false,
   resultSizeInflight: new Set(), resultSizeQueue: [], resultSizeActive: 0, resultSizeUnavailable: new Set(),
   resultSizeExpiryTimer: null, resultSizeExpiryAt: 0,
@@ -632,7 +633,76 @@ function scenarioOperationBusy() {
     || Boolean(state.scenarioLoadingId) || Boolean(state.scenarioDeletingId);
 }
 
+function renderScenarioValidation() {
+  const result = state.scenarioValidation;
+  const button = $("#validateScenario");
+  button.disabled = scenarioOperationBusy() || state.scenarioValidating;
+  button.textContent = state.scenarioValidating ? "Validating…" : "Validate";
+  const panel = $("#scenarioValidation");
+  panel.hidden = !result;
+  panel.classList.toggle("success", result?.kind === "success");
+  panel.classList.toggle("error", result?.kind === "invalid" || result?.kind === "error");
+  panel.setAttribute("role", result?.kind === "invalid" || result?.kind === "error" ? "alert" : "status");
+  panel.setAttribute("aria-busy", String(state.scenarioValidating));
+  $("#scenarioValidationTitle").textContent = result?.title || "";
+  $("#scenarioValidationMessage").textContent = result?.message || "";
+  $("#scenarioText").setAttribute("aria-invalid", String(result?.kind === "invalid"));
+}
+
+function resetScenarioValidation() {
+  ++state.scenarioValidationVersion;
+  state.scenarioValidating = false;
+  state.scenarioValidation = null;
+  renderScenarioValidation();
+}
+
+async function validateEditedScenario() {
+  if (scenarioOperationBusy() || state.scenarioValidating) return;
+  const yaml = $("#scenarioText").value;
+  const version = ++state.scenarioValidationVersion;
+  if (!yaml.trim()) {
+    state.scenarioValidation = { kind: "invalid", title: "Scenario is invalid", message: "Enter a YAML scenario to validate." };
+    renderScenarioValidation();
+    $("#scenarioText").focus();
+    return;
+  }
+  state.scenarioValidating = true;
+  state.scenarioValidation = { kind: "pending", title: "Validating scenario…", message: "Checking YAML syntax and scenario settings." };
+  renderScenarioValidation();
+  try {
+    const result = await scenarioRequest("/api/v1/scenarios/validate", {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body: yaml,
+    });
+    if (version !== state.scenarioValidationVersion || yaml !== $("#scenarioText").value) return;
+    if (result?.valid !== true || typeof result.name !== "string" || !Number.isInteger(result.phases) || result.phases < 1) {
+      throw new Error("Unexpected scenario validation response.");
+    }
+    state.scenarioValidation = {
+      kind: "success", title: "Scenario is valid",
+      message: `${result.name} · ${result.phases} ${result.phases === 1 ? "phase" : "phases"}\nYAML syntax and scenario settings passed validation.`,
+    };
+  } catch (error) {
+    if (version !== state.scenarioValidationVersion || yaml !== $("#scenarioText").value) return;
+    const invalid = error.status === 400 || error.status === 413;
+    state.scenarioValidation = {
+      kind: invalid ? "invalid" : "error",
+      title: invalid ? "Scenario is invalid" : "Could not validate scenario",
+      message: error.message,
+    };
+  } finally {
+    if (version === state.scenarioValidationVersion) {
+      state.scenarioValidating = false;
+      // Ignore results for editor contents replaced outside an input event too.
+      if (yaml !== $("#scenarioText").value) state.scenarioValidation = null;
+      renderScenarioValidation();
+    }
+  }
+}
+
 function renderSavedScenarios() {
+  renderScenarioValidation();
   const scenarios = state.savedScenarios || [];
   const status = $("#scenarioLibraryStatus");
   const busy = scenarioOperationBusy();
@@ -723,6 +793,7 @@ async function loadSavedScenario(id) {
     state.selectedScenarioId = item.id;
     $("#scenarioName").value = item.name;
     $("#scenarioText").value = item.yaml;
+    resetScenarioValidation();
     $("#scenarioText").focus();
   } catch (error) {
     if (version === state.scenarioLoadVersion) state.scenarioActionError = `Could not load the saved scenario: ${error.message}`;
@@ -741,6 +812,7 @@ function startNewScenario() {
   $("#scenarioName").value = "";
   const editor = $("#scenarioText");
   editor.value = defaultScenario;
+  resetScenarioValidation();
   renderSavedScenarios();
   $("#scenarioName").focus();
 }
@@ -788,7 +860,10 @@ async function saveEditedScenario(asNew = false) {
     }, "mutation"), true);
     state.selectedScenarioId = item.id;
     $("#scenarioName").value = item.name;
-    $("#scenarioText").value = item.yaml;
+    if ($("#scenarioText").value !== item.yaml) {
+      $("#scenarioText").value = item.yaml;
+      resetScenarioValidation();
+    }
     upsertSavedScenario(item);
     showToast(`${updateID ? "Updated" : "Saved"} scenario: ${item.name}.`);
   } catch (error) {
@@ -1433,6 +1508,8 @@ $("#newScenario").addEventListener("click", startNewScenario);
 $("#saveScenario").addEventListener("click", () => saveEditedScenario(false));
 $("#saveScenarioCopy").addEventListener("click", () => saveEditedScenario(true));
 $("#runScenario").addEventListener("click", submitScenarioRun);
+$("#validateScenario").addEventListener("click", validateEditedScenario);
+$("#scenarioText").addEventListener("input", resetScenarioValidation);
 $("#scenarioName").addEventListener("keydown", handleScenarioNameKeydown);
 $("#scenarioForm").addEventListener("submit", (event) => event.preventDefault());
 for (const close of document.querySelectorAll("[data-scenario-close]")) close.addEventListener("click", closeScenarioEditor);

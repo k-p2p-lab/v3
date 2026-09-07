@@ -22,6 +22,7 @@ The Controller exposes the following public and operational endpoints. When `KPL
 | `GET` | `/api/v1/stream` | Real-time snapshot SSE stream, including `peerScores` |
 | `GET` | `/api/v1/experiments` | Experiment state plus `activeJobs`, `completedJobs`, `failedJobs`, and `canceledJobs` counters |
 | `GET` / `POST` | `/api/v1/scenarios` | List scenario summaries or save validated `{name, yaml}` |
+| `POST` | `/api/v1/scenarios/validate` | Validate raw YAML without saving or running; public, no token required |
 | `GET` / `PUT` / `DELETE` | `/api/v1/scenarios/{id}` | Load, update, or delete one saved scenario |
 | `GET` | `/api/v1/results` | Saved experiment results, including runs from previous Controller sessions |
 | `DELETE` | `/api/v1/results/{id}` | Delete an inactive saved result; active batches and downloads are protected |
@@ -34,6 +35,8 @@ The `runId` query parameter on `/api/v1/bootstrap` is required. The registry ret
 The bootstrap response is an array of `{nodeId, peerId, addresses}` records (or `null` when empty). Unlike discovery, bootstrap does not filter on Agent online status. Discovery returns an array, empty when no candidates match, with an additional `subscribed` flag. It returns the full eligible candidate set; the requesting Peer applies rendezvous ranking, connection budgets, and retries as described in [topology](topology.md#bootstrap-and-topic-discovery).
 
 ## Submit, stop, and observe runs
+
+`POST /api/v1/scenarios/validate` accepts a raw YAML body (`Content-Type: application/yaml`), limited to 1 MiB. A valid scenario returns `200` with `{valid: true, name, phases}`. Empty input, YAML syntax errors, unknown fields, invalid settings, and multiple YAML documents return `400` with `{error: "…"}`; parser diagnostics retain line numbers when available. Bodies over the limit return `413`. This endpoint uses the same parser as save/run, creates no records or jobs, and does not require a token. Validation checks configuration, not Agent capacity or runtime connectivity.
 
 `POST /api/v1/experiments` returns `202` with the first run's experiment object. Use `Content-Type: application/json` for `{scenario, repetitions}`; `scenario` is a YAML string and omitted `repetitions` defaults to `1`. Other content types are treated as raw YAML. Raw YAML and the decoded JSON `scenario` string are limited to 1 MiB. The JSON request envelope allows `6 * 1 MiB + 64 KiB` for escaping. An oversized request envelope returns `413`; a decoded YAML string over its limit or invalid scenario/repetition returns `400`.
 
@@ -85,6 +88,6 @@ Internal endpoints may change independently of the operator API. Request and sna
 
 `KPL_API_TOKEN` is one shared Bearer credential for mutating KPL APIs, not a Swarm join token, Docker permission, or Grafana password. Use the same value for the Controller and every Agent; Agents pass it to their Peers automatically. It is required by the Swarm stack. There are no per-user roles or scoped tokens.
 
-Enter the value in the dashboard's **Run experiment → API token** field. Running, saving, updating, or deleting through that dialog saves it in that origin's browser `localStorage` for later mutation requests; it does not expire automatically. REST clients send `Authorization: Bearer <token>`. GET reads, including state, events, SSE, and metrics, stay public. The Controller also exempts HEAD; Agents and Peers only exempt GET. The token does not encrypt HTTP traffic.
+Enter the value in the dashboard's **Run experiment → API token** field. Running, saving, updating, or deleting through that dialog saves it in that origin's browser `localStorage` for later mutation requests; it does not expire automatically. REST clients send `Authorization: Bearer <token>`. GET reads, including state, events, SSE, and metrics, stay public. The stateless `POST /api/v1/scenarios/validate` is also public; this exception applies only to that exact method and path. The Controller also exempts HEAD; Agents and Peers only exempt GET. The token does not encrypt HTTP traffic.
 
 The same four job counters are present in `/api/v1/snapshot` and SSE snapshots. The dashboard displays them on each run, so active, successful, failed, and canceled background work is visible without inspecting Controller logs.

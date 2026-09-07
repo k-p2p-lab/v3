@@ -50,6 +50,7 @@ function fixture(fetch) {
     'scenarioLibraryStatus', 'refreshScenarios', 'newScenario', 'saveScenario', 'saveScenarioCopy',
     'scenarioLibraryError', 'scenarioEditingStatus', 'scenarioLibraryList', 'apiToken', 'scenarioName',
     'scenarioText', 'scenarioError', 'runRepetitions', 'runScenario', 'scenarioDialog', 'toast',
+    'validateScenario', 'scenarioValidation', 'scenarioValidationTitle', 'scenarioValidationMessage',
   ]) elements.set(`#${id}`, element());
   elements.set('.scenario-library', element());
   elements.set('.agents-panel', element());
@@ -78,6 +79,9 @@ function fixture(fetch) {
     pendingScenarioDeleteId: null,
     scenarioLoadVersion: 0,
     scenarioSubmitting: false,
+    scenarioValidating: false,
+    scenarioValidation: null,
+    scenarioValidationVersion: 0,
     apiToken: null,
   };
   const storage = new Map();
@@ -459,4 +463,114 @@ test('scenario deletion requires an inline confirmation and retains loaded edito
   assert.equal(state.selectedScenarioId, null);
   assert.equal(elements.get('#scenarioText').value, yaml);
   assert.equal(deleteNext.focused, true);
+});
+
+
+test('Validate checks the current YAML without saving or running and keeps the editor editable', async () => {
+  let calls = 0;
+  let release;
+  const waiting = new Promise((resolve) => { release = resolve; });
+  const { api, state, elements } = fixture(async (url, options) => {
+    calls++;
+    assert.equal(url, '/api/v1/scenarios/validate');
+    assert.equal(options.method, 'POST');
+    assert.equal(options.headers.get('Content-Type'), 'application/yaml');
+    assert.equal(options.body, elements.get('#scenarioText').value);
+    await waiting;
+    return response({ valid: true, name: 'Checked scenario', phases: 3 });
+  });
+  const validating = api.validateEditedScenario();
+  await api.validateEditedScenario();
+  assert.equal(calls, 1);
+  assert.equal(elements.get('#validateScenario').disabled, true);
+  assert.equal(elements.get('#scenarioText').disabled, false);
+  assert.equal(elements.get('#scenarioValidation').hidden, false);
+  release();
+  await validating;
+  assert.equal(state.scenarioValidating, false);
+  assert.equal(state.scenarioValidation.kind, 'success');
+  assert.equal(elements.get('#validateScenario').disabled, false);
+  assert.equal(elements.get('#scenarioValidationTitle').textContent, 'Scenario is valid');
+  assert.match(elements.get('#scenarioValidationMessage').textContent, /Checked scenario · 3 phases/);
+  assert.equal(elements.get('#scenarioDialog').closedWith, undefined);
+  assert.equal(state.savedScenarios, null);
+});
+
+test('validation shows multiline parser diagnostics as text and editing clears the result', async () => {
+  const diagnostic = 'yaml: unmarshal errors:\n  line 4: field <img src=x> not found\n  line 8: invalid duration';
+  const { api, state, elements } = fixture(async () => response({ error: diagnostic }, 400));
+  await api.validateEditedScenario();
+  assert.equal(state.scenarioValidation.kind, 'invalid');
+  assert.equal(elements.get('#scenarioValidationMessage').textContent, diagnostic);
+  assert.equal(elements.get('#scenarioValidationMessage').innerHTML, '');
+  assert.equal(elements.get('#scenarioValidation').getAttribute('role'), 'alert');
+  assert.equal(elements.get('#scenarioText').getAttribute('aria-invalid'), 'true');
+  elements.get('#scenarioText').value = 'fixed';
+  api.resetScenarioValidation();
+  assert.equal(state.scenarioValidation, null);
+  assert.equal(elements.get('#scenarioValidation').hidden, true);
+  assert.equal(elements.get('#scenarioText').getAttribute('aria-invalid'), 'false');
+  assert.match(source, /#scenarioText"\)\.addEventListener\("input", resetScenarioValidation\)/);
+});
+
+test('old validation responses cannot overwrite results for edited YAML', async () => {
+  let finishOld;
+  let finishNew;
+  let calls = 0;
+  const { api, state, elements } = fixture(async () => {
+    calls++;
+    return new Promise((resolve) => {
+      if (calls === 1) finishOld = resolve;
+      else finishNew = resolve;
+    });
+  });
+  const oldCheck = api.validateEditedScenario();
+  elements.get('#scenarioText').value = 'edited YAML';
+  api.resetScenarioValidation();
+  const newCheck = api.validateEditedScenario();
+  finishNew(response({ valid: true, name: 'New input', phases: 1 }));
+  await newCheck;
+  finishOld(response({ error: 'Old input was invalid' }, 400));
+  await oldCheck;
+  assert.equal(state.scenarioValidation.kind, 'success');
+  assert.match(elements.get('#scenarioValidationMessage').textContent, /New input · 1 phase\n/);
+});
+
+test('new and loaded scenarios invalidate checks of the previous editor contents', async () => {
+  const { api, state, elements } = fixture(async (url) => {
+    assert.equal(url, '/api/v1/scenarios/saved');
+    return response({ id: 'saved', name: 'Saved', yaml: 'loaded YAML' });
+  });
+  state.scenarioValidation = { kind: 'success', title: 'Old result', message: 'old' };
+  api.startNewScenario();
+  assert.equal(state.scenarioValidation, null);
+  state.savedScenarios = [{ id: 'saved', name: 'Saved' }];
+  state.scenarioValidation = { kind: 'invalid', title: 'Old error', message: 'old' };
+  await api.loadSavedScenario('saved');
+  assert.equal(elements.get('#scenarioText').value, 'loaded YAML');
+  assert.equal(state.scenarioValidation, null);
+});
+
+test('validation handles blank input, server failures, malformed responses, and timeouts', async () => {
+  const blank = fixture(async () => { throw new Error('unexpected request'); });
+  blank.elements.get('#scenarioText').value = ' \n';
+  await blank.api.validateEditedScenario();
+  assert.equal(blank.state.scenarioValidation.kind, 'invalid');
+  assert.equal(blank.elements.get('#scenarioText').focused, true);
+
+  for (const reply of [response({ error: 'Server unavailable' }, 503), response({ valid: false }), response({ valid: true, name: 'wrong', phases: -1 })]) {
+    const current = fixture(async () => reply);
+    await current.api.validateEditedScenario();
+    assert.equal(current.state.scenarioValidation.kind, 'error');
+    assert.equal(current.elements.get('#scenarioText').getAttribute('aria-invalid'), 'false');
+    assert.equal(current.elements.get('#validateScenario').disabled, false);
+  }
+  const timed = fixture((url, options) => hangingResponse(options));
+  const checking = timed.api.validateEditedScenario();
+  timed.expireRequest();
+  await checking;
+  assert.equal(timed.state.scenarioValidating, false);
+  assert.equal(timed.state.scenarioValidation.kind, 'error');
+  assert.match(timed.elements.get('#scenarioValidationMessage').textContent, /timed out/);
+  assert.equal(timed.elements.get('#validateScenario').disabled, false);
 });

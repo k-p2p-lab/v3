@@ -106,6 +106,7 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 	mux.HandleFunc("/api/v1/discovery", s.handleDiscovery)
 	mux.HandleFunc("/api/v1/events", s.handleEvents)
 	mux.HandleFunc("/api/v1/events/batch", s.handleEventBatch)
+	mux.HandleFunc("/api/v1/scenarios/validate", s.handleScenarioValidation)
 	mux.HandleFunc("/api/v1/scenarios", s.handleScenarios)
 	mux.HandleFunc("/api/v1/scenarios/", s.handleScenarioAction)
 	mux.HandleFunc("/api/v1/experiments", s.handleExperiments(ctx))
@@ -227,7 +228,9 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Cache-Control", "no-store")
 		}
-		if s.config.Token != "" && r.Method != http.MethodGet && r.Method != http.MethodHead {
+		// Validation only parses the supplied body; it cannot save or run a scenario.
+		validationOnly := r.Method == http.MethodPost && r.URL.Path == "/api/v1/scenarios/validate"
+		if s.config.Token != "" && r.Method != http.MethodGet && r.Method != http.MethodHead && !validationOnly {
 			if r.Header.Get("Authorization") != "Bearer "+s.config.Token {
 				writeError(w, http.StatusUnauthorized, "valid bearer token required")
 				return

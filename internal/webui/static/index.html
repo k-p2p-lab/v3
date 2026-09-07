@@ -222,8 +222,15 @@
           </div>
           <label for="scenarioName">Saved scenario name</label>
           <input id="scenarioName" type="text" maxlength="128" autocomplete="off" placeholder="Example: 100-peer churn baseline">
-          <label for="scenarioText">YAML scenario</label>
-          <textarea id="scenarioText" spellcheck="false"></textarea>
+          <div class="scenario-yaml-heading">
+            <label for="scenarioText">YAML scenario</label>
+            <button class="secondary-button" id="validateScenario" type="button">Validate</button>
+          </div>
+          <textarea id="scenarioText" spellcheck="false" aria-describedby="scenarioValidationMessage"></textarea>
+          <section class="scenario-validation" id="scenarioValidation" role="status" aria-live="polite" aria-atomic="true" aria-labelledby="scenarioValidationTitle" hidden>
+            <strong id="scenarioValidationTitle"></strong>
+            <pre id="scenarioValidationMessage"></pre>
+          </section>
           <div class="scenario-save-row">
             <span class="dialog-error" id="scenarioLibraryError" role="alert"></span>
             <button class="secondary-button" id="saveScenarioCopy" type="button" hidden>Save as new</button>
