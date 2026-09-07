@@ -1,8 +1,10 @@
-English | [Korean](v2-reproduction.kr.md)
-
 # Reproducing v2 scenario and network experiments
 
+English | [Korean](v2-reproduction.kr.md)
+
 This review uses the actual Controller/Peer code in `kpl-v2` and `exp/exp-2603_churn-02.sh` as its reference. Where documentation and implementation differ, the implementation takes precedence. The settings below reproduce the main experimental conditions; they do not reproduce the exact packet order or topology of a historical run.
+
+These compatibility details belong to v3. For the project-wide version history and research context, see the [Hub](https://github.com/k-p2p-lab/hub).
 
 ## Container isolation and placement
 
@@ -14,7 +16,7 @@ The two Agents in the default Compose configuration use **the same Docker host**
 
 See the [Swarm deployment configuration and scalability review](swarm.md) for multiple servers. Swarm places a global Agent on each selected server, while the Controller distributes Peers. Restarting an Agent task cleans up its Peers; it does not reproduce v2's Peer Service rescheduling. The implementation accounts for Peer advertised addresses, direct access to each Agent, capacity reservations until deletion completes, and monitoring of all Agents.
 
-If an experiment is canceled during creation, the Agent still waits for Docker create to return within its time limit, obtains the container ID, and removes the container. This avoids leaving a container that the daemon creates after a prematurely terminated CLI invocation. If Docker reports that removal is in progress, the Agent checks whether the container actually disappears. The default `jobShutdownTimeout` and Compose shutdown grace period are both `3m`. A Docker admission deadline or daemon failure is reported as an error; on restart, the Agent uses ownership labels to clean up leftover containers.
+If an experiment is canceled during creation, the Agent still waits for Docker create to return within its time limit, obtains the container ID, and removes the container. This avoids leaving a container that the daemon creates after a prematurely terminated CLI invocation. If Docker reports that removal is in progress, the Agent checks whether the container actually disappears. The default `jobShutdownTimeout` is `3m`, applied separately to job shutdown and Peer cleanup. Both Compose and Swarm set the Controller's stop grace period to `7m` and each Agent's to `4m`; see the [shutdown procedure](linux-deployment.md#shutdown-and-server-restart). A Docker admission deadline or daemon failure is reported as an error; on restart, the Agent uses ownership labels to clean up leftover containers.
 
 ## Network condition mapping
 
@@ -63,7 +65,7 @@ network:
 | v2's default await=false | Specify `await: false` explicitly in YAML (v3 defaults to true) |
 | v2 asynchronous for-loop | Expand into separate job phases; `repeat` executes sequential repetitions within one job |
 | Publish target disappears during churn | Use `onError: continue` to record that failure and continue |
-| Clean up all Peers after normal scenario completion | Add an explicit final `stop-all` |
+| Clean up all Peers after a successful single run | Add an explicit final `stop-all`; repeated runs (`repetitions > 1`) also clean up automatically between iterations |
 
 `onError: continue` applies only to publish/leave and also permits zero candidates. Individual operation failures are recorded as `phase-operation-failed` events. User cancellation and phase deadlines still propagate; an individual HTTP request timeout is treated as an operation failure. The default `fail` policy stops the experiment on failure, preserving the existing v3 behavior.
 
@@ -73,16 +75,16 @@ A Docker Peer's lifetime starts when **Docker create succeeds**, corresponding t
 
 ## Initial connections and message size
 
-Peers explicitly use TCP/Noise/Yamux, as in v2. Workers shuffle bootstrap candidates using their seed and finish initial connection setup after the first successful connection. Subsequent connections are left to DHT/PubSub behavior. The overall bootstrap timeout also covers list lookup and dialing.
+Peers explicitly use TCP/Noise/Yamux, as in v2. Workers shuffle bootstrap candidates using their seed and finish initial connection setup after the first successful connection. The overall bootstrap timeout also covers list lookup and dialing. After PubSub startup, v3 additionally polls the Controller's same-run, exact-topic discovery registry every three seconds to supplement transport connections. Candidate ranking, connection budgets, and failure retries are implemented in [`internal/peer/discovery.go`](../internal/peer/discovery.go); GossipSub chooses the actual mesh. This extra discovery path differs from v2 and can change connectivity and churn recovery even when DHT/GossipSub parameters match.
 
 v2's `size` is the length of the random bytes passed to PubSub. With `payloadEncoding: raw` in v3, `payloadSize` is exactly that length. It is not the packet size including libp2p framing, signatures, or TCP/IP headers. The default `envelope` encoding is larger because it adds JSON and base64 for propagation latency measurement. `topic: '*'` publishes a message separately to every publishable topic held by each selected node.
 
-Raw publications and deliveries are correlated by SHA-256. No timestamp is inserted into the message, so raw deliveries provide no latency value and are excluded from mean/P95 calculations. Use dedicated topics and networks for runs with raw traffic: the envelope run ID filter cannot be applied to raw bytes.
+Raw publications, deliveries, and duplicate events use `pubsub-` followed by the hexadecimal native PubSub message ID. The current default ID combines the origin and sequence, so two publications with identical raw bytes remain distinct. No application timestamp is inserted into the message, so raw deliveries provide no latency value and are excluded from mean/P95 calculations. Use dedicated topics and networks for runs with raw traffic: the envelope run ID filter cannot be applied to raw bytes. See [`internal/peer/publish.go`](../internal/peer/publish.go).
 
 ## Observability and remaining differences
 
 - `wait-ready` indicates initialization and API readiness; it does not guarantee mesh convergence. The example includes a separate stabilization wait.
-- The [dashboard topology](topology.md) has separate transport, Kademlia routing-table, and topic-specific GossipSub mesh layers from current Peer status. `TopicPeers` is a subscription count, not mesh degree. For historical analysis, use the stored `graft`/`prune`, `add_peer`/`remove_peer`, and `join`/`leave` events together, allowing for telemetry loss. Exports do not contain a complete history of routing/mesh snapshots.
+- The [dashboard topology](topology.md) has separate transport, Kademlia routing-table, and topic-specific GossipSub mesh layers from current Peer status. `TopicPeers` is `len(pubsub.ListPeers(topic))`: locally known topic peers, not mesh degree or proof of remote application subscription sessions. For historical analysis, use the stored `graft`/`prune`, `add_peer`/`remove_peer`, and `join`/`leave` events together, allowing for telemetry loss. Exports do not contain a complete history of routing/mesh snapshots.
 - v3 control metrics correspond to v2's physical IHAVE/IWANT counters through the per-type RPC count and to its logical counters through the message-ID reference count. v3 also retains protobuf entry counts, IDONTWANT, local pre-send drops, PRUNE peer-exchange records, and every type in a mixed RPC. v2 omitted those cases and discarded IHAVE topic information. Existing plain `graft`/`prune` events remain local mesh transitions; compare wire traffic with the separate `send_*`, `recv_*`, and `drop_*` control events. See the [control traffic definition](experiment-metrics.md#gossipsub-control-traffic).
 - Interval, lifetime, and base delay samples are reproducible from their seeds. Peer IDs derived in part from the run ID, network timing, and kernel packet randomness are not identical across runs. Node metadata records `seed`, `networkRequested`, and the effective `network`; the Agent's Peer configuration files also retain effective settings.
 - The default connection cap of 55 and key Worker DHT/GossipSub parameters match. However, source for v2's custom PubSub fork is absent from the supplied directory, so equivalence inside that fork cannot be verified. v3 uses the official library, and HopWave is outside the supported scope.
@@ -90,9 +92,9 @@ Raw publications and deliveries are correlated by SHA-256. No timestamp is inser
 
 Key v2 files reviewed: `kpl-controller/internal/handler/event.go`, `internal/docker/docker.go`, `internal/distribution/distribution.go`, `cmd/main.go`, `kpl-peer-app/internal/host/{host,tc}.go`, `internal/dht/dht.go`, and `internal/api/publish.go`.
 
-## Validation record
+## Historical validation record
 
-Validation was performed on Docker Desktop Linux on 2026-09-04.
+The following retained record reports validation on Docker Desktop Linux on 2026-09-04. Its original run archives are not included in this repository; treat the numbers as historical observations, not verification of the current checkout. For current regression commands and the distinction between package tests and kernel integration, see [development](development.md#container-and-browser-regression-checks).
 
 - The full `go test -buildvcs=false ./... -timeout 60s` suite and validation of every example YAML file passed.
 - Integration run `run-20260904T021417Z-581b`: confirmed four containers with distinct network namespaces and no host mounts or port bindings.

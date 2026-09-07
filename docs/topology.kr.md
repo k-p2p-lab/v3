@@ -28,7 +28,7 @@ Agent 영역의 각도는 같으며 설정한 capacity만큼 빈 Peer 위치를 
 
 ## 선의 정확한 의미
 
-기존 그래프는 libp2p host의 `ConnectedPeers` 목록으로 그렸습니다. ADD_PEER 이벤트를 재생한 것은 아니며 DHT 라우팅 관계나 GossipSub mesh를 구분할 수 없었습니다. transport 연결, DHT가 아는 Peer, 원격 topic 구독(`TopicPeers` / PubSub `ListPeers`), GRAFT mesh는 서로 다른 관계입니다.
+transport 연결, DHT가 아는 Peer, 로컬에서 알려진 PubSub topic Peer(`TopicPeers` / PubSub `ListPeers`), GRAFT mesh는 서로 다른 관계입니다. Topic Peer 항목만으로 원격 application subscription을 입증할 수는 없으며 publish-only나 relay 참가자도 가능합니다. 현재 그래프는 ADD_PEER 이벤트로 관계를 재구성하지 않고 각 레이어에 해당하는 Peer 상태 필드에서 관계를 가져옵니다.
 
 - **Kademlia**는 `dht.RoutingTable().ListPeers()`에서 얻습니다. 라우팅 테이블 포함만으로 현재 transport 연결이나 패킷 전송을 입증하지는 않습니다.
 - **GossipSub**는 Peer 내부의 동기 router callback으로 추적합니다. 수락된 `Graft`는 추가하고 `Prune`, topic `Leave`, `RemovePeer`는 제거합니다. telemetry 큐 유실, Controller 이벤트 도착 순서, 최근 300개 표시 한도와 독립적입니다. `floodsub`, `randomsub`, PubSub 비활성에는 GossipSub mesh가 없습니다. GRAFT mesh 밖의 direct/fanout 전달 경로는 포함하지 않습니다.
@@ -38,9 +38,9 @@ Agent 영역의 각도는 같으며 설정한 capacity만큼 빈 Peer 위치를 
 
 ## Bootstrap과 topic discovery
 
-Kademlia bootstrap과 GossipSub transport discovery는 서로 다른 절차입니다. Peer는 먼저 `/api/v1/bootstrap`으로 동일 run의 ready `boot` Peer에 연결해 DHT를 bootstrap합니다. 내장 boot type은 PubSub를 실행하지 않으므로 이 연결만으로 GossipSub mesh가 생기지는 않습니다.
+Bootstrap transport 연결과 GossipSub topic discovery는 서로 다른 절차입니다. 각 Peer는 먼저 `/api/v1/bootstrap`으로 동일 run의 ready `boot` Peer를 조회합니다. Worker는 DHT를 비활성화했더라도 seed 기반으로 섞은 순서에서 첫 연결 성공까지 시도합니다. Boot 노드는 제공된 Peer에 연결을 시도하며 비어 있는 네트워크로 시작할 수도 있습니다. Kademlia bootstrap은 DHT가 활성화된 경우에만 수행합니다. 내장 boot type은 PubSub를 실행하지 않으므로 이 연결만으로 GossipSub mesh가 생기지는 않습니다.
 
-PubSub가 시작되면 Peer는 설정한 정확한 topic마다 Controller의 `/api/v1/discovery` registry를 즉시 조회하고 이후 3초마다 다시 조회합니다. Registry는 동일 run·topic에서 ready·online 상태이고 PubSub가 활성화된 Peer만 반환합니다. Rendezvous hash는 각 요청자에게 설정된 `DHigh` 수까지 안정적인 transport 후보를 선택하며, publish-only·relay 후보보다 실제 subscriber를 우선합니다. Peer는 빠진 transport 연결을 생성하여 churn으로 구성원이 달라질 때 후보 연결을 보강하며 all-to-all graph를 만들지는 않습니다.
+PubSub가 시작되면 Peer는 설정한 정확한 topic마다 Controller의 `/api/v1/discovery` registry를 즉시 조회하고 이후 3초 polling loop로 다시 조회합니다. Registry는 동일 run·topic에서 ready 상태이고 PubSub가 활성화되어 있으며 Agent가 online인 모든 Peer를 반환합니다. Peer가 rendezvous hash로 순서를 정하고 publish-only·relay 후보보다 실제 subscriber를 우선합니다. 현재 PubSub `ListPeers(topic)` 수를 `DHigh`에서 빼고, 전체 hard connection cap의 여유 범위 안에서 부족한 연결을 채웁니다. Dial이 실패하면 다음 순위 후보를 시도하고 실패한 Peer ID에는 15초 retry backoff를 적용합니다. Registry 요청과 각 dial round의 제한 시간은 5초이므로 느린 round는 다음 polling을 늦출 수 있습니다. 이 방식은 churn 중 후보 연결을 보강하며 의도적으로 all-to-all graph를 만들지는 않습니다. 수신 연결이나 다른 프로토콜 연결로 topic별 discovery 목표보다 많은 연결이 생길 수는 있습니다.
 
 Registry는 주소와 설정된 topic 참여 정보만 제공하며 전달 결과를 조회하거나 선택하지 않습니다. 발견한 연결은 libp2p 연결이 완료된 뒤 회색 transport 레이어에 나타납니다. GossipSub가 어떤 topic Peer를 mesh에 넣을지 계속 결정하며, 수락된 GRAFT만 주황 mesh 선으로 표시합니다. DHT routing-table entry는 별도의 청록 선입니다. 따라서 `DHigh`는 discovery 목표이며 화면에 정확히 그 수의 transport 또는 mesh 이웃이 표시된다는 보장은 아닙니다.
 
@@ -68,4 +68,4 @@ overlay 보고가 없는 이전 Peer는 Transport 선만 제공합니다. 화면
 
 ## 개발 검증
 
-`go test ./...`로 Peer mesh·DHT snapshot, Agent 순서·복사, Controller edge·신선도, 내장 HTML을 검사합니다. 최신 Node.js 환경에서 `node --test internal/webui/topology_test.cjs internal/webui/topology-layout_test.cjs`로 레이어·topic 필터, 부채꼴 배치와 안정화, churn, 카메라와 DOM 조작 회귀를 검사합니다. JavaScript 테스트는 Node.js 내장 모듈만 사용하며 npm 패키지 설치가 필요 없습니다. 이 검사는 브라우저 화면 검토나 실제 다중 서버 실험을 대신하지 않습니다.
+이미 사용 가능한 Linux Docker engine에서 `make test-linux` 또는 `docker build --target test -t kpl-v3:test .`로 Peer mesh·DHT snapshot, Agent 순서·복사, Controller edge·신선도, 내장 HTML을 검사합니다. 네이티브 `go test ./...`는 Linux에서만 실행하며 Windows에서는 Go 테스트나 테스트 binary를 실행하지 마십시오. 최신 Node.js 환경에서 `node --test internal/webui/topology_test.cjs internal/webui/topology-layout_test.cjs`로 레이어·topic 필터, 부채꼴 배치와 안정화, churn, 카메라와 DOM 조작 회귀를 검사합니다. JavaScript 테스트는 Node.js 내장 모듈만 사용하며 npm 패키지 설치가 필요 없습니다. 이 검사는 브라우저 화면 검토나 실제 다중 서버 실험을 대신하지 않습니다. 전체 검증 범위는 [개발 가이드](development.kr.md)를 참고하십시오.

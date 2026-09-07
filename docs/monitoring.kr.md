@@ -1,8 +1,8 @@
-[English](monitoring.md) | 한국어
-
 # Prometheus와 Grafana로 실험 분석하기
 
-`docker compose up -d --build`로 Controller, Agent 두 개, Prometheus, Grafana를 함께 실행합니다. 데이터 소스와 **KP2PLab Experiment Analysis** 대시보드는 자동 등록됩니다.
+[English](monitoring.md) | 한국어
+
+[Linux 배포 준비](linux-deployment.kr.md)에 따라 `.env` 설정과 Linux 사전 점검을 마친 뒤 기본 Compose stack을 시작합니다. Controller, 같은 호스트의 Agent 두 개, Prometheus, Grafana를 함께 실행하며 데이터 소스와 **KP2PLab Experiment Analysis** 대시보드는 자동 등록됩니다. 다중 호스트 설치는 [Swarm 배포 가이드](swarm.kr.md)를 사용하십시오.
 
 대시보드는 영어로 작성되어 있으며, Compose/Swarm은 `GF_USERS_DEFAULT_LANGUAGE=en-US`로 Grafana UI 기본 언어를 영어로 설정합니다. 사용자나 조직의 언어 설정이 있으면 해당 UI 기본값보다 우선합니다. [Grafana 언어 설정 문서](https://grafana.com/docs/grafana/latest/administration/organization-preferences/#change-grafana-language)
 
@@ -17,15 +17,16 @@ Grafana는 최초 실행 시 SQLite 데이터베이스를 초기화하므로 디
 | Prometheus 쿼리/수집 상태 | http://localhost:9090 |
 | Controller 지표 원문 | http://localhost:8080/metrics |
 
-Grafana는 로컬 분석용 읽기 전용 익명 접속을 허용합니다. 관리자 계정은 `.env`의 `GRAFANA_ADMIN_USER`/`GRAFANA_ADMIN_PASSWORD`를 사용합니다. 이 작업 환경에서는 임의 관리자 비밀번호를 생성하여 Git에서 제외되는 `.env`에 저장했습니다. 신규 설치 시에는 `.env.example`을 참고하여 설정하십시오. `.env` 없이 실행할 경우 관리자 초기 계정은 Grafana 기본 `admin`/`admin`입니다. 이미 생성된 Grafana 데이터 볼륨의 비밀번호는 환경 변수만 바꾸어도 갱신되지 않습니다.
+Compose는 기본적으로 읽기 전용 Grafana 익명 접속을 허용하며 기본 Swarm stack은 익명 접속을 비활성화합니다. Compose 관리자 계정은 `.env` 또는 shell 환경의 `GRAFANA_ADMIN_USER`/`GRAFANA_ADMIN_PASSWORD`를 사용하고, 모두 미설정이면 `admin`/`admin`을 기본값으로 사용합니다. 최초 실행 전에 [`.env.example`](../.env.example)을 참고해 비밀번호를 설정하십시오. Swarm은 `GRAFANA_ADMIN_PASSWORD`를 필수로 요구하며 설정 helper가 manager 설정에 자격 증명을 저장합니다. 이미 생성된 Grafana 데이터 볼륨의 비밀번호는 환경 변수만 바꾸어도 갱신되지 않습니다.
 
 Docker Compose는 Prometheus/Grafana 포트를 `127.0.0.1`에만 게시하고, Swarm은 control 노드에 게시합니다. Swarm은 각 Agent의 전용 metrics listener도 해당 노드의 `KPL_AGENT_METRICS_PORT`(기본 `9091`)로 게시합니다. Compose 포트는 `.env`의 `PROMETHEUS_PORT`, `GRAFANA_PORT`로 바꾸고 Swarm 포트는 `scripts/swarm.sh configure`를 사용하십시오. Compose의 익명 열람을 끄려면 `GRAFANA_ANONYMOUS_ENABLED=false`로 지정합니다.
 
-대시보드 상단 메뉴는 Prometheus와 Grafana를 새 탭으로 엽니다. 현재 대시보드에 접속한 호스트와 설정된 게시 포트를 결합하므로 SSH 터널의 `localhost`와 Swarm control 노드 주소를 모두 그대로 따릅니다.
+대시보드 상단 메뉴는 Prometheus와 Grafana를 새 탭으로 엽니다. 현재 Dashboard의 scheme과 호스트를 유지하고 설정된 게시 포트로 바꿉니다. 브라우저가 사용하는 포트가 설정값과 같으면 직접 접속과 SSH 터널에서 동작합니다. Proxy가 scheme/path를 바꾸거나 로컬 forwarding에 다른 포트를 쓰면 실제 모니터링 주소를 별도로 여십시오.
 
 ## 실행과 분석
 
 1. 대시보드의 **Run experiment**에서 [`examples/monitoring.yaml`](../examples/monitoring.yaml)을 실행합니다. envelope 발행과 raw 발행을 함께 확인하는 작은 실험입니다.
+   **Run** 옆 **Runs**를 1~100으로 지정하면 순차 반복합니다. 회차마다 별도 결과를 남기며 실패 또는 **Stop batch**는 나머지를 취소합니다. [반복 실행과 지표 정의](experiment-metrics.kr.md)를 참고하십시오.
 2. Grafana에서 **Run**(run_id), **Agent**, **Topic**을 선택합니다. 여러 run을 고르면 선택한 실험의 트래픽·지연을 합산하며, 네트워크 설정 시계열은 범례에서 run별로 구분합니다.
 3. 실험이 끝난 뒤에도 시간 범위를 해당 실행 구간으로 지정하면 시계열을 볼 수 있습니다. 기본 새로고침은 5초입니다.
 
@@ -55,9 +56,7 @@ Controller 시작 후 첫 HEAD나 원본 파일·상태 변경 뒤에는 캡처�
 
 재시작 후 저장 상태가 `running` 또는 `queued`인 실험은 `interrupted`로 표시하며 ZIP 원본 메타데이터는 변경하지 않습니다. 이는 표시 상태이며 실제 Peer 종료를 증명하지 않습니다. 실시간 상태·카운터를 복원하거나 실행을 자동 재개하지 않지만 ZIP 지표는 보존된 로그에서 재계산합니다. 메타데이터를 읽을 수 없는 항목은 `unreadable`로 표시하므로 로그·저장 파일을 확인하십시오.
 
-**Saved results → Delete**는 확인 후 선택한 run의 시나리오·메타데이터·이벤트를 영구 삭제합니다. 실행·대기 중 실험, 활성 배치 구성원, 다운로드 중 결과는 보호합니다. API는 설정된 bearer token을 사용하는 `DELETE /api/v1/results/{id}`입니다. 기존 Prometheus/Grafana 시계열은 유지하고 삭제 표식으로 지연 telemetry의 결과 재생성을 막습니다. ZIP 원본 복사는 스트리밍하며 지표 재구성에는 고유 이벤트 ID·메시지/수신 쌍에 비례한 메모리가 필요합니다.
-
-실행 창의 **Run** 옆 **Runs**에서 1~100회 순차 반복을 설정합니다. 각 회차는 별도 결과를 남기며 실패 또는 **Stop batch**는 남은 회차를 취소합니다. [반복 실행과 지표 정의](experiment-metrics.kr.md)를 참고하십시오.
+**Saved results → Delete**는 확인 후 선택한 run의 시나리오·메타데이터·이벤트와 실시간 지표 인덱스를 영구 삭제합니다. 실행·대기 중 실험, 활성 배치 구성원, 다운로드 중 결과는 보호합니다. API는 설정된 bearer token을 사용하는 `DELETE /api/v1/results/{id}`입니다. Peer를 종료하지 않으며 기존 Prometheus/Grafana 시계열은 유지합니다. 삭제 표식은 지연 telemetry의 결과 재생성을 막으므로 백업·이전 때 Controller 데이터와 함께 보존하십시오. ZIP 원본 복사는 스트리밍하며 지표 재구성에는 고유 이벤트 ID·메시지/수신 쌍에 비례한 메모리가 필요합니다. 상태 코드와 다운로드 header는 [REST API 가이드](api.kr.md)를 참고하십시오.
 
 저장 결과 목록과 다운로드에도 기존 공개 GET 정책이 적용됩니다. API에서는 다음과 같이 사용할 수 있습니다.
 
@@ -76,13 +75,13 @@ curl --fail --output run-results.zip \
 | 지표 | 의미 |
 |---|---|
 | `kpl_events_total` | Controller가 수신한 이벤트 누적 수. `run_id`, `agent_id`, `event_type`, `topic`으로 구분 |
-| `kpl_message_bytes_total` | 발행/수신 PubSub data 바이트. libp2p framing 및 TCP/IP 헤더 제외 |
+| `kpl_message_bytes_total` | 발행/수신 이벤트의 `fields.wireBytes` 합계. Envelope 사용 시 JSON/base64를 포함한 PubSub data이며 libp2p framing 및 TCP/IP 헤더 제외 |
 | `kpl_gossipsub_control_rpcs_total` | 각 GossipSub 제어 타입을 포함한 RPC envelope 수. `send`, `recv`, 로컬 송신 전 `drop`으로 구분 |
 | `kpl_gossipsub_control_entries_total` | 해당 RPC에 담긴 repeated protobuf control entry 수 |
 | `kpl_gossipsub_control_message_ids_total` | IHAVE, IWANT, IDONTWANT entry 안의 중복 제거하지 않은 메시지 ID 참조 출현 횟수 |
 | `kpl_gossipsub_control_peer_exchange_records_total` | PRUNE entry에 담긴 peer-exchange record 수 |
 | `kpl_window_stable_pairs`, `kpl_window_reached_pairs` | 기간이 지난 메시지 중 수신 기간 전체의 구독이 증명된 수신 세션 쌍 및 기한 내 성공. `run_id`로 구분 |
-| `kpl_window_unknown_pairs`, `kpl_window_missed_pairs`, `kpl_window_late_pairs` | 안정 쌍의 수신 불명·확인된 미도달·마감 후 수신 수 |
+| `kpl_window_unknown_pairs`, `kpl_window_missed_pairs`, `kpl_window_late_pairs` | 안정 쌍의 수신 불명·확인된 미도달. 기한 내 수신이 없는 late 수는 앞의 두 결과 중 하나와 겹침 |
 | `kpl_window_delivery_ratio` (`bound`: `lower` / `upper`) | 안정 대상 조건부 도달률의 논리적 상·하한. 안정 쌍이 없으면 생략하며 신뢰구간이 아님 |
 | `kpl_window_initial_pairs`, `kpl_window_initial_reached_pairs`, `kpl_window_initial_unknown_pairs` | 확인된 발행 시점 대상, 이탈자를 포함한 기한 내 성공, 수신 불명 수 |
 | `kpl_window_initial_delivery_ratio` (`bound`: `lower` / `upper`) | 확인된 발행 시점 대상 안의 논리적 도달률 범위. 해당 집단이 비었을 때만 생략 |
@@ -112,7 +111,7 @@ curl --fail --output run-results.zip \
 
 Grafana 세션 패널에는 Run 필터만 적용하고 백분율 평균이 아닌 수신 쌍 합계로 집계합니다. 범위는 관측된 집단에 대한 값이며 보이지 않는 모집단을 증명하지 않습니다. 발행 시점 가용성 경고나 `measurementIncomplete`가 있어도 확인된 발행 시점 도달률과 안정 coverage를 표시하며, 선택한 run 전체에 확인된 발행 시점 쌍이 하나도 없을 때만 N/A입니다. 각 집계에서 확인된 발행 시점 대상 = 안정 + 이탈 + 지속 여부 불명이 성립합니다. 과거 발행 패널은 새 결과에서 제외한 과거 데이터를 표시합니다. 새 패널은 `kpl_window_*`만 사용하고 이전 `kpl_delivery_*`·`kpl_propagation_latency_seconds`는 과거 의미를 유지하므로 섞지 마십시오.
 
-전체 `deliver`에는 로컬 수신도 포함되므로 발행 수로 나누어 도달률을 구하지 않습니다. TCP 재전송은 패킷 손실을 지연으로 바꿀 수 있습니다. [정의·수식·참고 문헌](experiment-metrics.kr.md)을 확인하십시오. 늦은 배치가 기간 gauge와 histogram 버킷을 정정할 수 있어 `rate`/`increase` 대신 직접 조회합니다. Grafana 지연은 실험 전체 누적 분위수이며 선택 시간 범위만의 분위수가 아닙니다.
+전체 `deliver`에는 로컬 수신도 포함되므로 발행 수로 나누어 도달률을 구하지 않습니다. TCP 재전송은 패킷 손실을 지연으로 바꿀 수 있습니다. [지표 정의와 수식](experiment-metrics.kr.md)을 확인하십시오. 늦은 배치가 기간 gauge와 histogram 버킷을 정정할 수 있어 `rate`/`increase` 대신 직접 조회합니다. Grafana 지연은 실험 전체 누적 분위수이며 선택 시간 범위만의 분위수가 아닙니다.
 
 누적 카운터는 최근 300개 웹 이벤트 버퍼와 독립적입니다. Controller 프로세스가 재시작되면 카운터가 초기화되며 과거 `events.jsonl`을 자동 재생하지 않습니다. Prometheus에 이미 저장된 시계열은 유지되고 `rate`/`increase`는 관측된 카운터 재설정을 처리합니다. 단, scrape 전에 사라진 이벤트나 telemetry 전송 실패를 복구하는 기능은 아닙니다. `increase`는 scrape 표본으로 추정한 구간 증가량이므로 누적 정수 이벤트 수와 항상 정확히 일치하지는 않습니다.
 
@@ -120,21 +119,22 @@ raw 수신도 수신 수·바이트에는 포함되지만 지연 히스토그램
 
 ## 실제 실행 검증
 
-아래 과거 실행은 세션 기간 측정 이전이며 로컬 지연을 포함합니다. 이전 이벤트 집계 검증이며 새 조건부 도달률이나 지연 분포의 검증은 아닙니다. 새 실행은 같은 `session-window-v1` 정의와 수신 기간으로 비교하십시오.
+Linux에서 새 실행을 검증하고 ZIP, 코드 revision 또는 image digest, Prometheus 시간 범위를 보존하십시오. 저장소에는 이전 모니터링 실행 예시의 원본 ZIP이 포함되어 있지 않으므로 해당 과거 수치를 현재 세션 기간 구현의 감사 가능한 기준으로 사용할 수 없습니다.
 
-2026-09-04에 `examples/monitoring.yaml`을 실행하여 아래 결과를 원본 `events.jsonl`과 대조했습니다. 실행 ID는 `run-20260904T024349Z-345a`이며 실험 종료 후 테스트 Peer 컨테이너는 모두 정리되었습니다.
+[`examples/monitoring.yaml`](../examples/monitoring.yaml)에서는 다음을 확인하십시오.
 
-| 확인 항목 | 결과 |
+| 확인 항목 | 소스에 따른 기대값 |
 |---|---|
-| 발행 / 수신 | 66 / 264건으로 Prometheus와 원본 로그 일치 |
-| 누적 이벤트 | 583건 유지, 웹 최근 이벤트 버퍼는 300건 |
-| 지연 표본 | envelope 수신 240건만 포함, raw 수신 24건 제외 |
-| worker 네트워크 설정 | delay 50ms, jitter 5ms, loss 1% |
-| telemetry 큐 유실 | 0건 |
+| 성공 발행 | 모든 예약 발행이 성공하고 telemetry가 수집되면 envelope 60 + raw 6 = 66건 |
+| worker 네트워크 설정 | worker 세 개에 delay 50ms, jitter 5ms, loss 1% 설정 |
+| 도달률 분모 | 전체 `deliver` 수가 아니라 각 발행의 수신 기간에 해당하는 동일 run/topic 세션 증거에서 재구성 |
+| 지연 표본 | 안정 대상의 기한 내 원격 envelope 쌍만 포함. raw와 발행자 로컬 수신은 제외 |
+| 관측 품질 | pending, unknown, incomplete와 보고된 telemetry-drop 값을 보존. 보고된 drop이 0이어도 완전한 로그를 증명하지 않음 |
+| 정리 | 마지막 `stop-all`이 Peer 제거를 요청하므로 Agent 상태와 각 Linux 호스트의 잔존 Peer 컨테이너 확인 |
 
-이 수치는 해당 실행의 검증 결과입니다. 중복 수신·mesh 이벤트 수와 측정 지연은 실행 환경에 따라 달라집니다.
+`metrics.json`을 정확히 같은 `events.jsonl` 경계와 `export.json.exportedAt`에 맞춰 비교하십시오. Counter 비교에도 같은 Controller 생명주기와 수집 경계가 필요합니다. Heartbeat가 `add_peer`/`remove_peer`의 0 기준값을 초기화하지만 첫 scrape 전 이벤트는 `increase` 추정에서 누락될 수 있습니다. 수신·중복·mesh 이벤트·지연 합계는 실행과 관측에 따라 달라지므로 고정된 합격 기준값이 아닙니다.
 
-Peer 이탈이 처음 보고될 때 시계열이 생성되어 초기 증가량을 놓치는 문제를 줄이기 위해 heartbeat 시 `add_peer`/`remove_peer`의 0 기준값도 생성합니다. 수정 후 재실행(`run-20260904T025651Z-ee92`)에서 발행 66건·수신 264건·지연 표본 240건을 다시 확인했고, Peer 이탈 3건이 구간 증가량에도 반영되었습니다. 아주 짧은 실험에서 첫 scrape 전에 발생한 이벤트는 여전히 증가량 추정에서 누락될 수 있으므로 정확한 건수는 누적 카운터나 원본 로그와 대조하십시오.
+지표 구현과 회귀 사례는 [실험 지표](experiment-metrics.kr.md#구현과-관련-가이드)에 연결되어 있습니다. Linux 검증 명령은 [개발 가이드](development.kr.md)를 사용하십시오.
 
 ## 보존과 운영
 

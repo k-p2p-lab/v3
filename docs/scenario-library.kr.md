@@ -17,6 +17,8 @@
 
 이름은 앞뒤 공백을 제거한 뒤 검사하며 필수이고, Unicode 128자 이하이며 제어 문자를 포함할 수 없습니다. YAML도 필수이며 1 MiB 이하이고 저장 전에 일반 시나리오 검증을 통과해야 합니다. 이름은 중복될 수 있으며 각 항목에는 별도의 생성 ID가 부여됩니다. 목록은 최근 수정 순으로 정렬합니다.
 
+라이브러리 이름과 YAML 최상위 `name`은 독립적입니다. 전자는 저장한 편집기 입력을 구분하고 후자는 실험 run의 이름으로 사용합니다. 저장은 [시나리오 schema](scenario-reference.kr.md)를 검증하며 Agent 용량 예약이나 Docker, 커널 지원, 연결성 검사는 수행하지 않습니다.
+
 ## REST API
 
 요청과 응답 본문은 모두 JSON을 사용합니다. 큰 라이브러리도 가볍게 열 수 있도록 목록 응답에는 YAML을 넣지 않으므로, 편집하기 전에 개별 항목을 조회하십시오.
@@ -29,7 +31,7 @@
 | `PUT` | `/api/v1/scenarios/{id}` | `{ "name": "…", "yaml": "…" }` | 갱신된 전체 항목과 `200` |
 | `DELETE` | `/api/v1/scenarios/{id}` | 없음 | 본문 없는 `204` |
 
-`KPL_API_TOKEN`을 설정했다면 `POST`, `PUT`, `DELETE` 요청에 `Authorization: Bearer <token>`이 필요합니다. 현재 Controller 인증 정책에서 조회 요청은 공개입니다. 유효하지 않은 입력은 `400`, 너무 큰 요청은 `413`, 없거나 유효하지 않은 ID는 `404`를 반환합니다.
+`KPL_API_TOKEN`을 설정했다면 `POST`, `PUT`, `DELETE` 요청에 `Authorization: Bearer <token>`이 필요합니다. 현재 Controller 인증 정책에서 조회 요청은 공개입니다. 해석한 YAML이 1 MiB를 넘는 경우를 포함하여 유효하지 않은 입력은 `400`입니다. JSON 요청 본문은 escape된 문자를 고려해 `6 * 1 MiB + 64 KiB`까지 허용하며 이 한도를 넘으면 `413`입니다. 알 수 없는 JSON 필드와 후행 JSON 값은 거부합니다. 없거나 유효하지 않은 ID는 `404`, 저장소 오류는 `500`입니다. ID는 소문자 16진수 32자로 구성됩니다.
 
 ```sh
 curl --fail http://localhost:8080/api/v1/scenarios
@@ -47,3 +49,5 @@ JSON
 각 항목은 `<data-dir>/scenarios` 아래의 개별 JSON 파일에 저장됩니다. Compose와 Swarm은 Controller 영구 데이터 볼륨을 `/var/lib/kpl/data`에 마운트하므로 일반적인 서비스 재시작과 `scripts/swarm.sh remove` 후에도 라이브러리를 보존합니다. 시나리오 라이브러리와 실험 결과를 함께 보존하려면 Controller 데이터 디렉터리 전체를 백업하십시오. 라이브러리는 해당 Controller에만 있으며 control node 사이에 복제되지 않습니다.
 
 Controller는 임시 파일과 원자적 파일시스템 연산으로 각 항목을 기록합니다. 목록 또는 항목을 읽을 때 형식이 잘못되거나 예상하지 않은 내용이 있으면 부분적으로 신뢰한 시나리오를 반환하지 않고 오류로 처리합니다.
+
+저장, payload 한도와 검증은 [`internal/controller/scenarios.go`](../internal/controller/scenarios.go), 편집기 사용 흐름은 [`internal/webui/static/app.js`](../internal/webui/static/app.js)에 구현되어 있습니다.

@@ -1,6 +1,8 @@
-# 실험 지표, 반복 실행, 저장 결과
+# 실험 지표와 반복 실행
 
 [English](experiment-metrics.md) | 한국어
+
+이 가이드는 v3가 구현한 계산을 정의합니다. 프로젝트 공통 연구 배경은 [Hub 연구 가이드](https://github.com/k-p2p-lab/hub/blob/master/docs/RESEARCH.kr.md)를 참고하십시오. Grafana, 내보내기, 보존과 삭제 절차는 [모니터링과 결과](monitoring.kr.md)에서 설명합니다.
 
 ## 같은 시나리오 여러 번 실행
 
@@ -28,7 +30,7 @@ API는 `/api/v1/experiments`에 `application/json`으로 다음 본문을 POST�
 
 `publish` phase의 `deliveryWindow`는 0보다 크고 1시간 이하인 Go duration이며 기본값은 `10s`입니다. 실험 전에 지정하고 비교하는 실험에는 같은 값을 사용하십시오.
 
-`t`는 발행자가 로컬 발행 잠금을 획득한 뒤 기록한 실제 애플리케이션 발행 시각이며, 마감은 `d = t + deliveryWindow`입니다. Controller 요청 시각이나 현재 화면의 Peer 수로 대상을 정하지 않습니다.
+`t`는 발행자가 로컬 발행 잠금을 획득한 뒤 payload를 생성하고 인코딩하기 전에 측정한 애플리케이션 시각입니다. Peer는 `Topic.Publish`가 성공한 뒤에만 이 시각의 `publish` 이벤트를 기록합니다. 마감은 `d = t + deliveryWindow`이므로 payload 준비와 로컬 PubSub 처리 시간도 포함합니다. Controller 요청 시각이나 현재 화면의 Peer 수로 대상을 정하지 않습니다.
 
 Peer는 실제 구독 설정을 완료한 뒤 `measurement_start`에 `sessionId`와 정확한 `fields.subscribedTopics`를 기록합니다. 같은 프로세스에서 2초마다 `measurement_checkpoint`를 보내며 정상적인 세션 종료 때 `measurement_stop`을 기록합니다. 이는 계측된 애플리케이션 세션의 증거이며 물리적 uptime을 측정하는 장치가 아닙니다. checkpoint 주기는 수신 마감의 유예 시간이 아닙니다.
 
@@ -50,7 +52,7 @@ Transport 단절, GRAFT/PRUNE, mesh 제거, 오래된 inventory, offline Agent�
 
 ### 기간 완료, 수신, 관측 불명
 
-`d`가 지나지 않은 메시지는 `pending`이며 확정 대상 쌍 집계에서 제외합니다. 기간이 지난 메시지는 해당 수신 세션에서 `d` 이전 또는 같은 시각에 처음 관측된 애플리케이션 수신을 성공으로 처리합니다. 마감 후 수신은 late이며 기한 내 성공은 아닙니다. 발행자 로컬 수신과 늦은 join은 포함하지 않습니다.
+`d`가 지나지 않은 메시지는 `pending`이며 확정 대상 쌍 집계에서 제외합니다. 기간이 지난 메시지는 해당 수신 세션에서 아래 시계 규칙에 따라 마감을 충족하는 가장 이른 유효 애플리케이션 수신을 성공으로 처리합니다. 마감 후 수신은 late이며 기한 내 성공은 아닙니다. 발행자 로컬 수신과 늦은 join은 포함하지 않습니다.
 
 Peer 이벤트에는 원본 `sessionId`, 증가하는 `sequence`, 재시도에도 유지되는 `eventId`가 있습니다. 수신 기록이 없을 때는 `measurement_start`부터 해당 기간을 덮는 세션 증거까지 원본 sequence prefix가 연속인 경우에만 확인된 미도달로 처리합니다. 중간 번호 누락이나 잘못된 시각 순서가 있으면 수신 여부는 **unknown**입니다. 재시도로 간격이 채워질 수 있습니다. 마감 경과는 telemetry 수집 완료를 뜻하지 않으므로 확정 집계도 늦은 배치로 정정될 수 있습니다.
 
@@ -63,6 +65,8 @@ S = R + U + F
 ```
 
 U가 0이면 상·하한이 같습니다. 이는 누락된 관측으로부터 계산한 논리적 범위이며 **통계적 신뢰구간이 아닙니다**. 분모가 0이면 N/A입니다. 비율을 높이려고 unknown을 분모에서 제거하지 않습니다. 가용성 불명은 별개 문제입니다. 이 범위는 확인된 안정 세션에 대한 값이며 미지의 전체 모집단까지 설명하지 않습니다.
+
+`lateDeliveries`는 기한 내 성공이 없는 안정 쌍의 별도 진단값입니다. 해당 쌍은 관측 완전성에 따라 확인된 미도달이나 수신 불명 중 하나에 이미 포함됩니다. `S = R + U + F`에 late를 네 번째 결과로 더하지 마십시오.
 
 확인된 발행 시점 대상 도달률은 이탈과 지속 여부 불명 쌍을 분모에 유지하며 이탈 세션의 기한 내 수신도 분자에 포함합니다. K의 기한 내 성공을 Rk, 수신 여부 불명을 Uk라 하면 표시 범위는 `Rk / K`부터 `(Rk + Uk) / K`까지입니다.
 
@@ -99,15 +103,19 @@ Controller의 기존 `targetNodeIds` 요청 직전 스냅샷은 추가 누락 �
 
 Controller는 단방향 지연 추정이 0이나 수신 마감 경계를 넘을 때 이 범위를 사용합니다. 약간 음수인 추정도 uncertainty 범위 안에서 인과적으로 가능하고 확실히 기한 내라면 수신 성공으로 인정하되, 음수 값은 지연 histogram에서 제외합니다. 범위 전체가 발행 전이면 무효, 전체가 마감 후면 late, 마감을 걸치면 unknown입니다. 주기적 측정은 Controller에 연결된 동안 drift를 줄이지만 요청 중간점 추정과 일시적 단절이 호스트 시계 동기화를 대체하지는 않습니다. 특히 장시간 churn 실험에서는 모든 호스트의 chrony/NTP를 계속 활성화하십시오. 계측된 세션의 연속성이 물리적 연결의 연속성을 보장하지는 않습니다.
 
+이 uncertainty 계산은 발행자와 수신자의 신뢰 시계 metadata를 모두 가진 envelope 수신에 적용합니다. Raw 수신과 미동기화 envelope 수신은 기록된 point timestamp를 사용하며, 구독 대상 판정과 중복의 수신 기간 검사도 point timestamp를 비교합니다. 이 판정은 시계 uncertainty를 대상 집합의 경계까지 전파하지 않습니다. join, stop이나 마감에 가까운 결과를 해석할 때 이 한계를 함께 보고하십시오.
+
 Peer telemetry는 한도가 있는 재시도와 정상 종료 시 drain을 사용합니다. Agent는 큐가 가득 차면 성공 응답 후 배치를 버리는 대신 backpressure를 적용하며 정상 종료 때 Peer 정리를 허용한 뒤 제한 시간 내 최종 drain을 수행합니다. 큐 초과, 종료 유예 소진, 프로세스·Agent·Controller 실패로 관측이 누락될 수 있습니다. sequence는 일부 누락과 확인된 미도달을 구분하지만 데이터를 복구하거나 아예 보이지 않은 세션의 존재를 증명하지 않습니다. `scope: all`은 계측 경로도 훼손할 수 있습니다. 결과와 함께 유실 카운터 및 incomplete/unknown 표시를 보존하십시오.
 
 ## 첫 수신 도달시간
 
-기간이 지났고 안정 대상에 속하며 제때 성공한 원격 쌍만 지연 표본에 포함합니다. 첫 `Subscription.Next` 성공 시각에서 발행자가 로컬 발행 잠금 획득 후 준비한 envelope 시각을 뺍니다. 직렬화, PubSub 처리, 네트워크와 수신 애플리케이션 큐를 포함하고 Controller→Agent 전달 및 로컬 발행 잠금 대기는 제외합니다.
+기간이 지났고 안정 대상에 속하며 제때 성공한 원격 쌍만 지연 표본에 포함합니다. 기한 내 첫 유효 `Subscription.Next` 수신 시각에서 발행자가 로컬 발행 잠금 획득 후 준비한 envelope 시각을 뺍니다. payload 생성, 직렬화, PubSub 처리, 네트워크와 수신 애플리케이션 큐를 포함하고 Controller→Agent 전달 및 로컬 발행 잠금 대기는 제외합니다.
 
 raw에는 애플리케이션 발행 시각이 없으므로 세션 기간 도달률에는 포함하되 지연은 **N/A**입니다. 로컬·후속 수신, 이탈·늦은 join, 지연 미측정은 분포에서 제외합니다. uncertainty 범위로 기한 내 수신을 인정한 경우에도 음수 point estimate는 `invalidLatencySamples`에 기록하고 지연 분포에서 제외합니다.
 
 UI와 `metrics.json`은 산술평균, nearest-rank P95, `latencySamples`를 제공합니다. 미수신이나 unknown은 0ms가 아닙니다. 관측된 기한 내 성공과 안정 구독을 조건으로 한 지연이므로 도달률 범위와 coverage를 반드시 함께 보십시오.
+
+`invalidLatencySamples`는 안정 쌍에서 선택한 기한 내 envelope의 지연 값이 무효이거나, 유효한 기한 내 수신이 없으면서 관측 수신이 시각·세션 순서 검사에 실패한 경우 해당 쌍을 셉니다. 마감을 걸치는 uncertainty 구간도 포함할 수 있으므로 단순히 histogram에서 제외한 음수 표본 수는 아닙니다.
 
 ## 평균 중복 메시지
 
@@ -115,7 +123,7 @@ UI와 `metrics.json`은 산술평균, nearest-rank P95, `latencySamples`를 제�
 
 평균은 안정 대상의 기한 내 성공 쌍에서 같은 수신 기간 안에 관측한 추가 복사본 수를 성공 쌍 수로 나눕니다. 복사본이 없는 성공 쌍은 0으로 포함하고 성공 쌍이 없으면 N/A입니다. 로컬·이탈·늦은 join 수신자 및 기간 밖의 복사본은 전체 이벤트 수에는 남지만 평균에서 제외합니다. 성공 쌍의 추가 복사본이 0, 1, 5개이면 평균은 `6 / 3 = 2`입니다. 중복 telemetry 누락은 이 관측 평균도 낮출 수 있습니다.
 
-envelope 이벤트는 애플리케이션 메시지 ID로 연결합니다. raw는 `pubsub-<원래 메시지 ID의 hex>`를 사용하여 같은 바이트를 발행해도 메시지를 구분합니다. `fields.pubsubMessageId`는 원래 ID를 보존합니다. wire 형식과 PubSub의 발신자+sequence 메시지 ID 계산은 유지하며 telemetry의 원본 sequence는 별도 카운터입니다. 이벤트 ID는 재시도에도 유지하여 Controller가 한 번만 저장·집계합니다.
+envelope 이벤트는 애플리케이션 메시지 ID로 연결합니다. raw는 `pubsub-<hex native message ID>`를 사용하여 같은 바이트를 발행해도 메시지를 구분합니다. `fields.pubsubMessageId`는 원래 ID의 16진수 인코딩을 담습니다. wire 형식과 PubSub의 발신자+sequence 메시지 ID 계산은 유지하며 telemetry의 원본 sequence는 별도 카운터입니다. 이벤트 ID는 재시도에도 유지하여 Controller가 한 번만 저장·집계합니다.
 
 ## GossipSub 제어 트래픽
 
@@ -131,7 +139,7 @@ PRUNE peer-exchange record는 별도로 집계합니다. IHAVE, GRAFT, PRUNE에�
 
 `send`는 로컬 outbound queue가 RPC를 수락했다는 뜻이며 stream write나 원격 수신을 증명하지 않습니다. `recv`는 이후 router admission과 flood limit 판단 전의 inbound 관측입니다. 두 방향을 더하면 같은 전송의 양 끝 관측을 중복해 셀 수 있으므로 고유 wire RPC 총수로 해석하면 안 됩니다. `drop`은 queue 포화나 oversized RPC 같은 로컬 송신 전 폐기이며 `netem` 패킷 손실이 아닙니다. 기존의 단순 `graft`와 `prune` 이벤트는 로컬 mesh 전이를 뜻하므로 wire `send_graft`/`recv_graft`, `send_prune`/`recv_prune`와 분리합니다.
 
-이 방식은 RPC 발생 수와 논리 ID 참조 수를 나누던 v2의 유용한 기준을 유지하면서 혼합 RPC의 `if/else-if` 누락을 고치고 IDONTWANT와 drop을 추가합니다. IDONTWANT 발생에는 GossipSub v1.2 지원과 메시지 크기도 영향을 줍니다. 고정된 기본값에서는 보통 data가 1,024바이트 이상일 때 생성되므로 이를 시험하려면 payload를 키우거나 `gossipsub.params.iDontWantMessageThreshold`를 낮추십시오.
+[v2 재현 가이드](v2-reproduction.kr.md)에서 제어 trace의 호환성 차이를 설명합니다. IDONTWANT 발생에는 GossipSub v1.2 지원과 메시지 크기도 영향을 줍니다. 고정된 기본값에서는 보통 data가 1,024바이트 이상일 때 생성되므로 이를 시험하려면 payload를 키우거나 `gossipsub.params.iDontWantMessageThreshold`를 낮추십시오.
 
 ## 집계 범위, 내보내기, 모니터링
 
@@ -148,22 +156,17 @@ PRUNE peer-exchange record는 별도로 집계합니다. IHAVE, GRAFT, PRUNE에�
 
 `dispatch-cohort-v1`은 Controller 요청 직전의 ready/online 구독자 ID를 고정하고 이후 이탈을 분모에 유지했으며 메시지별 마감이 없었습니다. 더 오래된 데이터에는 대상 숫자만 있고 수신자 ID가 없을 수 있습니다. 모두 **과거 정의**이며 지속 구독 세션 측정으로 재해석하지 않습니다. 이전 `kpl_delivery_*`/`kpl_propagation_latency_seconds`를 새 기간 지표와 합산하지 마십시오. 원시 이벤트는 보존하고 혼합 로그의 legacy/unscoped 발행 수는 제외된 기록을 표시합니다. 다운로드로 원래 없던 세션 증거를 만들 수 없습니다. 새 Grafana 세션 패널은 과거 결과만 선택하면 표시할 값이 없습니다.
 
-## 토폴로지와 결과 삭제
+## 구현과 관련 가이드
 
-Agent 번호는 **Agent status**의 **No.** 열과 연결됩니다. 브라우저 localStorage에 ID↔번호를 유지하며 다른 브라우저는 다른 번호를 배정할 수 있습니다. 실제 ID와 hostname은 표·툴팁에서 확인합니다. `stopping`·`stopped` Peer와 연결 edge는 토폴로지에서 제외하고 failed Peer는 문제 상태로 표시합니다. inventory와 이력은 유지합니다.
+지속 구독 기간, 증거 규칙, 쌍 가중, unknown 범위와 성공당 중복 계산은 v3의 명시적 설계 선택입니다. 관련 문헌과 개념 비교는 [Hub 연구 가이드](https://github.com/k-p2p-lab/hub/blob/master/docs/RESEARCH.kr.md)에서 관리합니다. 이 수식은 현재 구현을 설명하며 v2 호환성과는 독립적입니다.
 
-[토폴로지 안내](topology.kr.md)에서 Kademlia/GossipSub/Transport 체크박스, topic 필터, 확대·이동·선택과 상태 신선도를 확인하십시오. 화면 조작은 프로토콜 동작이나 측정 대상 집합을 변경하지 않습니다.
+| 구현 | 담당 내용 |
+|---|---|
+| [Peer 발행과 연결](../internal/peer/publish.go) | Envelope/raw ID, payload 준비, 수신 지연과 중복 연결 |
+| [Peer telemetry](../internal/peer/telemetry.go)와 [시계 표본](../internal/peer/clock.go) | 세션 생명주기, 원본 sequence, 재시도와 시계 metadata |
+| [세션 기간 집계](../internal/controller/run_metrics_window.go) | 대상 집합, 수신 범위, coverage, 지연과 중복 요약 |
+| [기간 지표 회귀 사례](../internal/controller/run_metrics_window_test.go) | 마감 경계, 증거 누락, churn과 순서가 뒤바뀐 telemetry 사례 |
+| [Prometheus collector](../internal/controller/run_metrics_prometheus.go) | Run gauge와 재구성한 지연 histogram |
+| [결과 내보내기](../internal/controller/results.go) | 다운로드의 이벤트 로그 경계와 지표 재계산 |
 
-**Saved results → Delete**에서 실험 이름·ID를 확인하고 삭제를 확정하십시오. 해당 run의 시나리오·메타데이터·이벤트 로그와 실시간 집계 인덱스를 영구 삭제합니다. Peer 종료나 이미 수집된 Prometheus/Grafana 기록 삭제는 수행하지 않습니다. 실행·대기 중 run, 진행 중 배치 구성원, ZIP 다운로드 중 결과는 보호합니다. 과거 interrupted 결과를 지우는 것은 Peer 정리가 아닙니다.
-
-API는 `DELETE /api/v1/results/{id}`이며 204는 삭제 완료, 404는 없음, 409는 사용 중, 401은 설정된 token이 없거나 잘못된 경우입니다. 지연 telemetry가 결과를 다시 만들지 않도록 작은 삭제 표식을 데이터 디렉터리에 보존합니다. 마이그레이션·백업 시 이 표식도 함께 보존하십시오.
-
-## 참고 문헌과 설계 선택
-
-[HyParView 원문 §2.5·§5.2, 인쇄 p.5·9–10](https://www.dpss.inesc-id.pt/~ler/reports/dsn07-leitao.pdf)은 활성 노드 대비 신뢰성을 정의하고 장애 유발 후 전파를 시험합니다. 이는 생존 집단을 평가하는 질문의 예이며 실패한 이탈자만 사후에 제외하는 규칙의 근거가 아닙니다.
-
-[Pongthawornkamol 외 ICAC 2013, §2.2·§3.2.2–3, 인쇄 p.249·251](https://www.usenix.org/system/files/conference/icac13/icac13_pongthawornkamol.pdf)은 관심 이벤트의 마감 내 전달로 신뢰성을 정의하고 이벤트 발생률로 가중합니다. 해당 broker·link 장애 모델은 수신 세션 churn과 다릅니다.
-
-지속 구독 기간, 세션 증거, 쌍 가중, unknown 범위, 성공당 중복 규칙은 위 논문이 강제하는 표준이 아닌 KPL의 명시적 설계 선택입니다. 고정 기간 전체의 지속을 조건으로 하면 오래 남는 세션을 선택하게 되므로 발행 시점 대상 결과와 coverage를 함께 제공합니다. 이 정의는 v2 재현과 독립적입니다.
-
-[공식 PubSub 메시지 식별 명세](https://github.com/libp2p/specs/blob/master/pubsub/README.md#message-identification)는 원래 메시지 ID를 설명합니다. KPL은 해당 프로토콜 동작을 바꾸지 않고 계측을 연결합니다.
+그래프 레이어, Agent 번호와 화면 조작은 [토폴로지 가이드](topology.kr.md)에서 관리합니다. 화면 변경은 측정 대상 집합을 바꾸지 않습니다. [모니터링과 결과](monitoring.kr.md)에서 저장 파일의 보존·삭제를 관리하며, 결과 삭제는 해당 지표 인덱스를 해제하지만 Peer를 종료하거나 Prometheus 이력을 삭제하지 않습니다. 다운로드·삭제 endpoint는 [REST API 가이드](api.kr.md)에서 정의합니다.

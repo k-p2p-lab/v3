@@ -1,8 +1,8 @@
-English | [Korean](monitoring.kr.md)
-
 # Analyze experiments with Prometheus and Grafana
 
-Run `docker compose up -d --build` to start the Controller, two Agents, Prometheus, and Grafana together. The data source and **KP2PLab Experiment Analysis** dashboard are provisioned automatically.
+English | [Korean](monitoring.kr.md)
+
+Complete the [Linux deployment preparation](linux-deployment.md), including `.env` configuration and the Linux preflight, then start the supplied Compose stack. It runs the Controller, two Agents on the same host, Prometheus, and Grafana together. The data source and **KP2PLab Experiment Analysis** dashboard are provisioned automatically. Multi-host installations use the [Swarm deployment guide](swarm.md).
 
 The dashboard is written in English, and Compose/Swarm set `GF_USERS_DEFAULT_LANGUAGE=en-US` for the Grafana UI; user or organization preferences can override that UI default. See [Grafana language preferences](https://grafana.com/docs/grafana/latest/administration/organization-preferences/#change-grafana-language).
 
@@ -17,11 +17,11 @@ The local SQLite database uses WAL mode. Both the database and WAL files are ret
 | Prometheus queries and target status | http://localhost:9090 |
 | Controller metrics endpoint | http://localhost:8080/metrics |
 
-Grafana allows anonymous, read-only access for local analysis. Administrator credentials come from `GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD` in `.env`. In this workspace, a random administrator password was generated and saved in the Git-ignored `.env` file. For a new installation, configure these values using `.env.example`. Without `.env`, the initial administrator credentials are Grafana's default `admin`/`admin`. Changing environment variables alone does not update the password in an existing Grafana data volume.
+Compose enables anonymous, read-only Grafana access by default; the supplied Swarm stack disables anonymous access. Compose takes administrator credentials from `GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD` in `.env` or the shell environment, falling back to `admin`/`admin` if neither is set. Configure a password from [`.env.example`](../.env.example) before first startup. Swarm requires `GRAFANA_ADMIN_PASSWORD`; its setup helper stores credentials in the manager's configuration. Changing environment variables alone does not update the password in an existing Grafana data volume.
 
 Docker Compose publishes the Prometheus and Grafana ports only on `127.0.0.1`; Swarm publishes them on the control node. Swarm also publishes each Agent's dedicated metrics listener on its own node at `KPL_AGENT_METRICS_PORT` (default `9091`). Set `PROMETHEUS_PORT` and `GRAFANA_PORT` in Compose `.env`, or use `scripts/swarm.sh configure` for Swarm ports. Set `GRAFANA_ANONYMOUS_ENABLED=false` to disable anonymous viewing in Compose.
 
-The Dashboard header links to Prometheus and Grafana in new tabs. It combines the current Dashboard host with the configured published ports, so the links follow either an SSH tunnel or the Swarm control-node address used to open the Dashboard.
+The Dashboard header links to Prometheus and Grafana in new tabs. It preserves the current Dashboard scheme and host and substitutes the configured published ports. Direct access and SSH tunnels work when those browser-facing ports match the configured values. If a proxy changes the scheme/path or local forwarding uses different ports, open the actual monitoring addresses separately.
 
 ## Run and analyze an experiment
 
@@ -56,7 +56,7 @@ The first HEAD after Controller startup or a source/state change must read the c
 
 After a restart, a saved run that still says `running` or `queued` is displayed as `interrupted`; its original metadata is preserved in the ZIP. This is a display status, not evidence that its Peers have stopped. Saved results do not restore live experiment state, resume execution, or replay live counters. ZIP metrics are rebuilt from the retained log. An unreadable metadata file is displayed as `unreadable`; inspect the Controller logs and stored files before retrying.
 
-**Saved results → Delete** permanently deletes the selected run's scenario, metadata, and events after confirmation. Running/queued experiments, members of an active batch, and results being downloaded are protected. The deletion API is `DELETE /api/v1/results/{id}` with the configured bearer token. Previously scraped Prometheus/Grafana history remains. Deletion markers prevent late telemetry from recreating a deleted result. Reconstructing ZIP metrics uses memory proportional to distinct event IDs and message/receiver pairs; the raw file copy itself is streamed.
+**Saved results → Delete** permanently deletes the selected run's scenario, metadata, events, and live metric index after confirmation. Running/queued experiments, members of an active batch, and results being downloaded are protected. The deletion API is `DELETE /api/v1/results/{id}` with the configured bearer token. It does not stop Peers; previously scraped Prometheus/Grafana history remains. Deletion markers prevent late telemetry from recreating a deleted result; preserve them with Controller data in backups and migrations. Reconstructing ZIP metrics uses memory proportional to distinct event IDs and message/receiver pairs; the raw file copy itself is streamed. See the [REST API guide](api.md) for status codes and download headers.
 
 The existing public GET policy also applies to the saved-result list and downloads. API clients can use:
 
@@ -75,13 +75,13 @@ Exports contain collected telemetry, including subscription-session start/checkp
 | Metric | Meaning |
 |---|---|
 | `kpl_events_total` | Cumulative events received by the Controller, labeled by `run_id`, `agent_id`, `event_type`, and `topic` |
-| `kpl_message_bytes_total` | Published/delivered PubSub data bytes, excluding libp2p framing and TCP/IP headers |
+| `kpl_message_bytes_total` | Sum of `fields.wireBytes` in publish/deliver events: PubSub data including envelope JSON/base64 when used, excluding libp2p framing and TCP/IP headers |
 | `kpl_gossipsub_control_rpcs_total` | RPC envelopes containing each GossipSub control type, separated by `send`, `recv`, and local pre-send `drop` |
 | `kpl_gossipsub_control_entries_total` | Repeated protobuf control entries carried in those RPCs |
 | `kpl_gossipsub_control_message_ids_total` | Non-unique message-ID reference occurrences in IHAVE, IWANT, and IDONTWANT entries |
 | `kpl_gossipsub_control_peer_exchange_records_total` | Peer-exchange records carried by PRUNE entries |
 | `kpl_window_stable_pairs`, `kpl_window_reached_pairs` | Mature message/receiver-session pairs proven subscribed for the whole delivery window, and their on-time successes; labeled by `run_id` |
-| `kpl_window_unknown_pairs`, `kpl_window_missed_pairs`, `kpl_window_late_pairs` | Unknown receipt, confirmed miss, and late-receipt counts among stable pairs |
+| `kpl_window_unknown_pairs`, `kpl_window_missed_pairs`, `kpl_window_late_pairs` | Unknown receipt and confirmed miss among stable pairs; late counts overlap one of those outcomes when no on-time receipt exists |
 | `kpl_window_delivery_ratio` (`bound`: `lower` / `upper`) | Logical bounds on stable conditional delivery, absent with no stable pairs; not confidence intervals |
 | `kpl_window_initial_pairs`, `kpl_window_initial_reached_pairs`, `kpl_window_initial_unknown_pairs` | Known starting-cohort pairs, on-time successes including departed sessions, and unknown receipts |
 | `kpl_window_initial_delivery_ratio` (`bound`: `lower` / `upper`) | Logical delivery bounds within the known starting cohort; absent only when that cohort is empty |
@@ -111,7 +111,7 @@ For current relationships, the Dashboard's [interactive topology](topology.md) u
 
 Grafana session panels use only the Run filter and aggregate receiver-pair counts, not averages of percentages. Bounds describe observed cohorts; they do not establish an unseen population. Starting-cohort delivery and stable coverage remain available despite publication-time availability warnings or `measurementIncomplete`; they are N/A only when the selected runs contain no known starting pair. For each aggregation, known starting = stable + departed + continuity-unknown. The legacy-publications panel identifies historical data excluded from these results. New panels use `kpl_window_*` only; historical `kpl_delivery_*` and `kpl_propagation_latency_seconds` keep their old meanings and must not be combined.
 
-Overall `deliver` counts include local delivery and cannot be divided by publication counts to obtain reachability. TCP retransmissions can turn packet loss into delay rather than message loss. See the [precise definitions, equations, and sources](experiment-metrics.md). Late batches can correct window gauges and histogram buckets; query them directly, not with `rate`/`increase`. Grafana latency shows cumulative whole-run quantiles, not quantiles restricted to the selected time range.
+Overall `deliver` counts include local delivery and cannot be divided by publication counts to obtain reachability. TCP retransmissions can turn packet loss into delay rather than message loss. See the [metric definitions and formulas](experiment-metrics.md). Late batches can correct window gauges and histogram buckets; query them directly, not with `rate`/`increase`. Grafana latency shows cumulative whole-run quantiles, not quantiles restricted to the selected time range.
 
 Cumulative counters are independent of the web interface's 300-event recent buffer. They reset when the Controller process restarts, and historical `events.jsonl` files are not replayed automatically. Time series already stored in Prometheus remain available, and `rate`/`increase` handle observed counter resets. They cannot recover events that disappeared before a scrape or telemetry that failed to arrive. Because `increase` estimates interval growth from scrape samples, it does not always exactly match integer cumulative event counts.
 
@@ -119,21 +119,22 @@ Raw deliveries contribute to delivery counts and bytes but not to the latency hi
 
 ## Execution validation
 
-The historical runs below predate session-window measurement and included local latency samples. They validate the previous event-count implementation, not the new conditional delivery ratio or latency distribution. Compare new runs using the same `session-window-v1` definition and delivery window.
+Validate a new run on Linux and retain its ZIP, code revision or image digest, and Prometheus time range. The repository does not include the original ZIPs behind earlier monitoring run examples, so those historical counts are not an auditable baseline for the current session-window implementation.
 
-On 2026-09-04, `examples/monitoring.yaml` was executed and the following results were compared with the original `events.jsonl`. The run ID was `run-20260904T024349Z-345a`. All test Peer containers were removed after the experiment finished.
+For [`examples/monitoring.yaml`](../examples/monitoring.yaml), check:
 
-| Check | Result |
+| Check | Source-based expectation |
 |---|---|
-| Publications / deliveries | 66 / 264, matching Prometheus and the original log |
-| Cumulative events | 583 retained; the web recent-event buffer held 300 |
-| Latency samples | Included only 240 envelope deliveries; excluded 24 raw deliveries |
-| Worker network configuration | Delay 50 ms, jitter 5 ms, loss 1% |
-| Telemetry queue drops | 0 |
+| Successful publications | 60 envelope + 6 raw = 66 if every scheduled publish succeeds and its telemetry is collected |
+| Worker network configuration | Three workers configured with 50 ms delay, 5 ms jitter, and 1% loss |
+| Delivery denominator | Reconstructed from same-run/topic session evidence for each publication's window; not the overall `deliver` count |
+| Latency samples | Only stable, on-time remote envelope pairs; raw and publisher-local receipts are excluded |
+| Observation quality | Retain pending, unknown, incomplete, and reported telemetry-drop values; zero reported drops alone does not prove a complete log |
+| Cleanup | The final `stop-all` requests Peer removal; verify Agent status and remaining Peer containers on each Linux host |
 
-These figures describe that specific validation run. Duplicate deliveries, mesh event counts, and measured latency vary with the execution environment.
+Compare `metrics.json` with its exact `events.jsonl` prefix and `export.json.exportedAt`. Counter comparisons also require the same Controller lifetime and collection boundary. Heartbeats initialize zero baselines for `add_peer` and `remove_peer`, but an event before the first scrape can still be absent from an `increase` estimate. Delivery, duplicate, mesh-event, and latency totals depend on execution and observation; they are not fixed acceptance counts.
 
-Heartbeat processing also initializes zero baselines for `add_peer` and `remove_peer`. This reduces the risk of missing the initial increase when a series is first created by a Peer departure event. A subsequent run after this change (`run-20260904T025651Z-ee92`) again recorded 66 publications, 264 deliveries, and 240 latency samples; all three Peer departures were also reflected in the interval increase. In very short experiments, events occurring before the first scrape can still be missing from the estimated increase. Compare cumulative counters or original logs when exact counts are required.
+The metric implementation and regression cases are linked from [experiment metrics](experiment-metrics.md#implementation-and-related-guides). Use the [development guide](development.md) for Linux validation commands.
 
 ## Retention and operation
 

@@ -4,9 +4,42 @@ English | [Korean](architecture.kr.md)
 
 This document maps the project-wide concepts in the [K-P2PLab Hub](https://github.com/k-p2p-lab/hub) to the current v3 implementation. It describes the executable components, Docker placement, communication paths, and isolation guarantees implemented in this repository. Project goals, version-independent design principles, research context, and publications belong in the Hub.
 
-![K-P2PLab architecture mapped to v3](images/architecture-v3.png)
+```mermaid
+flowchart TB
+    operator["Operator browser or REST client"]
+    subgraph controllerContainer["Controller container"]
+        dashboard["Embedded Dashboard assets"]
+        controller["Controller HTTP API and scenario scheduler"]
+    end
+    subgraph agentHost["Each Agent host: node-local Docker Engine"]
+        agent["Agent container"]
+        docker["Docker socket"]
+        peer["Standalone Peer containers: libp2p and optional tc"]
+    end
+    remote["Peer containers on other Agent hosts"]
+    prometheus["Prometheus container"]
+    grafana["Grafana container"]
+    records[("Controller data: scenarios and run records")]
+    series[("Prometheus time-series volume")]
+    operator -->|"load UI"| dashboard
+    operator -->|"REST requests and SSE subscription"| controller
+    controller -->|"create, stop, publish"| agent
+    agent -->|"register, heartbeat, event batches"| controller
+    agent -->|"create and remove containers"| docker
+    docker -->|"start and stop"| peer
+    agent -->|"publish HTTP request"| peer
+    peer -->|"status and telemetry HTTP requests"| agent
+    peer -->|"bootstrap, discovery, clock HTTP requests"| controller
+    peer <-->|"direct libp2p TCP"| remote
+    controller -->|"persist"| records
+    prometheus -->|"scrape metrics and discover Agent targets"| controller
+    prometheus -->|"scrape metrics"| agent
+    prometheus -->|"retain samples"| series
+    grafana -->|"query"| prometheus
+    operator -->|"view monitoring"| grafana
+```
 
-*This diagram describes the v3 reference implementation at the component level. Its boxes denote logical roles: the Dashboard is embedded in the Controller rather than deployed as a separate container, and the experimental Peer network also carries the Peer-facing control paths described below.*
+Arrows show request or operation direction, with responses omitted; the libp2p link is bidirectional. Boxes show executable placement and storage, not separate Docker networks. The network table below defines actual attachments. In Compose, both example Agents and all Peers share one host; the other-host Peer box applies to Swarm.
 
 ## Components
 
@@ -29,7 +62,7 @@ The Agent CLI also has a `process` runtime for development. It starts a Peer as 
 2. The Controller calls the selected Agent's private HTTP API. The Agent creates one Peer container on its local Docker daemon, copies in that Peer's generated configuration, starts it, and reports lifecycle state to the Controller.
 3. The Peer asks the Controller for bootstrap peers, topic-discovery candidates, and Controller clock samples. Its Kademlia and GossipSub traffic then travels directly between Peer container addresses. A scheduled publish follows `Controller -> Agent -> target Peer` before the Peer sends the P2P message.
 4. Each Peer sends status and batched telemetry to its Agent. The Agent retains each source's session and sequence identity, retries failed batches in order, and sends periodic heartbeats to the Controller; events from different Peers can interleave. The Controller builds the live topology, run metrics, event stream, and persisted result files from these reports.
-5. Prometheus scrapes the Controller and each online registered Agent that advertises a valid metrics URL. Grafana queries Prometheus, while the embedded Dashboard reads the Controller API and live stream. Saved ZIP results come from Controller persistence and do not contain the Prometheus time-series database.
+5. Prometheus scrapes the Controller and Agents: Compose uses static Agent service targets, while Swarm discovers online registered Agents with valid advertised metrics URLs. Grafana queries Prometheus, while the embedded Dashboard reads the Controller API and live stream. Saved ZIP results come from Controller persistence and do not contain the Prometheus time-series database.
 
 Control is centralized, but experimental P2P messages do not pass through the Controller or Agent.
 
@@ -70,3 +103,13 @@ Metrics and topology are observations of received reports. A stale or unreachabl
 ## Supported deployment boundary
 
 The production target is rootful Docker Engine on Linux. Per-Peer network conditions depend on Linux network namespaces, `tc`, `NET_ADMIN`, and the required qdisc modules. Single-host setup is covered by the [Linux deployment guide](linux-deployment.md); multi-server placement, overlay requirements, Agent metrics reachability, and cleanup are covered by the [Swarm deployment guide](swarm.md).
+
+## Implementation map
+
+| Behavior | Source of truth |
+|---|---|
+| Runtime modes and deployment placement | [`cmd/kpl/main.go`](../cmd/kpl/main.go), [`compose.yaml`](../compose.yaml), [`stack.swarm.yaml`](../stack.swarm.yaml) |
+| API, scenario scheduling, admission, run cleanup | [`internal/controller/api.go`](../internal/controller/api.go), [`internal/controller/runner.go`](../internal/controller/runner.go), [`internal/controller/repeat.go`](../internal/controller/repeat.go) |
+| Agent lifecycle and Docker isolation | [`internal/agent/agent.go`](../internal/agent/agent.go), [`internal/agent/docker.go`](../internal/agent/docker.go) |
+| Peer protocols, transport discovery, traffic control | [`internal/peer/peer.go`](../internal/peer/peer.go), [`internal/peer/discovery.go`](../internal/peer/discovery.go), [`internal/netem/netem.go`](../internal/netem/netem.go) |
+| Dashboard and retained records | [`internal/webui/static`](../internal/webui/static), [`internal/controller/scenarios.go`](../internal/controller/scenarios.go), [`internal/controller/results.go`](../internal/controller/results.go) |

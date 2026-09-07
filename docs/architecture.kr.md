@@ -4,9 +4,42 @@
 
 이 문서는 [K-P2PLab Hub](https://github.com/k-p2p-lab/hub)의 프로젝트 공통 개념을 현재 v3 구현에 대응시킵니다. 이 저장소에 구현된 실행 컴포넌트, Docker 배치, 통신 경로와 격리 보장을 설명합니다. 프로젝트 목표, 버전에 독립적인 설계 원칙, 연구 배경과 출판물은 Hub에서 관리합니다.
 
-![v3 구현에 대응시킨 K-P2PLab 아키텍처](images/architecture-v3.png)
+```mermaid
+flowchart TB
+    operator["운영자 브라우저 또는 REST client"]
+    subgraph controllerContainer["Controller 컨테이너"]
+        dashboard["내장 Dashboard 정적 파일"]
+        controller["Controller HTTP API와 scenario scheduler"]
+    end
+    subgraph agentHost["각 Agent 호스트: 노드 로컬 Docker Engine"]
+        agent["Agent 컨테이너"]
+        docker["Docker socket"]
+        peer["Standalone Peer 컨테이너: libp2p와 선택적 tc"]
+    end
+    remote["다른 Agent 호스트의 Peer 컨테이너"]
+    prometheus["Prometheus 컨테이너"]
+    grafana["Grafana 컨테이너"]
+    records[("Controller 데이터: 시나리오와 실행 기록")]
+    series[("Prometheus 시계열 볼륨")]
+    operator -->|"UI 불러오기"| dashboard
+    operator -->|"REST 요청과 SSE 구독"| controller
+    controller -->|"생성, 종료, publish"| agent
+    agent -->|"등록, heartbeat, event batch"| controller
+    agent -->|"컨테이너 생성과 삭제"| docker
+    docker -->|"시작과 종료"| peer
+    agent -->|"publish HTTP 요청"| peer
+    peer -->|"상태와 telemetry HTTP 요청"| agent
+    peer -->|"bootstrap, discovery, clock HTTP 요청"| controller
+    peer <-->|"직접 libp2p TCP"| remote
+    controller -->|"보존"| records
+    prometheus -->|"metric scrape와 Agent target 조회"| controller
+    prometheus -->|"metric scrape"| agent
+    prometheus -->|"sample 보존"| series
+    grafana -->|"조회"| prometheus
+    operator -->|"모니터링 보기"| grafana
+```
 
-*이 그림은 v3 참조 구현을 컴포넌트 수준에서 설명합니다. 각 상자는 논리적인 역할을 나타냅니다. Dashboard는 별도 컨테이너가 아니라 Controller에 내장되어 있으며, 실험용 Peer 네트워크는 아래에서 설명하는 Peer 대상 제어 경로도 함께 전달합니다.*
+화살표는 요청 또는 명령 방향이며 응답은 생략했습니다. libp2p 연결은 양방향입니다. 상자는 실행 배치와 저장소를 나타내며 별도의 Docker 네트워크를 뜻하지 않습니다. 실제 연결 관계는 아래 네트워크 표에서 정의합니다. Compose에서는 예제 Agent 두 개와 모든 Peer가 하나의 호스트를 공유하며, 다른 호스트의 Peer 상자는 Swarm에 해당합니다.
 
 ## 컴포넌트
 
@@ -29,7 +62,7 @@ Agent CLI에는 개발용 `process` runtime도 있습니다. 이 runtime은 Agen
 2. Controller가 선택한 Agent의 비공개 HTTP API를 호출합니다. Agent는 로컬 Docker daemon에 Peer 컨테이너 하나를 만들고, 해당 Peer용으로 생성한 설정을 복사해 시작한 뒤 생명주기 상태를 Controller에 보고합니다.
 3. Peer는 Controller에서 bootstrap Peer, topic discovery 후보와 Controller clock sample을 조회합니다. 이후 Kademlia와 GossipSub 트래픽은 Peer 컨테이너 주소 사이에서 직접 이동합니다. 예약된 publish는 Peer가 P2P 메시지를 보내기 전에 `Controller -> Agent -> 대상 Peer` 경로를 거칩니다.
 4. 각 Peer는 상태와 batch telemetry를 자신의 Agent에 보냅니다. Agent는 각 source의 session 및 sequence identity를 유지하고 실패한 batch를 순서대로 재시도하며 주기적인 heartbeat를 Controller에 보냅니다. 서로 다른 Peer의 event는 섞일 수 있습니다. Controller는 이 보고를 바탕으로 실시간 토폴로지, 실행 metric, event stream과 보존 결과 파일을 만듭니다.
-5. Prometheus는 Controller와, 온라인으로 등록되어 유효한 metrics URL을 알린 각 Agent를 scrape합니다. Grafana는 Prometheus를 조회하고, 내장 Dashboard는 Controller API와 live stream을 읽습니다. 저장 결과 ZIP은 Controller 보존 데이터에서 생성되며 Prometheus 시계열 데이터베이스를 포함하지 않습니다.
+5. Prometheus는 Controller와 Agent를 scrape합니다. Compose는 고정 Agent service target을 사용하고 Swarm은 온라인으로 등록되어 유효한 metrics URL을 알린 Agent를 조회합니다. Grafana는 Prometheus를 조회하고, 내장 Dashboard는 Controller API와 live stream을 읽습니다. 저장 결과 ZIP은 Controller 보존 데이터에서 생성되며 Prometheus 시계열 데이터베이스를 포함하지 않습니다.
 
 제어는 중앙화되어 있지만 실험 P2P 메시지는 Controller나 Agent를 경유하지 않습니다.
 
@@ -70,3 +103,13 @@ Metric과 토폴로지는 수신된 보고를 바탕으로 한 관측 결과입�
 ## 지원 배포 경계
 
 운영 대상은 Linux의 rootful Docker Engine입니다. Peer별 네트워크 조건은 Linux network namespace, `tc`, `NET_ADMIN`과 필요한 qdisc module에 의존합니다. 단일 호스트 구성은 [Linux 배포 가이드](linux-deployment.kr.md), 다중 서버 배치와 overlay 요구사항, Agent metric 접근 및 cleanup은 [Swarm 배포 가이드](swarm.kr.md)를 참고하십시오.
+
+## 구현 대응표
+
+| 동작 | 구현 근거 |
+|---|---|
+| Runtime 모드와 배포 배치 | [`cmd/kpl/main.go`](../cmd/kpl/main.go), [`compose.yaml`](../compose.yaml), [`stack.swarm.yaml`](../stack.swarm.yaml) |
+| API, scenario scheduling, admission, run cleanup | [`internal/controller/api.go`](../internal/controller/api.go), [`internal/controller/runner.go`](../internal/controller/runner.go), [`internal/controller/repeat.go`](../internal/controller/repeat.go) |
+| Agent lifecycle과 Docker 격리 | [`internal/agent/agent.go`](../internal/agent/agent.go), [`internal/agent/docker.go`](../internal/agent/docker.go) |
+| Peer 프로토콜, transport discovery, traffic control | [`internal/peer/peer.go`](../internal/peer/peer.go), [`internal/peer/discovery.go`](../internal/peer/discovery.go), [`internal/netem/netem.go`](../internal/netem/netem.go) |
+| Dashboard와 보존 기록 | [`internal/webui/static`](../internal/webui/static), [`internal/controller/scenarios.go`](../internal/controller/scenarios.go), [`internal/controller/results.go`](../internal/controller/results.go) |

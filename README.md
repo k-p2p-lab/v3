@@ -4,13 +4,14 @@ English | [Korean](README.kr.md)
 
 [K-P2PLab Hub](https://github.com/k-p2p-lab/hub) contains the project-wide concepts and research context; this repository owns the runnable v3 implementation, deployment procedures, configuration, and version-specific behavior.
 
-K-P2PLab v3 runs reproducible libp2p Kademlia and PubSub experiments across one or more Linux hosts. A Controller schedules scenarios, one Agent manages each host, and every Peer runs in its own Docker container and network namespace. The web Dashboard and the bundled Prometheus/Grafana stack expose topology, churn, propagation, and saved results.
+K-P2PLab v3 runs configurable libp2p Kademlia and PubSub experiments across one or more Linux hosts. The Controller schedules scenarios and serves the web Dashboard; Agents create and manage Peer containers through the local Docker daemon. The supplied Compose deployment starts two Agents on one host, while Swarm starts one Agent per selected host. In both supplied deployments, each Peer has its own container and network namespace. Prometheus/Grafana expose collected telemetry, and the Controller retains downloadable run results.
 
 English is the default language for code, the UI, and documentation. Korean documentation is maintained in matching `.kr.md` files.
 
 ## Core features
 
-- Version 2 YAML scenarios with joins, leaves, readiness barriers, publishing, repeated phases, background jobs, and seeded distributions
+- Version 1 and 2 YAML scenarios with joins, leaves, readiness barriers, publishing, repeated phases, background jobs, and seeded distributions
+- Kademlia configuration and selectable GossipSub, FloodSub, and RandomSub routers
 - Isolated Peer containers with per-Peer delay, jitter, loss, duplication, corruption, reordering, and bandwidth controls
 - Single-host Docker Compose and multi-server Docker Swarm deployment with capacity-aware Peer placement
 - Live Kademlia, GossipSub GRAFT, and transport topology with Agent sectors and topic filters
@@ -26,6 +27,8 @@ English is the default language for code, the UI, and documentation. Korean docu
 
 See the [Linux deployment guide](docs/linux-deployment.md) for permissions, remote access, storage, and safe shutdown.
 
+The [development process runtime](docs/development.md) runs Peers as child processes and rejects Peer network conditions; it does not provide Docker namespace isolation. A fixed scenario seed repeats distribution inputs, but does not make execution timing, generated payloads, Peer identities, or protocol outcomes deterministic.
+
 ## Local quick start
 
 ```sh
@@ -37,6 +40,8 @@ docker compose up -d --no-build
 ```
 
 Open the [Dashboard](http://localhost:8080), [Grafana](http://localhost:3000/d/kpl-experiments), or [Prometheus](http://localhost:9090). Run the default scenario from the Dashboard. Stop cleanly with `make stop`.
+
+For an explicit monitoring example, run [`examples/monitoring.yaml`](examples/monitoring.yaml). Follow [monitoring and results](docs/monitoring.md) to select the run in Grafana and download its event log and derived metrics. Saved run files remain downloadable after Controller restarts; live execution and counters are not restored from those files.
 
 ## Swarm quick start
 
@@ -55,6 +60,8 @@ sh scripts/swarm.sh scenario
 Use `--all` instead of `--workers` when the manager must also run an Agent. Open the Controller URL printed by `access`, paste the scenario printed by `scenario`, and use the API token printed by `credentials`. `access` also lists the metrics URL on every selected Agent node. Allow TCP `KPL_AGENT_METRICS_PORT` (default `9091`) from the control node and, when operators open those links directly, from their trusted management network. The helper resolves and pins the current image digest during deployment, so tag updates do not require manual SHA edits. Read the [complete Swarm workflow](docs/swarm.md) before operating or removing a production cluster.
 
 ## Documentation
+
+Start with the [Hub](https://github.com/k-p2p-lab/hub) for objectives, research, design principles, and conceptual architecture. The guides below describe the current v3 implementation and its limits.
 
 | Guide | Contents |
 |---|---|

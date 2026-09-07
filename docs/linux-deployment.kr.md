@@ -4,6 +4,8 @@
 
 최종 실행 환경은 Linux Docker Engine입니다. Windows는 개발 호스트로 사용할 수 있지만 Peer 실행·네트워크 제어·종료 검증은 Linux 컨테이너에서 수행합니다. 제공하는 Compose 구성은 **한 대의 Linux 서버, rootful Docker, userns-remap 미사용, IPv4 user-defined bridge**를 기준으로 합니다.
 
+이 문서는 [`compose.yaml`](../compose.yaml), [`Dockerfile`](../Dockerfile), [`scripts/check-linux.sh`](../scripts/check-linux.sh)의 동작을 설명합니다. v3 구성 요소와 실제 네트워크의 대응은 [아키텍처](architecture.kr.md)를, 프로젝트 공통 개념은 [Hub](https://github.com/k-p2p-lab/hub)를 참고하십시오.
+
 서버들이 이미 Swarm에 가입되어 있다면 [manager에서 준비부터 실험 결과 다운로드와 철거까지 진행하는 절차](swarm.kr.md)를 따르십시오. `scripts/swarm.sh`가 공통 배포를 관리하며, 아래 Compose 명령은 단일 서버용입니다.
 
 ## 서버 준비와 실행
@@ -51,6 +53,8 @@ Controller는 SIGTERM 시 신규 실험 접수를 중단하고 HTTP 연결·실�
 
 `docker compose down`만 실행하면 의존성 역순으로 Agent가 먼저 정지할 수 있습니다. Agent도 자체적으로 Peer를 정리하지만 Controller의 최종 상태 기록까지 확보하려면 위 순서를 사용하십시오. 강제 종료·전원 손실 후에는 Agent 시작 시 같은 Agent ID/네트워크의 잔존 관리 컨테이너를 회수합니다. 이전 실험을 자동 재개하지는 않습니다.
 
+Controller 종료는 실행 중인 실험을 취소합니다. `stop-all` 없이 이미 완료된 실험에는 살아 있는 Peer가 남을 수 있으며, 뒤따르는 Agent 종료에서 제거합니다. Controller 장애만으로 해당 Peer가 종료되지는 않습니다. Controller 재시작 후 보존된 결과는 **Saved results**에서 조회할 수 있고 이전의 실행 중 기록은 `interrupted`로 표시되지만, 이 상태는 Peer 정리를 확인한 결과가 아닙니다.
+
 Controller는 데이터 디렉터리에 쓸 수 없는 경우 시작 단계에서 오류를 반환합니다. 실행 메타데이터는 임시 파일에 기록하고 닫은 뒤 같은 파일시스템에서 rename으로 교체하므로 Linux에서 읽는 도중 일부 JSON만 보이지 않도록 합니다. 매 phase의 fsync가 실험 간격과 telemetry 처리를 지연시키지 않도록 강제 동기화는 하지 않습니다. 이벤트 로그는 append 형식이며, 두 파일 모두 전원 손실 시 모든 기록의 디스크 보존을 보장하지 않습니다.
 
 ## Docker 권한과 저장소
@@ -83,9 +87,11 @@ docker build --target test -t kpl-v3:test .
 
 실행 이미지는 `CGO_ENABLED=0`으로 빌드하며 최종 Alpine 이미지에 Go 빌드 도구를 포함하지 않습니다. `.gitattributes`는 shell 스크립트·Dockerfile·Makefile의 LF 줄바꿈을 유지합니다. 스크립트는 `sh scripts/check-linux.sh`로 실행하므로 Windows checkout의 실행 비트에 의존하지 않습니다.
 
-현재 검증에 사용한 커널은 Docker Desktop의 Linux `6.18.33.2-microsoft-standard-WSL2`, 아키텍처는 amd64입니다. 이는 실제 Linux syscall·namespace·tc 검증이지만 대상 서버의 배포판·커널·SELinux·다중 호스트 overlay·대규모 성능 검증을 대체하지 않습니다. 배포할 서버에서 사전 점검과 `examples/monitoring.yaml`을 다시 실행하여 설정과 수집 결과를 확인하십시오.
+test target은 Go 패키지 suite와 Swarm 셸 회귀 스크립트 네 개를 실행합니다. 명시적으로 활성화해야 하는 두 컨테이너 netem 통합 테스트는 실행하지 않으며, 모의 Docker 응답으로 실제 물리 클러스터를 검증하지도 않습니다. 브라우저 회귀 테스트는 별도입니다. [개발 검사](development.kr.md#컨테이너와-브라우저-회귀-검사)를 참고하십시오.
 
-### 2026-09-04 검증 결과
+### 과거 검증 기록: 2026-09-04
+
+아래 보존된 기록은 Docker Desktop Linux 커널 `6.18.33.2-microsoft-standard-WSL2`, amd64 환경을 보고합니다. 원본 실행 아카이브는 이 저장소에 포함되어 있지 않으므로 현재 checkout의 독립적으로 재현 가능한 근거가 아닌 과거 보고입니다. 해당 환경에서 새로 통과하더라도 대상 서버의 배포판·커널·SELinux·다중 호스트 overlay·대규모 성능 검증을 대체하지 않습니다. 배포할 서버에서 사전 점검과 `examples/monitoring.yaml`을 실행하여 설정과 수집 결과를 확인하십시오.
 
 | 항목 | 결과 |
 |---|---|

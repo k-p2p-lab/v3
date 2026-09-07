@@ -1,6 +1,8 @@
-# Experiment Metrics, Repetition, and Saved Results
+# Experiment Metrics and Repetition
 
 English | [Korean](experiment-metrics.kr.md)
+
+This guide defines the calculations implemented by v3. For the project-wide research context, see the [Hub research guide](https://github.com/k-p2p-lab/hub/blob/master/docs/RESEARCH.md). Use [monitoring and results](monitoring.md) for Grafana, export, retention, and deletion procedures.
 
 ## Run the same scenario several times
 
@@ -28,7 +30,7 @@ The unit is a **(run, topic, message, receiver session) pair**. A process restar
 
 Each `publish` phase accepts `deliveryWindow`, a Go duration greater than zero and no longer than one hour. The default is `10s`. Choose it before running the experiment and keep it fixed when comparing results.
 
-`t` is the publisher's actual application publication timestamp, recorded after acquiring its local publish gate. The deadline is `d = t + deliveryWindow`. Controller dispatch time and the browser's current Peer count do not define the cohort.
+`t` is the publisher's application timestamp sampled after acquiring its local publish gate and before generating and encoding the payload. The Peer records a `publish` event with that timestamp only after `Topic.Publish` succeeds. The deadline is `d = t + deliveryWindow`; it therefore includes payload preparation and local PubSub processing. Controller dispatch time and the browser's current Peer count do not define the cohort.
 
 Peer telemetry records `measurement_start` after actual subscription setup, including `sessionId` and the exact `fields.subscribedTopics`. The same process emits `measurement_checkpoint` every two seconds and `measurement_stop` on an orderly session end. These are evidence from instrumented application sessions, not a physical uptime monitor. A checkpoint interval is not a delivery grace period.
 
@@ -50,7 +52,7 @@ The subscription window is `[t, d)`: a stop exactly at `d` qualifies as continuo
 
 ### Maturity, delivery, and unknown observations
 
-A message remains `pending` until `d`; it does not enter finalized pair totals before then. For mature messages, success is the first collected application delivery at or before `d` by that receiver session. Copies after the deadline are late, not on-time successes. Sender-local delivery and subsequent joins never contribute.
+A message remains `pending` until `d`; it does not enter finalized pair totals before then. For mature messages, success is the earliest valid application delivery by that receiver session that meets the deadline under the clock rules below. Copies after the deadline are late, not on-time successes. Sender-local delivery and subsequent joins never contribute.
 
 Each Peer event has a source `sessionId`, increasing `sequence`, and a retry-stable `eventId`. A missing receipt becomes a confirmed miss only when the source sequence prefix from `measurement_start` is complete through the session evidence covering the window. A gap or invalid timestamp ordering leaves the receipt **unknown**. Retries may fill the gap later. A passed deadline does not prove that all telemetry has arrived, so finalized results can still be corrected by later batches.
 
@@ -63,6 +65,8 @@ stable delivery upper bound = (R + U) / S
 ```
 
 When U is zero, the bounds coincide. These are logical bounds from missing observations, **not statistical confidence intervals**. A zero denominator is N/A. Unknown pairs are not removed to make the ratio look better. Availability uncertainty is a separate issue: these bounds describe known stable sessions, not an unknown total population.
+
+`lateDeliveries` is a separate diagnostic among stable pairs without an on-time success. Such a pair is already counted as either a confirmed miss or an unknown receipt, depending on observation completeness. Do not add late counts to `S = R + U + F` as a fourth outcome.
 
 The known-starting-cohort ratio retains confirmed departures and continuity-unknown pairs. Its numerator includes on-time receipts by departed sessions. If Rk is the on-time successes and Uk is the receipt-unknown count in K, the displayed bounds are `Rk / K` and `(Rk + Uk) / K`.
 
@@ -99,15 +103,19 @@ A successful sample remains trusted for two minutes. If refreshes keep failing p
 
 The Controller uses that bound when a one-way point estimate crosses zero or the delivery deadline. A slightly negative estimate whose uncertainty still permits a causal, on-time receipt counts as delivery, while the negative value is excluded from the latency histogram. A bound entirely before publication is invalid; a bound wholly after the deadline is late; a bound that straddles the deadline is unknown. Periodic sampling limits drift while the Controller is reachable, but midpoint estimates and temporary outages do not replace host time synchronization. Keep chrony/NTP enabled on every host, especially for long churn runs. Instrumented session continuity does not prove continuous physical connectivity.
 
+This uncertainty calculation applies to envelope receipts carrying trusted publisher and receiver clock metadata. Raw receipts and unsynchronized envelope receipts use their recorded point timestamps, and subscription-cohort membership and duplicate-window checks also compare point timestamps. Those classifications do not propagate clock uncertainty into cohort boundaries. Report this limitation when interpreting results close to a join, stop, or deadline.
+
 Peer telemetry uses bounded retries and an orderly shutdown drain. Agent telemetry uses backpressure for a full queue rather than acknowledging and discarding that batch; its orderly shutdown allows Peer cleanup before a bounded final drain. Queue overflow, exhausted shutdown time, process failure, and Agent/Controller failures can still lose observations. Sequence tracking distinguishes some gaps from confirmed misses; it cannot recreate missing data or prove the existence of a wholly unobserved session. `scope: all` can impair the measurement channel itself. Keep loss counters and incomplete/unknown indicators with every result.
 
 ## First delivery latency
 
-The latency samples use mature, stable, on-time remote receiver pairs. For each pair, take the first successful `Subscription.Next` receipt time minus the envelope timestamp prepared after the publisher acquires its local publish gate. This includes serialization, PubSub processing, network transit, and the subscriber queue. It excludes Controller-to-Agent dispatch and waiting for that local gate.
+The latency samples use mature, stable, on-time remote receiver pairs. For each pair, take the first valid on-time `Subscription.Next` receipt time minus the envelope timestamp prepared after the publisher acquires its local publish gate. This includes payload generation, serialization, PubSub processing, network transit, and the subscriber queue. It excludes Controller-to-Agent dispatch and waiting for that local gate.
 
 Raw payloads have no embedded application send timestamp: they contribute to session-window delivery ratios but latency remains **N/A**. Local receipts, later deliveries, departed/late-joining receivers, and unavailable latency samples do not enter the distribution. Negative point estimates are excluded and counted in `invalidLatencySamples`, even when bounded uncertainty lets the receipt count as an on-time delivery.
 
 The UI and `metrics.json` report arithmetic mean, nearest-rank P95, and `latencySamples`. Missing or unknown receipts are not zero milliseconds. These latencies are conditional on observed on-time success and stable subscription; always show delivery bounds and coverage beside them.
+
+`invalidLatencySamples` counts a stable pair when its selected on-time envelope has an invalid latency value, or when no on-time receipt is valid and an observed receipt fails the timing or session-order checks. It can include an uncertainty interval crossing the deadline; it is not simply a count of negative histogram samples.
 
 ## Average duplicate messages
 
@@ -115,7 +123,7 @@ An extra copy is a receiver's GossipSub `RawTracer.DuplicateMessage` observation
 
 The duplicate average divides observed extra copies within the same delivery window at stable, on-time successful receiver pairs by the number of those successful pairs. Zero-copy successful pairs contribute zero; no successful pairs means N/A. Local copies, copies at departed/late-joining sessions, and copies outside the window remain in overall event counts but not this mean. For successful pairs with 0, 1, and 5 extra copies, the mean is `6 / 3 = 2`. Missing duplicate telemetry can still lower this observed average.
 
-Envelope events share the application message ID. Raw events use `pubsub-<hex native message ID>`, distinguishing separate publications of identical bytes. `fields.pubsubMessageId` preserves the native ID. Wire format and PubSub's origin-plus-sequence message-ID algorithm are unchanged; the telemetry source sequence is a different counter. Event IDs survive retries so the Controller stores and counts each event once.
+Envelope events share the application message ID. Raw events use `pubsub-<hex native message ID>`, distinguishing separate publications of identical bytes. `fields.pubsubMessageId` contains the hexadecimal encoding of the native ID. Wire format and PubSub's origin-plus-sequence message-ID algorithm are unchanged; the telemetry source sequence is a different counter. Event IDs survive retries so the Controller stores and counts each event once.
 
 ## GossipSub control traffic
 
@@ -131,7 +139,7 @@ PRUNE peer-exchange records are counted separately. IHAVE, GRAFT, and PRUNE carr
 
 `send` means the local outbound queue accepted the RPC; it does not prove a stream write or remote receipt. `recv` is an inbound observation before later router admission and flood-limit decisions. Adding both directions can count the two endpoint observations of one transfer and must not be treated as a unique wire-RPC total. `drop` is a local pre-send discard such as queue saturation or an oversized RPC, not a packet dropped by `netem`. The existing plain `graft` and `prune` events describe local mesh transitions and remain separate from wire `send_graft`/`recv_graft` and `send_prune`/`recv_prune` events.
 
-This keeps v2's useful split between RPC occurrences and logical ID references while fixing its mixed-RPC `if/else-if` loss and adding IDONTWANT and dropped RPCs. IDONTWANT also depends on GossipSub v1.2 support and message size. With the pinned defaults it is normally produced only for data at least 1,024 bytes; use a larger payload or lower `gossipsub.params.iDontWantMessageThreshold` when an experiment is intended to exercise it.
+The [v2 reproduction guide](v2-reproduction.md) describes the control-trace compatibility differences. IDONTWANT also depends on GossipSub v1.2 support and message size. With the pinned defaults it is normally produced only for data at least 1,024 bytes; use a larger payload or lower `gossipsub.params.iDontWantMessageThreshold` when an experiment is intended to exercise it.
 
 ## Scope, export, and monitoring
 
@@ -148,22 +156,17 @@ New summaries use `definition: "session-window-v1"`. A publication records `fiel
 
 `dispatch-cohort-v1` used the Controller's ready/online subscriber IDs immediately before dispatch, kept later departures in the denominator, and had no message deadline. Older data may have only a target count and no identifiable recipient cohort. These are **legacy definitions**. Do not reinterpret them as continuous-session measurements or mix their old `kpl_delivery_*`/`kpl_propagation_latency_seconds` series with the new window series. Historical raw events remain available, and legacy/unscoped publication counts identify excluded records in mixed data. Downloading cannot add session evidence that was never recorded. New Grafana session panels do not display legacy-only results.
 
-## Topology and deletion
+## Implementation and related guides
 
-Agent numbers match the **No.** column in **Agent status**. The browser retains its ID-to-number mapping in local storage; another browser may assign different numbers. Real Agent IDs and hostnames remain in the table and tooltips. Topology circles and incident edges exclude `stopping` and `stopped` Peers. Failed Peers remain visible as issues; inventory/history is retained.
+The continuous-subscription window, evidence rules, pair weighting, unknown bounds, and duplicates-per-success calculation are explicit v3 design choices. The [Hub research guide](https://github.com/k-p2p-lab/hub/blob/master/docs/RESEARCH.md) owns the related literature and conceptual comparisons. These formulas describe this implementation and are independent of v2 compatibility.
 
-The [topology guide](topology.md) explains independent Kademlia/GossipSub/Transport checkboxes, topic filters, zoom, selection, and status freshness. These display controls do not change protocol behavior or measurement cohorts.
+| Implementation | Responsibility |
+|---|---|
+| [Peer publication and correlation](../internal/peer/publish.go) | Envelope/raw IDs, payload preparation, receipt latency, duplicate correlation |
+| [Peer telemetry](../internal/peer/telemetry.go) and [clock sampling](../internal/peer/clock.go) | Session lifecycle, source sequences, retries, and clock metadata |
+| [Session-window accumulator](../internal/controller/run_metrics_window.go) | Cohorts, receipt bounds, coverage, latency, and duplicate summaries |
+| [Window regression cases](../internal/controller/run_metrics_window_test.go) | Deadline boundaries, missing evidence, churn, and out-of-order telemetry cases |
+| [Prometheus collector](../internal/controller/run_metrics_prometheus.go) | Run gauges and reconstructed latency histogram |
+| [Result export](../internal/controller/results.go) | Event-log boundary and metrics reconstruction for downloads |
 
-Choose **Delete** in **Saved results**, inspect the run name/ID, and confirm. This permanently removes that run's saved scenario, metadata, and event log plus its live metric index. It does not stop Peers or erase previously scraped Prometheus/Grafana history. Running/queued runs, members of an active batch, and results with an active ZIP download are protected. Deleting an old interrupted result is not a Peer cleanup operation.
-
-The endpoint is `DELETE /api/v1/results/{id}`: 204 deleted, 404 missing, 409 busy, and 401 for a missing/invalid configured token. A small persistent deletion marker rejects late telemetry that would otherwise recreate the result. Keep deletion markers with the Controller data when migrating or backing it up.
-
-## References and design choice
-
-The original [HyParView report, §2.5 and §5.2, printed pp. 5 and 9–10](https://www.dpss.inesc-id.pt/~ler/reports/dsn07-leitao.pdf) defines reliability over active nodes and tests dissemination after injecting failures. It illustrates a survivor-population question, not a rule for retrospectively removing only unsuccessful departed receivers.
-
-[Pongthawornkamol et al., ICAC 2013, §2.2 and §3.2.2–3, printed pp. 249 and 251](https://www.usenix.org/system/files/conference/icac13/icac13_pongthawornkamol.pdf) define reliability in terms of interested events delivered before a deadline and use event-flow weighting. Their broker/link failure model differs from receiver-session churn.
-
-The continuous-subscription window, session evidence, pair weighting, unknown bounds, and duplicates-per-success rules above are explicit KPL design choices, not a standard dictated by either paper. Conditioning on a whole fixed window selects more persistent sessions; starting-cohort results and coverage expose that selection. These definitions are independent of v2 reproduction.
-
-The [official PubSub message identification specification](https://github.com/libp2p/specs/blob/master/pubsub/README.md#message-identification) explains native message IDs. KPL correlates instrumentation without changing that protocol behavior.
+The [topology guide](topology.md) owns graph layers, Agent numbering, and display controls. Display changes do not alter measurement cohorts. [Monitoring and results](monitoring.md) owns saved-file retention and deletion; deleting a result releases its metric index but does not stop Peers or delete Prometheus history. The [REST API guide](api.md) defines the download and deletion endpoints.

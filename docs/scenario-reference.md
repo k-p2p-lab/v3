@@ -4,6 +4,22 @@ English | [Korean](scenario-reference.kr.md)
 
 This guide describes the version 2 YAML format, Peer profiles, protocol controls, network conditions, and background jobs. For saving reusable YAML in the Dashboard, see the [scenario library](scenario-library.md).
 
+## Top-level fields
+
+Scenario format versions are independent of K-P2PLab release versions: `version: 2` is the recommended YAML format for the v3 executable. The parser also accepts `version: 1`; omitted or zero `version` resolves to `1`. Both use the same current validation and runner. Unknown YAML field names are rejected.
+
+| Field | Required or default | Meaning |
+|---|---|---|
+| `version` | Recommended: `2` | Scenario schema version, not the application release. |
+| `name` | Required, non-blank | Run name; independent of a saved library record's name. |
+| `seed` | `0` | Non-zero seed controls application sampling; zero selects a time-based seed. |
+| `onExit` | `cancel` | `cancel` or `drain` policy for background jobs at natural completion. |
+| `jobShutdownTimeout` | `3m`, positive | Bound for job shutdown and a separate bound for Peer cleanup; not a total run timeout. |
+| `profiles` | Empty map | Reusable per-node configuration overlays. |
+| `phases` | At least one phase | Ordered actions, optionally starting tracked background work. |
+
+The executable schema and validation are in [`internal/scenario/scenario.go`](../internal/scenario/scenario.go); scheduling is in [`internal/controller/runner.go`](../internal/controller/runner.go).
+
 ## Node roles, types, and profiles
 
 `role` controls Kademlia bootstrap discovery: a `boot` node is advertised by the Controller as a bootstrap peer, while a `worker` node is not. Topic transport discovery is separate and considers ready PubSub participants in the same run and exact topic. `type` controls the node's libp2p, Kademlia, and PubSub behavior. These concepts are independent, so an experiment can use several worker behaviors without abusing the bootstrap role. When both `type` and `profile` are omitted, `role: boot` selects the `boot` preset and every other role selects `full`.
@@ -15,16 +31,16 @@ This guide describes the version 2 YAML format, Peer profiles, protocol controls
 | `light` | Kademlia client with a lower default connection limit. |
 | `publisher` | Publish-only topic participant. |
 | `subscriber` / `observer` | Subscribe-only participant; publishing is rejected. |
-| `relay` | Relays subscribed topic traffic without publishing application messages. |
+| `relay` | Uses `Topic.Relay()` to forward topic traffic without an application subscription or application publishing. |
 | `flood` | Uses FloodSub. |
 | `random` | Uses RandomSub with separate minimum-degree and estimated-network-size controls. |
 | `dht-only` | Runs Kademlia with PubSub disabled. |
 | `gossip-only` | Runs PubSub with Kademlia disabled. |
 | `non-gossip` / `mesh-only` | Uses the GossipSub mesh with lazy gossip disabled. |
 
-Reusable node profiles belong in the top-level `profiles` map. A join phase resolves its configuration in this order: built-in `type`, named `profile`, then the phase's inline `node` overrides. Explicit `false` and `0` values are preserved, which allows experiments such as disabling lazy gossip with `historyGossip: 0`.
+Reusable node profiles belong in the top-level `profiles` map. A join phase resolves its configuration in this order: built-in `type`, named `profile`, then the phase's inline `node` overrides. If the phase omits `type`, the named profile's `type` chooses the preset; otherwise the role supplies the default. Pointer-backed boolean and numeric controls preserve explicit `false` and `0`, which allows experiments such as disabling lazy gossip with `historyGossip: 0`. This does not extend to legacy flat numeric fields, whose zero values mean omitted; use the nested controls for explicit zero overrides.
 
-The built-in `boot` type sets `gossipsub.enabled: false`. Set it explicitly to `true` in a profile or inline `node` block when bootstrap nodes should also participate in PubSub. Once enabled, boot nodes can use every PubSub router, parameter, scoring, and inspection option described below; [`examples/mixed-workers.yaml`](../examples/mixed-workers.yaml) demonstrates this opt-in. PubSub-enabled Peers query the Controller's same-run, exact-topic registry immediately after startup and every three seconds, then use rendezvous hashing to select up to `DHigh` transport candidates per topic and open missing connections. GossipSub still forms the actual GRAFT mesh; DHT bootstrap, transport candidacy, and mesh membership remain distinct.
+The built-in `boot` type sets `gossipsub.enabled: false`. Set it explicitly to `true` in a profile or inline `node` block when bootstrap nodes should also participate in PubSub. Once enabled, boot nodes can use the router-appropriate parameters, scoring, and inspection options described below; [`examples/mixed-workers.yaml`](../examples/mixed-workers.yaml) demonstrates this opt-in. PubSub-enabled Peers poll the Controller's same-run, exact-topic registry immediately after startup, then on a three-second loop. Each Peer ranks the full eligible set with rendezvous hashing and fills the deficit between its current topic peers and `DHigh`, subject to its total connection budget and retry backoff. See [bootstrap and topic discovery](topology.md#bootstrap-and-topic-discovery) for timing and fallback behavior. GossipSub still forms the actual GRAFT mesh; DHT bootstrap, transport candidacy, and mesh membership remain distinct.
 
 ```yaml
 version: 2
@@ -92,7 +108,7 @@ When migrating a v2 configuration, map v2's misleadingly named `protocol_id` to 
 
 For RandomSub, `randomDegree` sets the minimum connection/degree target through libp2p's process-global `RandomSubD`. KPL currently isolates each Peer in its own process, so that global applies to one Peer; an in-process multi-peer runtime would need additional isolation. `randomNetworkSize` is the separate estimated network-size argument passed to `NewRandomSub`.
 
-When `gossipsub.score` is enabled, `scoreInspectInterval` defaults to `1s`. Each inspection updates the node's `peerScores` map. It is returned by `/api/v1/nodes`, `/api/v1/network`, `/api/v1/snapshot`, and the SSE snapshot stream; hovering a node in the topology displays the observed score count and average.
+When `gossipsub.score` is enabled, `scoreInspectInterval` defaults to `1s`. Each inspection updates the node's `peerScores` map. It is returned by `/api/v1/nodes`, `/api/v1/network`, `/api/v1/snapshot`, and the SSE snapshot stream; selecting a node in the topology displays the observed score count and average in its details.
 
 `appSpecificWeight` is intentionally unsupported. PeerScore's P5 term requires an in-process application-specific scoring callback, which cannot be supplied by the serializable scenario or REST configuration. Keep it at `0`; any non-zero value fails configuration validation explicitly instead of being accepted without effect.
 
@@ -115,15 +131,15 @@ node:
 
 | Field | Meaning |
 |---|---|
-| `delay`, `jitter` | Go durations for added delay and its variation. Jitter requires a positive delay. |
+| `delay`, `jitter` | Non-negative Go durations for added delay and its variation. Jitter requires a positive delay and is capped at `2147483647ns` by Linux netem. |
 | `lossPercent`, `duplicatePercent`, `corruptPercent`, `reorderPercent` | Packet percentages from `0` to `100`; reordering requires a positive delay. |
 | `rateMbps` | Non-negative egress rate in megabits per second; `0` disables the rate limit. |
-| `queueLimit` | Positive integer specifying the maximum packets in the netem queue. |
+| `queueLimit` | Maximum packets in the netem queue, from `1` to `4294967295`; supplying it alone enables netem. |
 | `scope` | `p2p` (default) or `all` outgoing traffic. |
-| `delayDistribution` | Samples one base delay per Peer using the interval distribution schema; mutually exclusive with `delay`. |
+| `delayDistribution` | Samples one base delay per Peer using the interval distribution schema; mutually exclusive with `delay`. A positive `min` is required when jitter or reordering is enabled. |
 | `jitterDistribution` | `normal` (default), `uniform` (v2 behavior), `pareto`, or `paretonormal`. |
-| `reorderCorrelationPercent` | Reordering correlation, corresponding to v2's `reorder.chance`. |
-| `tbf` | Token bucket with `rateMbps`, `burstKbit`, and `latency`; mutually exclusive with positive netem `rateMbps`. |
+| `reorderCorrelationPercent` | Reordering correlation from `0` to `100`, corresponding to v2's `reorder.chance`; a positive value requires positive `reorderPercent`. |
+| `tbf` | Token bucket with positive finite `rateMbps` and `burstKbit` (kilobits), and `latency` from `1us` to `4294967295us`; mutually exclusive with positive netem `rateMbps`. |
 
 See the [v2 reproduction audit and mapping](v2-reproduction.md) and [churn example](../examples/v2-churn.yaml). They cover placement (`balanced`, per-node `random`, batch `single-agent`, or explicit `agentId`), `onError: continue` for churn, `payloadEncoding: raw` for exact PubSub data length, and `topic: '*'` for all topics. Network scope and payload encoding retain their existing defaults. Worker bootstrap now uses seeded first-success selection, and the transport stack is explicitly TCP/Noise/Yamux.
 
@@ -155,7 +171,25 @@ The recommended scenario format is version 2 YAML. It preserves the important v2
 
 For `join`, `count` is the exact number of create operations. For `publish` and `leave`, it is a maximum capped by the number of eligible candidate nodes; publish candidates must have PubSub and publishing enabled and must have joined the requested topic. `repeat` repeats the entire phase. `parallel` selects sequential or concurrent replica execution, while `parallelism` optionally caps concurrent operations. `await` defaults to `true`; setting it to `false` starts a tracked background job named by `job`, allowing later phases to run while churn or publishing continues. A `wait-jobs` phase can join selected jobs by name.
 
-Background-job behavior at the natural end of the phase list is controlled by top-level `onExit`. Its default, `cancel`, cancels remaining jobs and then waits for them to stop. `onExit: drain` instead waits for them to complete naturally. A naturally successful completion applies this job policy but leaves Peer processes running unless the scenario contains an explicit `stop-all`.
+### Phase fields and defaults
+
+| Fields | Applies to | Meaning and default |
+|---|---|---|
+| `name`, `repeat` | All actions | Display name defaults to `<action>-<phase number>`; omitted or zero `repeat` resolves to `1`. |
+| `job`, `await` | `join`, `publish`, `leave` | `await: false` creates a background job; omitted `job` becomes `phase-<phase number>`. Job IDs must be unique until `stop-all` resets tracking. |
+| `group`, `count` | `join`, `publish`, `leave` | Required group and positive operation count. Each publish repetition selects distinct eligible publishers up to `count`. |
+| `type` | `join`, `publish`, `leave`, `wait-ready` | Chooses the join preset or filters existing nodes by resolved type. |
+| `role`, `profile`, `node` | `join` | Role is `boot` or `worker` (default); profile and inline node settings customize the preset. |
+| `placement`, `agentId` | `join` | `balanced` (default) chooses by utilization, `random` chooses per node, and `single-agent` chooses one Agent per batch; explicit `agentId` pins placement. Admission waits for available capacity. |
+| `parallel`, `parallelism` | `join`, `publish`, `leave` | Default is sequential. Omitted/zero parallelism allows the whole batch to run concurrently when parallel is enabled. |
+| `interval`, `lifetime` | Paced operations; lifetime only on `join` | See timing rules below. Docker lifetime starts after successful container creation and includes configuration copy, start, and bootstrap; process-runtime lifetime starts after the child process starts. It is independent of background job completion. |
+| `topic`, `payloadSize`, `payloadEncoding` | `publish` | Topic defaults to the publisher's first configured topic; `'*'` publishes to all its configured topics. Non-positive `payloadSize` resolves to `32`. Default `envelope` adds JSON/base64 metadata; `raw` makes PubSub data exactly `payloadSize` bytes. |
+| `deliveryWindow`, `onError` | `publish`; `onError` also on `leave` | Window defaults to `10s`. `onError: fail` is the default; `continue` records individual operation failures and continues churn. A publish with no eligible candidate is a no-op under `continue`. |
+| `group`, `type`, `readyRatio`, `minCount`, `jobs`, `timeout` | `wait-ready` | Empty group/type matches all current-generation nodes. Ratio defaults to `1`; timeout defaults to `1m` and covers both job waiting and readiness. `minCount` is a cohort-size floor. |
+| `jobs`, `timeout` | `wait-jobs` | Empty jobs means all tracked jobs; timeout defaults to `5m`. |
+| `duration`; `message` | `wait` / `sleep`; `log` | Positive wait duration; Controller log message. |
+
+Background-job behavior at the natural end of the phase list is controlled by top-level `onExit`. Its default, `cancel`, cancels remaining jobs and then waits for them to stop. `onExit: drain` instead waits for them to complete naturally. A naturally successful single run applies this job policy but leaves Peer processes running unless the scenario contains an explicit `stop-all`. A Dashboard/API batch submitted with `repetitions > 1` automatically fences and cleans up Peers after every iteration, including the last, so they cannot overlap the next run. This is separate from a YAML phase's `repeat` field.
 
 `jobShutdownTimeout` defaults to `3m`. When a user or API request cancels a scenario, or when any scenario phase or background job fails, the Controller cancels outstanding jobs and waits for their termination within this bound, then asks every Agent to generation-fence and clean up Peer processes through the current generation. An explicit `stop-all` uses the same bounded job shutdown, resets job tracking, and fences the current run generation. The Agent records the monotonically increasing fence before stopping matching processes: a late create at generation N either committed before the fence and is included in cleanup, or is rejected because its generation is at or below the fence. After `stop-all` succeeds, the scenario advances to generation N+1, so later phases may create new nodes under the same run ID and may reuse job IDs.
 
@@ -169,6 +203,8 @@ Background-job behavior at the natural end of the phase list is controlled by to
 | `true` | `false` | A concurrent job runs in the background. |
 
 For v2 compatibility, a `publish` phase with no `interval` has a special default: with `parallel: true`, every operation gets a `1s` phase-start offset; sequential publish uses zero delay. This rule is independent of `await`.
+
+Sequential `join`, `publish`, and `leave` run the first operation immediately, then wait for a sampled interval between operations. Parallel `join` and `leave` ignore `interval`. Parallel `publish` uses each sampled interval as that operation's independent offset from the batch start, before acquiring a concurrency slot; offsets are not cumulative and capacity can delay dispatch further.
 
 `wait` durations and readiness/job timeouts must be positive. An omitted join `lifetime` means no automatic leave, while an explicitly sampled `0s` lifetime stops the new node immediately, matching v2.
 

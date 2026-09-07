@@ -19,6 +19,8 @@ sudo sh scripts/swarm.sh scenario examples/swarm-churn-publish.yaml
 
 `access`의 Controller URL을 여십시오. **Run experiment**에서 **YAML scenario** 전체를 출력된 내용으로 교체하고, `credentials`의 실제 배포된 API 토큰을 입력한 뒤 **Run**을 누릅니다. `scenario`는 YAML만 출력하며 웹 동작이 실험을 시작합니다. 웹 폼의 기본값과 helper의 기본 `scenario` 출력은 다른 예제입니다.
 
+실행 창 **Run** 옆 **Runs**를 1~100으로 설정하면 전체 시나리오를 순차 반복하고 회차별 결과를 남깁니다. **Stop batch** 또는 회차 실패는 남은 반복을 취소하며 명시된 seed는 재사용합니다. [반복 실행과 지표 정의](experiment-metrics.kr.md)를 참고하십시오.
+
 worker는 Linux `NET_ADMIN`과 호스트 커널의 netem 지원을 사용합니다. 각 Peer는 시작 시 최대 5초 동안 Controller health 표본을 최대 7개 수집하며 모두 실패해도 Ready까지 진행합니다. 미동기화 Peer는 5초마다 다시 시도하고 동기화 Peer는 30초마다 갱신하며, 마지막 성공 표본은 갱신 없이 2분이 지나면 신뢰 상태를 잃습니다. 장시간 실행 중에는 chrony/NTP를 계속 사용하십시오. 예제의 네트워크 설정은 송신 P2P TCP 트래픽에 적용하며 제어·시계 측정·discovery·telemetry HTTP는 해당 범위에서 제외합니다.
 
 ## 실행 흐름
@@ -33,13 +35,13 @@ worker는 Linux `NET_ADMIN`과 호스트 커널의 netem 지원을 사용합니�
 | Round 사이 | 각 round 사이에 10초씩, 총 29번 기다립니다. 후보가 없어도 이 명시적 대기 덕분에 모든 round가 즉시 소진되지 않습니다. |
 | 수집과 정리 | 마지막 round 뒤에도 churn을 유지하며 30초 더 수집합니다. 이어 `stop-all`이 남은 join job을 취소하고 Peer를 정리합니다. |
 
-이론적 정상 상태의 worker 수는 `100s / 4s = 25`이며 boot 두 개가 별도입니다. 이는 기대값이고 **상한이 아닙니다**. 수명은 변동하고 Docker 생성·시작에 시간이 걸리며 Agent가 가득 차면 join 접수가 기다립니다. 이 때문에 실제 ready 수와 도착률은 달라집니다. 40슬롯 권장은 여유를 둔 시작점일 뿐 특정 서버가 이 부하를 감당한다는 실측 근거는 아닙니다.
+이론적 정상 상태의 worker 수는 `100s / 4s = 25`이며 boot 두 개가 별도입니다. 이는 기대값이고 **상한이 아닙니다**. 수명은 변동하고 Docker 생성·시작에 시간이 걸리며 배치 가능한 Agent가 모두 가득 차면 join 접수가 기다립니다. 이 때문에 실제 ready 수와 도착률은 달라집니다. 40슬롯 권장은 여유를 둔 시작점일 뿐 특정 서버가 이 부하를 감당한다는 실측 근거는 아닙니다.
 
 `count: 10000`은 **총 join 예산**이며 동시 worker 10,000개가 아닙니다. 보통 이 예산을 다 쓰기 전에 마지막 `stop-all`이 producer를 취소합니다. 이 예제에는 개별 worker의 명시적 `leave` phase가 없고 샘플링한 수명이 퇴장을 발생시킵니다.
 
 readiness barrier는 안정적인 boot 그룹에만 적용합니다. 계속 커지는 churn 그룹에 `wait-ready`를 적용하면 현재 generation에서 이미 종료된 구성원도 포함됩니다. 3분 warm-up은 이 부적절한 barrier를 피하기 위한 대기이며 특정 worker 수나 GossipSub mesh 수렴을 보장하지 않습니다. worker의 mesh 설정은 `d: 9`, `dLow: 7`, `dHigh: 11`입니다.
 
-내장 boot Peer는 PubSub가 비활성화되어 있으므로 DHT bootstrap만으로 worker가 GossipSub overlay에 연결되지는 않습니다. Worker가 PubSub를 시작하면 동일 run·정확한 topic의 Controller discovery registry를 즉시 조회하고 이후 3초마다 반복합니다. Rendezvous hash로 ready transport 후보를 `DHigh`까지 선택하되 subscriber를 우선하고, 빠진 연결을 생성해 churn으로 바뀐 이웃을 보강합니다. 실제 GRAFT mesh는 계속 GossipSub가 선택하므로 registry 후보나 transport 연결이 곧 mesh 구성원인 것은 아닙니다.
+내장 boot Peer는 PubSub가 비활성화되어 있으므로 DHT bootstrap만으로 worker가 GossipSub overlay에 연결되지는 않습니다. Worker가 PubSub를 시작하면 동일 run·정확한 topic의 Controller discovery registry를 즉시 조회하고 이후 3초 간격으로 다음 round를 예약합니다. [`internal/peer/discovery.go`](../internal/peer/discovery.go)는 subscriber를 우선하면서 rendezvous hash로 ready 후보의 순위를 정합니다. dial 예산은 `DHigh`에서 현재 topic peer 수를 뺀 부족분이며 transport 연결 상한으로 한 번 더 제한합니다. dial 실패 시 다음 순위 후보를 시도하고 실패 후보에는 15초 재시도 유예를 적용합니다. 느린 round는 다음 조회를 늦출 수 있습니다. 실제 GRAFT mesh는 계속 GossipSub가 선택하므로 registry 후보나 transport 연결이 곧 mesh 구성원인 것은 아닙니다.
 
 10개 노드를 모두 선택한 round에는 평균 합계 9초인 간격 아홉 개와 요청 처리 시간이 있습니다. 기본 대기 스케줄은 `180 + 30×9 + 29×10 + 30 = 770초`, 즉 **약 12분 50초**이며 bootstrap·API·정리 시간이 추가됩니다. 고정 종료 시각은 아닙니다. 후보가 적거나 없는 round는 짧아지고 느린 요청은 길어집니다.
 
@@ -55,8 +57,6 @@ worker network는 `scope: p2p`, 지연 25ms, jitter 2ms, 설정 packet loss 0.5%
 
 ## 관측과 결과 저장
 
-실행 창 **Run** 옆 **Runs**를 1~100으로 설정하면 전체 시나리오를 순차 반복하고 회차별 결과를 남깁니다. **Stop batch** 또는 회차 실패는 남은 반복을 취소하며 명시된 seed는 재사용합니다. [반복 실행과 지표 정의](experiment-metrics.kr.md)를 참고하십시오.
-
 대시보드에서는 ready Peer 수, Agent 점유량, 실험·job 상태와 이벤트를 확인합니다. Grafana의 **KP2PLab Experiment Analysis**에서 **Run**에 실행한 `swarm-churn-random-publish`를 선택하고 **Agent**, **Topic**으로 필터링하십시오. 종료 후에는 시간 범위를 실험 구간으로 맞춥니다.
 
 | 관측 항목 | 데이터 |
@@ -70,7 +70,7 @@ worker network는 `scope: p2p`, 지연 25ms, jitter 2ms, 설정 packet loss 0.5%
 | 설정한 네트워크 조건 | `kpl_network_configured_*`. 실제 손실률이나 RTT가 아닌 설정값 |
 | 실패 요청과 보고된 telemetry drop | `kpl_operation_failures_total`, `kpl_telemetry_dropped_events_total` |
 
-새 `session-window-v1` 발행은 실제 발행 시각과 고정된 10초 마감을 사용합니다. `measurement_start`는 구독 애플리케이션 세션을 기록하고 동일 세션의 2초 주기 checkpoint 또는 stop으로 관측된 지속을 확인합니다. 주 도달률은 기간 전체에 걸쳐 구독을 증명한 세션만 사용합니다. 마감 전 stop 세션은 이미 수신했어도 주 지표의 분자·분모에서 모두 제외하고, 늦은 join도 제외합니다. 네트워크 단절이나 mesh 제거로 구독자를 제외하지 않습니다.
+이 예제의 `session-window-v1` 발행은 실제 발행 시각과 설정된 10초 마감을 사용합니다. `measurement_start`는 구독 애플리케이션 세션을 기록하고 동일 세션의 2초 주기 checkpoint 또는 stop으로 관측된 지속을 확인합니다. 주 도달률은 기간 전체에 걸쳐 구독을 증명한 세션만 사용합니다. 마감 전 stop 세션은 이미 수신했어도 주 지표의 분자·분모에서 모두 제외하고, 늦은 join도 제외합니다. 네트워크 단절이나 mesh 제거로 구독자를 제외하지 않습니다.
 
 확인된 발행 시점 대상 도달률과 안정 coverage를 함께 보십시오. 확인된 최초 10명 중 2명이 이탈하고 그중 1명은 미리 수신했으며 안정 구독자 8명 중 7명이 성공하면 안정 도달률은 **7/8**, 발행 시점 대상 도달률은 **8/10**, coverage는 **80%**입니다. 발행 시점 대상 도달률에는 이탈자의 조기 성공도 포함합니다. 확인된 발행 시점 쌍의 이탈과 마감까지 지속 어느 쪽도 증명하지 못하면 coverage 범위는 `안정/확인된 발행 시점 대상`부터 `(안정 + 지속 여부 불명)/확인된 발행 시점 대상`까지 넓어집니다. 원본 sequence가 누락된 미수신도 도달률 범위를 넓힙니다. 이 범위는 신뢰구간이 아닙니다. 10초가 지나지 않은 메시지는 pending입니다. 발행 시점 가용성 불명 후보는 확인된 집단 밖에 두고 관측 품질로 표시합니다. 확인된 집단이 비었을 때만 발행 시점 도달률과 coverage가 N/A이며 incomplete/unknown 경고만으로 숨기지는 않습니다.
 
@@ -103,6 +103,6 @@ YAML은 anchor로 발행 phase와 대기 phase를 재사용합니다. 이는 파
 
 ## v2 Churn 실험과의 관계
 
-v2 churn 스크립트는 boot 10개를 유지하고 worker join을 최대 10,000회 예약한 뒤 대기했으며, 무작위 worker 최대 10개에서 전체 topic으로 32바이트 raw 데이터를 **한 batch** 발행했습니다. 이후 churn을 유지하며 30초 수집했습니다.
+검토한 v2 `exp/exp-2603_churn-02.sh` 스크립트는 boot 10개를 유지하고 worker join을 최대 10,000회 예약한 뒤 대기했으며, 무작위 worker 최대 10개에서 전체 topic으로 32바이트 raw 데이터를 **한 batch** 발행했습니다. 이후 churn을 유지하며 30초 수집했습니다.
 
 이 예제는 의도적으로 boot 두 개, 더 작은 기대 worker 수, **매번 다시 선택하는 발행 30 round**, 명시적 topic 하나, 추가 P2P 네트워크 조건, **지연 측정용 envelope**를 사용합니다. balanced Agent 배치도 v2의 join마다 worker 서버를 무작위 선택하는 방식과 다릅니다. 세션 기간 지표는 v2 재현 계약과 독립적인 v3 실험 설계입니다. churn 중 관측이라는 목적을 유지하면서 작은 Swarm에서 반복 관측할 수 있도록 한 것이며, 결과의 동등성을 보장하거나 누락된 v2 설정 파일을 복원하지 않습니다. [v2 재현 참고](v2-reproduction.kr.md)에서 호환 범위를 확인하십시오.

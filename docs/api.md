@@ -4,8 +4,11 @@ English | [Korean](api.kr.md)
 
 The Controller exposes the following public and operational endpoints. When `KPL_API_TOKEN` is configured, clients must send it as a Bearer token for mutation requests.
 
+## Controller endpoints
+
 | Method | Path | Description |
 |---|---|---|
+| `GET` | `/metrics` | Prometheus exposition for Controller and experiment metrics |
 | `GET` | `/api/v1/health` | Controller health and current UTC time used for Peer clock sampling |
 | `GET` | `/api/v1/ui-config` | Published Prometheus and Grafana ports used by Dashboard navigation |
 | `GET` | `/api/v1/prometheus/agent-targets` | Prometheus HTTP service-discovery groups for online Agents with advertised metrics URLs |
@@ -28,6 +31,16 @@ The Controller exposes the following public and operational endpoints. When `KPL
 
 The `runId` query parameter on `/api/v1/bootstrap` is required. The registry returns only ready `boot` nodes with usable identity and address data from that run, so concurrent experiments cannot discover one another's bootstrap peers. `/api/v1/discovery` requires all three shown query parameters, excludes the requester, and returns configured topic participants rather than observed delivery or mesh outcomes. `/api/v1/prometheus/agent-targets` is a read-only operational endpoint used by the supplied Swarm Prometheus configuration; it omits offline Agents and Agents without a valid metrics URL.
 
+The bootstrap response is an array of `{nodeId, peerId, addresses}` records (or `null` when empty). Unlike discovery, bootstrap does not filter on Agent online status. Discovery returns an array, empty when no candidates match, with an additional `subscribed` flag. It returns the full eligible candidate set; the requesting Peer applies rendezvous ranking, connection budgets, and retries as described in [topology](topology.md#bootstrap-and-topic-discovery).
+
+## Submit, stop, and observe runs
+
+`POST /api/v1/experiments` returns `202` with the first run's experiment object. Use `Content-Type: application/json` for `{scenario, repetitions}`; `scenario` is a YAML string and omitted `repetitions` defaults to `1`. Other content types are treated as raw YAML. Raw YAML and the decoded JSON `scenario` string are limited to 1 MiB. The JSON request envelope allows `6 * 1 MiB + 64 KiB` for escaping. An oversized request envelope returns `413`; a decoded YAML string over its limit or invalid scenario/repetition returns `400`.
+
+Repeated submissions reserve a separate run ID and result record for every iteration, sharing `batchId`, `iteration`, and `repetitions`. Runs execute sequentially; a failed or canceled iteration cancels the queued remainder. Stopping any member while its repetition batch is still active cancels that batch. For `repetitions > 1`, every iteration, including the last, fences and removes its Peers before finalization. Only a naturally successful single run may retain Peers when its YAML omits `stop-all`.
+
+The stop endpoint returns `202` once cancellation is requested, before cleanup completes. Observe `/api/v1/experiments` or the snapshot until the final state is recorded. A run with no remaining cancellation handle returns `404`. SSE sends an initial `event: snapshot`, subsequent full snapshots on state updates, and keepalive comments every 15 seconds; it does not provide event-ID replay. `/api/v1/events` contains at most the 300 most recent events across live Controller state.
+
 From the repository root:
 
 ```bash
@@ -43,13 +56,32 @@ Raw events are stored at `data/runs/<run-id>/events.jsonl`; the exact input is s
 
 Use **Download results** in the Dashboard to export a run as ZIP. **Saved results** also lists files retained from previous Controller sessions; **Refresh** reloads that list. Running experiments offer **Download snapshot**, which contains the records saved when the download starts. These exports include the full saved event log, independently of the 300-event recent buffer. See [result downloads](monitoring.md#download-experiment-results) for archive contents and collection limits.
 
-The Agent exposes this internal operational endpoint for Controller-driven cleanup:
+## Internal cluster endpoints
+
+These REST/JSON endpoints serve component communication. Registration, heartbeats, and forwarded events are sent **to the Controller**; lifecycle commands are sent **to an Agent**.
+
+| Caller → server | Method | Path | Purpose |
+|---|---|---|---|
+| Agent → Controller | `POST` | `/api/v1/agents/register` | Register the Agent instance |
+| Agent → Controller | `POST` | `/api/v1/agents/heartbeat` | Report Agent and Peer snapshots |
+| Agent → Controller | `POST` | `/api/v1/events/batch` | Forward up to 5000 events per batch |
+| Controller → Agent | `GET` | `/api/v1/status` | Refresh Agent and Peer state |
+| Controller → Agent | `POST` | `/api/v1/nodes` | Create a Peer from `CreateNodeRequest` |
+| Controller → Agent | `DELETE` | `/api/v1/nodes/{nodeId}` | Request one Peer's shutdown |
+| Controller → Agent | `POST` | `/api/v1/nodes/{nodeId}/publish` | Proxy a publish request |
+| Peer → Agent | `POST` | `/api/v1/nodes/{nodeId}/status` | Report this Peer's latest status |
+| Peer → Agent | `POST` | `/api/v1/telemetry` | Submit a telemetry batch |
+| Agent → Peer | `GET` / `POST` | `/health` / `/publish` | Check readiness or publish through the Peer HTTP API |
+
+The Agent additionally exposes this Controller-driven cleanup endpoint:
 
 | Method | Agent path | Description |
 |---|---|---|
 | `DELETE` | `/api/v1/runs/{runId}/nodes?generation=N` | Requires an unsigned `generation`; atomically raises the run fence through N, rejects later creates at generation N or below, stops existing nodes in those generations, and returns `202 Accepted` |
 
-This endpoint and the other Controller-to-Agent registration, heartbeat, node lifecycle, publish, and batched-telemetry endpoints use REST/JSON. They are internal cluster and operations APIs, not client-facing Controller APIs, and may change independently.
+Internal endpoints may change independently of the operator API. Request and snapshot field definitions are in [`internal/model/model.go`](../internal/model/model.go); handlers are in [`internal/controller/api.go`](../internal/controller/api.go) and [`internal/agent/api.go`](../internal/agent/api.go).
+
+## Authentication
 
 `KPL_API_TOKEN` is one shared Bearer credential for mutating KPL APIs, not a Swarm join token, Docker permission, or Grafana password. Use the same value for the Controller and every Agent; Agents pass it to their Peers automatically. It is required by the Swarm stack and optional in Compose/the CLI. An empty value disables the token check. There are no per-user roles or scoped tokens.
 

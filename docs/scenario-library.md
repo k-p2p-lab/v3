@@ -17,6 +17,8 @@ The Dashboard stores reusable, validated YAML scenarios on the Controller. Libra
 
 Names are trimmed, required, limited to 128 Unicode characters, and cannot contain control characters. YAML is required, limited to 1 MiB, and must pass normal scenario validation before it is stored. Names do not have to be unique; each record receives its own generated ID. The list is ordered by most recent update.
 
+The library name and YAML's top-level `name` are independent: the former labels the saved editor input, while the latter names experiment runs. Saving validates the [scenario schema](scenario-reference.md); it does not reserve Agent capacity or test Docker, kernel support, or connectivity.
+
 ## REST API
 
 All request and response bodies use JSON. List responses omit YAML so opening a large library remains inexpensive; fetch an individual record before editing it.
@@ -29,7 +31,7 @@ All request and response bodies use JSON. List responses omit YAML so opening a 
 | `PUT` | `/api/v1/scenarios/{id}` | `{ "name": "…", "yaml": "…" }` | `200` with the updated record |
 | `DELETE` | `/api/v1/scenarios/{id}` | — | `204` with no body |
 
-When `KPL_API_TOKEN` is configured, `POST`, `PUT`, and `DELETE` require `Authorization: Bearer <token>`. Reads remain public under the Controller's current authentication policy. Invalid input returns `400`, an oversized request returns `413`, and a missing or invalid ID returns `404`.
+When `KPL_API_TOKEN` is configured, `POST`, `PUT`, and `DELETE` require `Authorization: Bearer <token>`. Reads remain public under the Controller's current authentication policy. Invalid input, including decoded YAML over 1 MiB, returns `400`. The JSON request envelope allows `6 * 1 MiB + 64 KiB` to accommodate escaped characters; exceeding that envelope returns `413`. Unknown JSON fields and trailing JSON values are rejected. A missing or invalid ID returns `404`; storage errors return `500`. IDs contain 32 lowercase hexadecimal characters.
 
 ```sh
 curl --fail http://localhost:8080/api/v1/scenarios
@@ -47,3 +49,5 @@ JSON
 Records are stored as individual JSON files under `<data-dir>/scenarios`. Compose and Swarm mount the Controller's persistent data volume at `/var/lib/kpl/data`, so ordinary service restarts and `scripts/swarm.sh remove` preserve the library. Back up the entire Controller data directory to keep both the scenario library and experiment results. The library is local to that Controller and is not replicated between control nodes.
 
 The Controller writes each record through a temporary file and atomic filesystem operation. It rejects malformed or unexpected record content when listing or loading the library rather than returning a partially trusted scenario.
+
+Storage, payload limits, and validation are implemented in [`internal/controller/scenarios.go`](../internal/controller/scenarios.go); the editor workflow is in [`internal/webui/static/app.js`](../internal/webui/static/app.js).

@@ -4,9 +4,11 @@
 
 `compose.yaml`은 단일 Docker 호스트용입니다. 다중 서버에서는 manager에서 `scripts/swarm.sh`로 `stack.swarm.yaml`을 배포·관리합니다. Swarm은 **선택한 서버마다 Agent 하나**를 유지하고, Controller가 실험의 Peer를 Agent에 배분합니다. Peer는 해당 서버의 독립 Docker 컨테이너입니다. Swarm 서비스처럼 Peer를 다른 서버로 자동 재배치하지 않습니다.
 
+실행 가능한 배포 근거는 [`stack.swarm.yaml`](../stack.swarm.yaml), [`scripts/swarm.sh`](../scripts/swarm.sh), [`scripts/swarm-config.sh`](../scripts/swarm-config.sh)입니다. 실제 서비스·네트워크 대응은 [v3 아키텍처](architecture.kr.md)를, 개념 아키텍처는 [Hub](https://github.com/k-p2p-lab/hub)를 참고하십시오.
+
 ## 배포 전 준비
 
-Linux 서버들이 이미 같은 Swarm에 가입되어 있고, rootful Docker와 userns-remap 미사용 구성을 갖춘 상태에서 시작합니다. manager에 이 저장소와 Docker CLI, coreutils의 `timeout`, 일반 POSIX 셸 유틸리티를 준비하십시오. 저장소 디렉터리에서 현재 Docker context가 가리키는 **active Swarm manager**를 대상으로 실행합니다. worker마다 저장소를 복사하거나 Agent를 수동으로 시작할 필요는 없습니다.
+Linux 서버들이 이미 같은 Swarm에 가입되어 있고, rootful Docker와 userns-remap 미사용 구성을 갖춘 상태에서 시작합니다. manager에 이 저장소와 Docker CLI, coreutils의 `timeout`, `-f`를 지원하는 `readlink`, `awk`, 일반 POSIX 셸 유틸리티를 준비하십시오. 저장소 디렉터리에서 현재 Docker context가 가리키는 **active Swarm manager**를 대상으로 실행합니다. worker마다 저장소를 복사하거나 Agent를 수동으로 시작할 필요는 없습니다.
 
 Swarm 가입은 이미지 registry 생성을 의미하지 않습니다. manager와 모든 대상 노드에서 접근할 수 있는 registry가 필요하며, 필요한 인증과 HTTPS 신뢰 설정은 미리 준비해야 합니다. helper는 registry를 설치하거나 Docker daemon의 전역 TLS/insecure-registry 설정을 변경하지 않습니다. 예를 들어 기존 registry가 있다면 아래 이미지 대신 `172.20.4.171:5000/kpl-v3:v3`를 사용할 수 있습니다. HTTP registry라면 관련 Docker daemon이 이를 사용하도록 사전에 설정되어 있어야 합니다.
 
@@ -101,6 +103,8 @@ sh scripts/swarm.sh config
 `KPL_CONTROL_NODE_ID`는 **데이터 volume을 보관하는 노드의 정확한 Node ID**로 고정하여 Controller·Prometheus·Grafana가 빈 로컬 volume을 가진 다른 서버로 이동하지 않게 하십시오. `nodes`로 선택할 노드를 조회합니다. helper의 기본 최소 Agent 수는 1이며 위 절차에서는 `KPL_MIN_AGENTS=2`를 명시했습니다. 사전 검사의 최소 수 조건은 UI에서 실제 등록과 여유 슬롯을 확인하는 절차를 대체하지 않습니다.
 
 helper는 `.env.swarm`의 허용된 `KEY=VALUE` 항목을 **문자 그대로** 읽으며 파일을 source하거나 셸 표현식을 실행하지 않습니다. 바깥쪽 한 쌍의 따옴표는 제거하지만 변수·명령 치환·escape를 확장하지 않습니다. export된 환경변수가 파일보다 우선하므로 파일 변경이 적용되지 않은 것 같으면 `config`를 확인하십시오. `sudo`는 환경변수를 제거할 수 있으므로 같은 계정을 사용하고 일상 설정은 helper 파일에 보관합니다. 다른 파일은 `sh scripts/swarm.sh --env-file /path/to/lab.env config`로 선택합니다. Compose의 `.env`는 읽지 않습니다.
+
+`publish`에서 사용자 지정 설정 파일을 사용하려면 저장소 밖이나 [`.dockerignore`](../.dockerignore)가 제외하는 루트의 `.env.*` 경로에 두십시오. helper는 빌드 전에 지정 경로와 symlink의 최종 대상을 검사하고, 제외 여부를 확인할 수 없는 저장소 내부 경로와 `Dockerfile.dockerignore` override를 거부합니다. 이를 통해 helper의 자격 증명 파일이 이미지 build context에 전달되지 않도록 합니다.
 
 Agent는 배치된 노드의 로컬 Docker socket만 사용하며 manager API 접근이 필요 없습니다. `{{.Service.Name}}-{{.Node.ID}}`로 ID를 만들고 자신의 task가 연결된 Peer overlay IPv4를 `advertise-url`과 `self-url`로 사용합니다. 해당 daemon의 Swarm `NodeAddr`를 읽어 host-mode 포트를 통한 별도 metrics URL도 알립니다. control API는 overlay 내부 TCP 8090에 유지되고 게시되지 않으며 Peer control 및 libp2p 포트도 게시하지 않습니다. 서비스 VIP나 공통 DNSRR 주소는 개별 Agent를 안정적으로 식별할 수 없습니다. Agent는 시작 시 실제 로컬 image ID를 확인하여 Peer 생성에 사용하므로 같은 노드의 Agent·Peer 바이너리가 일치합니다. [Swarm global 서비스와 템플릿](https://docs.docker.com/engine/swarm/services/)
 
@@ -214,9 +218,9 @@ sh scripts/swarm.sh status
 
 capacity는 Peer 개수의 admission 제한이며 CPU·메모리 예약이나 cgroup 한도가 아닙니다. Agent의 Swarm resource 제한을 바꾸어도 형제 컨테이너인 Peer에 전파되지 않습니다. 제공된 stack은 모든 Agent에 동일한 `KPL_AGENT_CAPACITY`를 적용합니다. 서버별 capacity를 달리하는 별도 Agent 서비스 그룹은 이 helper의 지원 범위에 포함되지 않습니다. CPU/RAM/FD/conntrack 및 Docker daemon 부하를 측정해 capacity를 정하십시오.
 
-동시 실험의 예약은 Controller에서 직렬화합니다. Agent는 Docker 생성부터 **삭제 완료 확인까지** 슬롯을 유지하고, 삭제 실패도 점유량에 포함합니다. Controller는 DELETE 응답만으로 슬롯을 재사용하지 않습니다. 네트워크 단절로 보고가 10초 넘게 없으면 신규 배치에서 제외하며, 이전 Agent 프로세스나 순서가 뒤집힌 보고가 현재 노드·용량을 덮어쓰지 않도록 검사합니다. 같은 ID의 새 Agent는 이전 프로세스의 online 유효 시간이 끝난 뒤 등록됩니다.
+동시 실험의 예약은 Controller에서 직렬화합니다. Agent는 생성 요청 수락부터 **삭제 완료 확인까지** 슬롯을 유지하므로 Docker 생성·시작 대기 시간도 포함하며, 삭제 실패도 점유량에 포함합니다. Controller는 DELETE 응답만으로 슬롯을 재사용하지 않습니다. 네트워크 단절로 보고가 10초 넘게 없으면 신규 배치에서 제외하며, 이전 Agent 프로세스나 순서가 뒤집힌 보고가 현재 노드·용량을 덮어쓰지 않도록 검사합니다. 같은 ID의 새 Agent는 이전 프로세스의 online 유효 시간이 끝난 뒤 등록됩니다.
 
-Docker 생성 admission과 생성 이후 설정 복사·시작·주소 확인에는 각각 45초의 예산을 적용합니다. 데몬의 생성 대기가 시작 단계 예산까지 소모하지 않도록 분리했습니다. 원래 요청의 더 짧은 deadline과 취소는 계속 적용됩니다. 혼잡한 서버에서 이 제한을 반복해서 초과하면 join `parallelism`과 capacity를 낮추고 디스크·데몬 부하를 점검하십시오.
+Docker 생성 admission에는 45초의 예산을 적용합니다. 이후 설정 복사·시작·주소 확인은 새로 시작하는 45초 예산을 공유합니다. 원래 요청의 deadline이 더 짧으면 두 단계 모두 이를 따릅니다. admission 도중 취소는 늦게 생성된 컨테이너를 정리할 수 있도록 제한 시간 안에서 생성 결과를 확보할 때까지 보류하며, 시작 단계는 즉시 취소할 수 있습니다. [`internal/agent/docker.go`](../internal/agent/docker.go)를 참고하십시오. 혼잡한 서버에서 이 제한을 반복해서 초과하면 join `parallelism`과 capacity를 낮추고 디스크·데몬 부하를 점검하십시오.
 
 Docker는 일반적인 overlay에 `/24` 규모를 권장합니다. 주소에는 Peer뿐 아니라 서비스 task·endpoint도 포함되므로 `서버 수 × capacity`를 주소 수만큼 꽉 채우지 마십시오. 기본 20은 시작용 설정이며 성능 보장이 아닙니다. v2의 `/16`을 그대로 확대하거나 capacity만 올리는 방식으로 수천 Peer 지원을 주장할 수 없습니다. 현재 구성은 단일 공통 Peer overlay를 사용하므로 수백·수천 Peer에는 여러 네트워크 간 도달성 설계와 별도 부하 시험이 필요합니다. [Swarm overlay 크기 제한](https://docs.docker.com/engine/swarm/networking/#overlay-network-size-limitations)
 
@@ -249,9 +253,9 @@ Controller는 단일 인스턴스이며 공유 DB/leader election을 구현하�
 
 ## 검증 범위
 
-manager 명령 추가 후 Linux에서 전체 Go 회귀 테스트와 `test-swarm-agent.sh`, `test-check-swarm.sh`, `test-swarm.sh`를 통과했습니다. 새 관리 명령의 셸 테스트는 Docker 응답을 모사하여 철거 순서, 다른 stack 변경 방지, 실패·이력 부재·조회 오류 시 중단, 재시도와 설정 파일 처리를 검증합니다.
+현재 Go 회귀 suite와 셸 회귀 네 개인 `test-swarm-agent.sh`, `test-check-swarm.sh`, `test-swarm-config.sh`, `test-swarm.sh`는 `make test-linux` 또는 `docker build --target test -t kpl-v3:test .`로 실행합니다. 셸 테스트는 Docker 응답을 모사하여 철거 순서, 다른 stack 변경 방지, 실패·이력 부재·조회 오류 시 중단, 재시도와 설정 파일 처리를 검증하며 실제 클러스터를 배포하지 않습니다. 별도 브라우저 테스트와 명시적으로 활성화하는 커널 테스트는 [개발 검사](development.kr.md#컨테이너와-브라우저-회귀-검사)를 참고하십시오.
 
-별도의 Docker 29.7.2 데몬 하나에서도 SIGTERM 종료용 Controller·Agent 테스트 서비스로 `remove-node` → `add-node` → 전체 `remove`를 실행했습니다. 정상 종료의 `shutdown / PID 0 / exit 0`, 재배치 후 새 task 생성, 최종 stack 서비스 0개를 확인했습니다. 대상이 아닌 노드를 제외하는 배치 조건의 추가·제거에서는 실행 중 task ID가 유지됐습니다. Controller는 replica 수를 유지한 채 배치를 중지하여 종료 이력의 즉시 삭제를 방지하고, 한 번도 노드에 할당되지 않은 대기·취소 task는 종료 확인에서 제외합니다. 이 검증은 관리 명령과 실제 Swarm 상태 전이를 대상으로 하며, 새 이미지의 registry pull이나 실제 Peer 실험 전체를 다시 실행한 결과는 아닙니다.
+이전 검증 기록은 별도 Docker 29.7.2 daemon에서 SIGTERM 종료용 Controller·Agent 테스트 서비스로 `remove-node`, `add-node`, 전체 `remove`를 실행했다고 보고합니다. 정상 종료의 `shutdown / PID 0 / exit 0`, 재배치 후 새 task, 최종 stack 서비스 0개, 다른 노드를 제외할 때 영향 없는 실행 중 task ID 유지가 기록되어 있습니다. 원본 실행 산출물은 이 저장소에 포함되어 있지 않으므로 현재 checkout이나 전체 registry·Peer 실험의 검증 결과가 아닌 과거 보고입니다. 현재 helper가 Controller의 replica 수를 유지한 채 배치를 중지하고, 노드에 할당되지 않은 대기·취소 task를 종료 확인에서 제외하는 동작은 [`scripts/swarm.sh`](../scripts/swarm.sh)에서 확인할 수 있습니다.
 
 일반 Swarm 사전 검사는 `sh scripts/swarm.sh check`를 사용하십시오. helper가 설정을 불러와 배포 검사를 실행합니다. [Linux 가이드](linux-deployment.kr.md#서버-준비와-실행)의 별도 호스트 로컬 커널 검사는 선택적 문제 진단이며, 모든 worker에 이 저장소를 복사해야 한다는 뜻은 아닙니다. 추가 로컬 도구가 필요하고 일회용 컨테이너를 검사합니다. 배포 사전 검사나 로컬 커널 검사만으로 분산 smoke 실험·실제 cross-host VXLAN 통신·처리량 측정을 대체할 수는 없습니다.
 
@@ -259,7 +263,7 @@ manager 명령 추가 후 Linux에서 전체 Go 회귀 테스트와 `test-swarm-
 
 ### 2026-09-04 기존 stack 실행 검증
 
-아래 기록은 manager 관리 CLI `scripts/swarm.sh` 추가 전의 stack 검증입니다. 새 CLI의 `init/deploy/add-node/remove-node/remove` 전체 경로를 실제 클러스터에서 검증한 결과는 아닙니다.
+아래 과거 기록은 manager 관리 CLI `scripts/swarm.sh` 추가 전이며 원본 실행 아카이브는 이 저장소에 포함되어 있지 않습니다. 현재 checkout이나 CLI의 `init/deploy/add-node/remove-node/remove` 전체 경로를 실제 클러스터에서 검증한 결과는 아닙니다.
 
 검증 환경은 **동일 WSL2 Linux 커널 위의 격리된 Docker 데몬 두 개**입니다. Docker 29.7.2의 manager·worker와 실제 attachable overlay를 구성했습니다. 기존 호스트의 Swarm 상태는 변경하지 않았습니다. 이는 두 데몬 사이의 배치·VXLAN·서비스 탐색 검증이며, 서로 다른 물리 서버의 NIC·MTU·장애·대규모 처리량 검증은 아닙니다. 이미지는 양쪽 데몬에 같은 로컬 이미지를 미리 적재했으며 registry 인증·pull 경로는 별도 검증 대상입니다.
 

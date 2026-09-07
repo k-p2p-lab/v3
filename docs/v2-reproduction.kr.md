@@ -1,8 +1,10 @@
-[English](v2-reproduction.md) | 한국어
-
 # v2 시나리오·네트워크 실험 재현 범위
 
+[English](v2-reproduction.md) | 한국어
+
 검토 기준은 `kpl-v2`의 실제 Controller/Peer 코드와 `exp/exp-2603_churn-02.sh`입니다. 설명 문서와 실행 코드가 다를 때는 실행 코드를 기준으로 삼았습니다. 아래 설정으로 실험의 주요 조건을 재현할 수 있으나, 과거 실행의 패킷 순서나 토폴로지가 동일해지는 것은 아닙니다.
+
+이 호환성 세부 사항은 v3에서 관리합니다. 프로젝트 공통 버전 이력과 연구 배경은 [Hub](https://github.com/k-p2p-lab/hub)를 참고하십시오.
 
 ## 컨테이너 격리와 배치
 
@@ -14,7 +16,7 @@ v2의 parallel join은 한 Worker 호스트를 무작위 선택한 뒤 ServiceCr
 
 Swarm 다중 서버용 [배포 구성과 확장성 검토](swarm.kr.md)를 추가했습니다. Swarm은 global Agent를 서버별로 배치하고 Controller가 Peer를 분배합니다. Agent task 재시작은 담당 Peer를 정리하며, v2의 Peer Service 재스케줄링을 그대로 재현하지는 않습니다. Peer 광고 주소·Agent별 직접 접근·삭제 완료까지의 capacity 보존·전체 Agent 모니터링을 반영했습니다.
 
-생성 도중 실험을 취소하더라도 Docker create의 응답을 제한시간 내 기다려 컨테이너 ID를 확보한 뒤 제거합니다. CLI만 먼저 종료하여 daemon에 늦게 생성되는 컨테이너를 남기는 경합을 방지합니다. Docker가 삭제 진행 중이라고 응답하면 실제 소멸 여부를 확인하며, 기본 `jobShutdownTimeout`과 Compose 종료 대기는 `3m`입니다. Docker admission 자체의 deadline 초과나 daemon 장애는 오류로 보고하며, 이후 재시작 시 소유 label로 잔여 컨테이너를 정리합니다.
+생성 도중 실험을 취소하더라도 Docker create의 응답을 제한시간 내 기다려 컨테이너 ID를 확보한 뒤 제거합니다. CLI만 먼저 종료하여 daemon에 늦게 생성되는 컨테이너를 남기는 경합을 방지합니다. Docker가 삭제 진행 중이라고 응답하면 실제 소멸 여부를 확인합니다. 기본 `jobShutdownTimeout`은 `3m`이며 job 종료와 Peer 정리에 각각 적용됩니다. Compose와 Swarm 모두 Controller 종료 유예를 `7m`, 각 Agent 종료 유예를 `4m`로 설정합니다. [종료 절차](linux-deployment.kr.md#종료와-서버-재시작)를 참고하십시오. Docker admission 자체의 deadline 초과나 daemon 장애는 오류로 보고하며, 이후 재시작 시 소유 label로 잔여 컨테이너를 정리합니다.
 
 ## 네트워크 조건 대응
 
@@ -63,7 +65,7 @@ network:
 | v2 기본 await=false | YAML에서는 `await: false`를 명시 (v3 기본 true) |
 | v2 async for-loop | 서로 다른 job phase로 펼침; `repeat`는 한 job의 순차 반복 |
 | churn 중 발행 대상 소멸 | `onError: continue`로 해당 실패만 기록하고 계속 |
-| 시나리오 정상 종료 후 전체 Peer 정리 | 마지막 `stop-all`을 명시 |
+| 단일 실행의 정상 완료 후 전체 Peer 정리 | 마지막 `stop-all`을 명시. 반복 실행(`repetitions > 1`)은 회차 사이에도 자동 정리 |
 
 `onError: continue`는 publish/leave에만 적용하며, 후보 0개도 허용합니다. 작업별 실패는 `phase-operation-failed` 이벤트에 남습니다. 사용자 취소와 phase deadline은 계속 전파되며, 개별 HTTP 요청 timeout은 해당 작업의 실패로 처리합니다. 기본 `fail`은 기존 v3처럼 실패 시 실험을 중단합니다.
 
@@ -73,16 +75,16 @@ Docker Peer lifetime은 v2의 ServiceCreate 반환에 대응하는 **Docker crea
 
 ## 초기 연결과 메시지 크기
 
-Peer는 v2처럼 TCP/Noise/Yamux를 명시적으로 사용합니다. Worker는 bootstrap 후보를 seed로 섞고 첫 연결 성공에서 초기 접속을 끝냅니다. 이후 추가 연결은 DHT/PubSub 동작에 맡깁니다. bootstrap 전체 timeout은 목록 조회와 dial에도 적용됩니다.
+Peer는 v2처럼 TCP/Noise/Yamux를 명시적으로 사용합니다. Worker는 bootstrap 후보를 seed로 섞고 첫 연결 성공에서 초기 접속을 끝냅니다. bootstrap 전체 timeout은 목록 조회와 dial에도 적용됩니다. PubSub 시작 후 v3는 Controller의 동일 run·정확한 topic discovery registry도 3초 간격으로 조회하여 transport 연결을 보충합니다. 후보 순위·연결 예산·실패 재시도는 [`internal/peer/discovery.go`](../internal/peer/discovery.go)에 구현되어 있으며 실제 mesh는 GossipSub가 선택합니다. 이 추가 discovery 경로는 v2와 다르므로 DHT/GossipSub 파라미터가 같더라도 연결 구조와 churn 복구가 달라질 수 있습니다.
 
 v2의 `size`는 PubSub에 전달되는 무작위 바이트 길이입니다. v3에서 `payloadEncoding: raw`를 사용하면 `payloadSize`가 정확히 그 길이입니다. libp2p framing, 서명, TCP/IP 헤더까지 포함한 패킷 크기를 뜻하지는 않습니다. 기본 `envelope`는 전파 지연 계측을 위한 JSON과 base64 때문에 더 큽니다. `topic: '*'`는 선택한 노드가 가진 모든 발행 가능한 topic에 각각 메시지를 발행합니다.
 
-raw 메시지는 SHA-256으로 발행·수신을 연결합니다. 메시지 내부에 시각을 추가하지 않으므로 raw 수신에는 지연값을 제공하지 않으며, 평균/P95 계산에서 제외합니다. raw 트래픽을 사용하는 run은 전용 topic과 네트워크로 분리하십시오. envelope의 run ID 필터를 raw 바이트에는 적용할 수 없습니다.
+raw 발행·수신·중복 이벤트는 `pubsub-` 뒤에 native PubSub 메시지 ID를 16진수로 붙여 연결합니다. 현재 기본 ID는 origin과 sequence를 결합하므로 raw 바이트가 같은 두 발행도 구분됩니다. 메시지에 애플리케이션 시각을 추가하지 않으므로 raw 수신에는 지연값을 제공하지 않으며 평균/P95 계산에서 제외합니다. raw 트래픽을 사용하는 run은 전용 topic과 네트워크로 분리하십시오. envelope의 run ID 필터를 raw 바이트에는 적용할 수 없습니다. [`internal/peer/publish.go`](../internal/peer/publish.go)를 참고하십시오.
 
 ## 관측과 남은 차이
 
 - `wait-ready`는 초기화/API 준비를 뜻하며 mesh 수렴을 보장하지 않습니다. 예제는 별도의 안정화 대기를 둡니다.
-- [dashboard 토폴로지](topology.kr.md)는 현재 Peer 상태를 바탕으로 transport, Kademlia 라우팅 테이블, topic별 GossipSub mesh를 별도로 표시합니다. `TopicPeers`는 구독 Peer 수이며 mesh 차수가 아닙니다. 과거 분석에는 저장된 `graft`/`prune`, `add_peer`/`remove_peer`, `join`/`leave` 이벤트를 함께 사용하고 telemetry 누락을 고려해야 합니다. 결과에는 routing·mesh snapshot의 전체 이력이 포함되지 않습니다.
+- [dashboard 토폴로지](topology.kr.md)는 현재 Peer 상태를 바탕으로 transport, Kademlia 라우팅 테이블, topic별 GossipSub mesh를 별도로 표시합니다. `TopicPeers`는 `len(pubsub.ListPeers(topic))`이며 로컬에서 알고 있는 topic peer 수입니다. mesh 차수나 원격 애플리케이션 구독 세션의 증거가 아닙니다. 과거 분석에는 저장된 `graft`/`prune`, `add_peer`/`remove_peer`, `join`/`leave` 이벤트를 함께 사용하고 telemetry 누락을 고려해야 합니다. 결과에는 routing·mesh snapshot의 전체 이력이 포함되지 않습니다.
 - v3의 타입별 RPC 수는 v2의 physical IHAVE/IWANT counter, 메시지 ID 참조 수는 logical counter에 대응합니다. v3는 protobuf entry 수, IDONTWANT, 로컬 송신 전 drop, PRUNE peer-exchange record, 혼합 RPC 안의 모든 타입도 보존합니다. v2는 이 경우들을 누락하고 IHAVE topic 정보도 버렸습니다. 기존 단순 `graft`/`prune` 이벤트는 로컬 mesh 전이이므로 wire traffic은 별도 `send_*`, `recv_*`, `drop_*` 제어 이벤트와 비교하십시오. [제어 트래픽 정의](experiment-metrics.kr.md#gossipsub-제어-트래픽)를 참고하십시오.
 - interval/lifetime/base delay 샘플은 seed로 재현할 수 있으나 run ID를 포함한 Peer ID, 네트워크 타이밍, 커널 패킷 난수는 동일하지 않습니다. 노드 metadata에 `seed`, `networkRequested`, 실제 `network`를 남기며 Agent의 Peer config 파일에도 실효 설정을 저장합니다.
 - 기본 연결 상한 55와 주요 worker DHT/GossipSub 파라미터는 일치합니다. 그러나 v2 custom PubSub fork 경로의 소스가 제공된 디렉터리에 없어 fork 내부까지 동등성을 검증할 수 없습니다. v3는 공식 라이브러리이며 HopWave는 지원 범위 밖입니다.
@@ -90,9 +92,9 @@ raw 메시지는 SHA-256으로 발행·수신을 연결합니다. 메시지 내�
 
 검토한 핵심 v2 파일: `kpl-controller/internal/handler/event.go`, `internal/docker/docker.go`, `internal/distribution/distribution.go`, `cmd/main.go`, `kpl-peer-app/internal/host/{host,tc}.go`, `internal/dht/dht.go`, `internal/api/publish.go`.
 
-## 검증 기록
+## 과거 검증 기록
 
-2026-09-04, Docker Desktop Linux에서 검증했습니다.
+아래 보존된 기록은 2026-09-04 Docker Desktop Linux 검증을 보고합니다. 원본 실행 아카이브는 이 저장소에 포함되어 있지 않으므로 수치는 현재 checkout의 검증 결과가 아닌 과거 관측으로 보십시오. 현재 회귀 명령과 패키지 테스트·커널 통합 검증의 구분은 [개발 가이드](development.kr.md#컨테이너와-브라우저-회귀-검사)를 참고하십시오.
 
 - 전체 `go test -buildvcs=false ./... -timeout 60s` 및 모든 예제 YAML 검증 통과.
 - 통합 run `run-20260904T021417Z-581b`: 컨테이너 4개의 서로 다른 network namespace, host mount/port binding 없음 확인.

@@ -4,6 +4,8 @@ English | [Korean](linux-deployment.kr.md)
 
 The deployment target is Linux Docker Engine. Windows can serve as a development host, but Peer execution, network control, and shutdown verification run in Linux containers. The supplied Compose configuration targets **one Linux server with rootful Docker, no userns-remap, and an IPv4 user-defined bridge**.
 
+This guide describes [`compose.yaml`](../compose.yaml), [`Dockerfile`](../Dockerfile), and [`scripts/check-linux.sh`](../scripts/check-linux.sh). For the mapping between v3 components and their actual networks, see [architecture](architecture.md); project-wide conceptual material belongs in the [Hub](https://github.com/k-p2p-lab/hub).
+
 If your servers are already joined to a Swarm, follow the [manager workflow from preparation through experiment downloads and removal](swarm.md) instead. Its `scripts/swarm.sh` commands manage the shared deployment; the Compose commands below are for a single server.
 
 ## Prepare and Start the Server
@@ -51,6 +53,8 @@ On SIGTERM, the Controller stops accepting new experiments and waits for HTTP co
 
 Running only `docker compose down` can stop the Agent first because services stop in reverse dependency order. Agents also clean up their own Peers, but use the sequence above to preserve the Controller's final state record as well. After forced termination or power loss, Agent startup reclaims leftover managed containers with the same Agent ID and network. It does not automatically resume the previous experiment.
 
+Controller shutdown cancels active runs. A run that already completed without `stop-all` can still have live Peers, which are removed by the subsequent Agent shutdown. A Controller crash alone does not stop those Peers. On Controller restart, retained results remain available in **Saved results**, while previously active records appear as `interrupted`; this state does not verify Peer cleanup.
+
 The Controller fails at startup if its data directory is not writable. Run metadata is written to a temporary file, closed, and then replaced by a rename on the same filesystem, preventing Linux readers from seeing partially written JSON. Writes are not forcibly synchronized: an fsync at every phase would delay experiment timing and telemetry processing. The event log uses append writes. Neither file guarantees that every record survives a power loss on disk.
 
 ## Docker Permissions and Storage
@@ -83,9 +87,11 @@ docker build --target test -t kpl-v3:test .
 
 The runtime image is built with `CGO_ENABLED=0`; the final Alpine image does not include Go build tools. `.gitattributes` preserves LF line endings for shell scripts, Dockerfiles, and Makefiles. Scripts are invoked as `sh scripts/check-linux.sh`, so they do not depend on executable bits in a Windows checkout.
 
-The current validation used Docker Desktop's Linux kernel `6.18.33.2-microsoft-standard-WSL2` on amd64. This exercises real Linux syscalls, namespaces, and tc, but does not replace testing the target server's distribution, kernel, SELinux policy, cross-host overlay, or performance at scale. Run the preflight check and `examples/monitoring.yaml` again on the deployment server to verify configuration and collected results.
+The test target runs the Go package suite and four Swarm shell regression scripts. It does not enable the opt-in two-container netem integration test, and its simulated Docker responses do not validate a physical cluster. Browser regression tests are separate; see [development checks](development.md#container-and-browser-regression-checks).
 
-### Validation Results: 2026-09-04
+### Historical Validation Record: 2026-09-04
+
+The retained record below reports Docker Desktop Linux kernel `6.18.33.2-microsoft-standard-WSL2` on amd64. The original run archives are not included in this repository, so these observations are historical reports, not independently reproducible evidence for the current checkout. Even a fresh pass in that environment does not replace testing the target server's distribution, kernel, SELinux policy, cross-host overlay, or performance at scale. Run the preflight check and `examples/monitoring.yaml` on the deployment server to verify configuration and collected results.
 
 | Item | Result |
 |---|---|

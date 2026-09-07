@@ -4,13 +4,14 @@
 
 [K-P2PLab Hub](https://github.com/k-p2p-lab/hub)는 프로젝트 공통 개념과 연구 배경을 관리하며, 이 저장소는 실행 가능한 v3 구현, 배포 절차, 설정과 버전별 동작을 관리합니다.
 
-K-P2PLab v3는 하나 이상의 Linux 호스트에서 재현 가능한 libp2p Kademlia 및 PubSub 실험을 실행합니다. Controller가 시나리오를 스케줄링하고 호스트마다 Agent 하나가 동작하며, 각 Peer는 독립된 Docker 컨테이너와 네트워크 네임스페이스에서 실행됩니다. 웹 대시보드와 기본 제공 Prometheus/Grafana 스택에서 토폴로지, churn, 전파와 저장 결과를 확인할 수 있습니다.
+K-P2PLab v3는 하나 이상의 Linux 호스트에서 설정 가능한 libp2p Kademlia 및 PubSub 실험을 실행합니다. Controller는 시나리오 스케줄링과 웹 Dashboard 제공을 맡고, Agent는 로컬 Docker daemon으로 Peer 컨테이너를 생성하고 관리합니다. 기본 Compose 배포는 한 호스트에 Agent 두 개를 실행하며, Swarm은 선택한 호스트마다 Agent 하나를 실행합니다. 두 기본 배포 모두 각 Peer에 독립된 컨테이너와 네트워크 네임스페이스를 제공합니다. Prometheus/Grafana는 수집된 telemetry를 보여 주고, Controller는 다운로드 가능한 실행 결과를 보존합니다.
 
 코드, UI와 문서의 기본 언어는 영어이며 한국어 문서는 대응하는 `.kr.md` 파일로 유지합니다.
 
 ## 핵심 기능
 
-- join, leave, 준비 장벽, publish, phase 반복, 백그라운드 잡과 seeded distribution을 지원하는 버전 2 YAML 시나리오
+- join, leave, 준비 장벽, publish, phase 반복, 백그라운드 잡과 seeded distribution을 지원하는 버전 1·2 YAML 시나리오
+- Kademlia 설정과 GossipSub, FloodSub, RandomSub router 선택
 - Peer별 delay, jitter, loss, duplication, corruption, reordering과 bandwidth 설정을 적용하는 격리 컨테이너
 - 단일 호스트 Docker Compose 및 용량 기반 Peer 배치를 지원하는 다중 서버 Docker Swarm 배포
 - Agent 영역과 topic 필터를 제공하는 실시간 Kademlia, GossipSub GRAFT 및 transport 토폴로지
@@ -26,6 +27,8 @@ K-P2PLab v3는 하나 이상의 Linux 호스트에서 재현 가능한 libp2p Ka
 
 권한, 원격 접속, 저장소와 안전한 종료 방법은 [Linux 배포 가이드](docs/linux-deployment.kr.md)를 참고하십시오.
 
+[개발용 process 런타임](docs/development.kr.md)은 Peer를 자식 프로세스로 실행하고 Peer 네트워크 조건을 거부하며 Docker 네임스페이스 격리를 제공하지 않습니다. 동일한 시나리오 seed는 distribution 입력을 반복하지만 실행 타이밍, 생성 payload, Peer identity와 프로토콜 결과까지 결정적으로 만들지는 않습니다.
+
 ## 로컬 빠른 시작
 
 ```sh
@@ -37,6 +40,8 @@ docker compose up -d --no-build
 ```
 
 [Dashboard](http://localhost:8080), [Grafana](http://localhost:3000/d/kpl-experiments), [Prometheus](http://localhost:9090)를 여십시오. 대시보드에서 기본 시나리오를 실행할 수 있습니다. 종료할 때는 `make stop`을 사용하십시오.
+
+모니터링 예제는 [`examples/monitoring.yaml`](examples/monitoring.yaml)을 실행하십시오. [모니터링과 결과](docs/monitoring.kr.md)에서 Grafana의 run 선택과 이벤트 로그·파생 지표 다운로드 방법을 확인할 수 있습니다. Controller 재시작 후에도 결과 ZIP을 받을 수 있지만 이 파일에서 실행이나 실시간 counter를 복원하지는 않습니다.
 
 ## Swarm 빠른 시작
 
@@ -55,6 +60,8 @@ sh scripts/swarm.sh scenario
 manager에도 Agent를 실행해야 한다면 `--workers` 대신 `--all`을 사용합니다. `access`가 출력한 Controller 주소를 열고 `scenario` 출력 내용을 붙여 넣은 다음 `credentials`가 출력한 API token을 사용하십시오. `access`는 선택된 각 Agent 노드의 metrics URL도 표시합니다. TCP `KPL_AGENT_METRICS_PORT`(기본 `9091`)는 control 노드에서 허용하고, 운영자가 해당 링크를 직접 열 때에는 운영자 브라우저가 속한 신뢰 관리망에서도 허용하십시오. helper는 배포 시점의 이미지 digest를 확인해 고정하므로 tag를 갱신할 때 SHA를 직접 수정할 필요가 없습니다. 운영 클러스터를 관리하거나 철거하기 전에 [전체 Swarm 절차](docs/swarm.kr.md)를 확인하십시오.
 
 ## 문서
+
+목적, 연구, 설계 원칙과 개념 아키텍처는 [Hub](https://github.com/k-p2p-lab/hub)에서 시작하십시오. 아래 가이드는 현재 v3 구현과 한계를 설명합니다.
 
 | 문서 | 내용 |
 |---|---|
