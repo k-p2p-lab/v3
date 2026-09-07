@@ -135,12 +135,7 @@ func newServer(ctx context.Context, config model.PeerProcessConfig, logger *slog
 		startedAt:  time.Now().UTC(),
 	}
 	if *config.NodeConfig.Kademlia.Enabled {
-		dhtConfig, err := dhtOptions(config.NodeConfig.Kademlia)
-		if err != nil {
-			_ = h.Close()
-			return nil, err
-		}
-		dhtInstance, err := dht.New(ctx, h, dhtConfig...)
+		dhtInstance, err := server.newDHT(ctx)
 		if err != nil {
 			_ = h.Close()
 			return nil, fmt.Errorf("create dht: %w", err)
@@ -234,9 +229,19 @@ func (s *Server) startPubSub(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	authorOptions, err := gossipAuthorOptions(config, s.host)
+	if err != nil {
+		return err
+	}
+	options = append(options, authorOptions...)
+	discoveryOptions, err := s.gossipDiscoveryOptions()
+	if err != nil {
+		return err
+	}
+	options = append(options, discoveryOptions...)
 	options = append(options, pubsub.WithRawTracer(&messageTracer{server: s}))
 	s.mesh.configure(config.Enabled != nil && *config.Enabled && config.Router == "gossipsub")
-	if config.Score != nil && config.ScoreInspectInterval != "" {
+	if config.Score != nil && config.Score.IsEnabled() && config.ScoreInspectInterval != "" {
 		interval, parseErr := time.ParseDuration(config.ScoreInspectInterval)
 		if parseErr != nil {
 			return fmt.Errorf("parse score inspect interval: %w", parseErr)
@@ -250,7 +255,11 @@ func (s *Server) startPubSub(ctx context.Context) error {
 	case "gossipsub":
 		ps, err = pubsub.NewGossipSub(ctx, s.host, options...)
 	case "floodsub":
-		ps, err = pubsub.NewFloodSub(ctx, s.host, options...)
+		if len(config.Protocols) > 0 {
+			ps, err = pubsub.NewFloodsubWithProtocols(ctx, s.host, gossipProtocolIDs(config), options...)
+		} else {
+			ps, err = pubsub.NewFloodSub(ctx, s.host, options...)
+		}
 	case "randomsub":
 		pubsub.RandomSubD = *config.RandomDegree
 		ps, err = pubsub.NewRandomSub(ctx, s.host, *config.RandomNetworkSize, options...)
@@ -261,19 +270,19 @@ func (s *Server) startPubSub(ctx context.Context) error {
 		return fmt.Errorf("create %s: %w", config.Router, err)
 	}
 	s.pubsub = ps
+	if err := registerGossipValidators(ps, config); err != nil {
+		return err
+	}
 	var subscribedTopics []string
 	for _, topicName := range config.Topics {
-		topic, err := ps.Join(topicName)
+		topic, err := ps.Join(topicName, gossipTopicOptions(config, topicName)...)
 		if err != nil {
 			return fmt.Errorf("join topic %s: %w", topicName, err)
 		}
 		s.topics[topicName] = topic
 		switch config.TopicMode {
 		case "subscribe":
-			var subscriptionOptions []pubsub.SubOpt
-			if config.SubscriptionBufferSize != nil {
-				subscriptionOptions = append(subscriptionOptions, pubsub.WithBufferSize(*config.SubscriptionBufferSize))
-			}
+			subscriptionOptions := gossipSubscriptionOptions(config, topicName)
 			sub, err := topic.Subscribe(subscriptionOptions...)
 			if err != nil {
 				return fmt.Errorf("subscribe topic %s: %w", topicName, err)
@@ -297,7 +306,7 @@ func (s *Server) startPubSub(ctx context.Context) error {
 	for i, topicName := range subscribedTopics {
 		go s.consume(ctx, topicName, s.subs[i])
 	}
-	if strings.TrimSpace(s.config.ControllerURL) != "" {
+	if config.Discovery == nil && strings.TrimSpace(s.config.ControllerURL) != "" {
 		go s.discoveryLoop(ctx)
 	}
 	return nil
@@ -371,6 +380,11 @@ func (s *Server) handlePublish(w http.ResponseWriter, r *http.Request) {
 		// Start the application clock after acquiring the publication gate.
 		// Queueing behind another HTTP publish is not propagation latency.
 		s.publishMu.Lock()
+		if err := s.waitPublishReady(publishCtx, topicName); err != nil {
+			s.publishMu.Unlock()
+			http.Error(w, err.Error(), http.StatusGatewayTimeout)
+			return
+		}
 		message, err := s.preparePublicationWithClock(request, s.telemetry.clockReading())
 		if err != nil {
 			s.publishMu.Unlock()
@@ -397,6 +411,11 @@ func (s *Server) handlePublish(w http.ResponseWriter, r *http.Request) {
 		if known {
 			// A known empty cohort must serialize as [], never as null or missing.
 			fields["targetNodeIds"] = append([]string{}, cohort...)
+		}
+		if s.localPublication() {
+			fields["localPublication"] = true
+			fields["targetNodes"] = 0
+			fields["targetNodeIds"] = []string{}
 		}
 		if !request.CohortCapturedAt.IsZero() {
 			fields["cohortCapturedAt"] = request.CohortCapturedAt.UTC().Format(time.RFC3339Nano)

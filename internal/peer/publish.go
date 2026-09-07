@@ -131,7 +131,12 @@ func (s *Server) publishPreparedMessage(ctx context.Context, topic string, messa
 		return publication{}, err
 	}
 	s.publishing.begin(topic)
-	err := s.topics[topic].Publish(ctx, message.wire)
+	options, err := gossipPublishOptions(s.config.NodeConfig.GossipSub)
+	if err != nil {
+		s.publishing.finish()
+		return publication{}, err
+	}
+	err = s.topics[topic].Publish(ctx, message.wire, options...)
 	id := s.publishing.finish()
 	if err != nil {
 		return publication{}, err
@@ -152,9 +157,9 @@ func (s *Server) messageIdentity(message *pubsub.Message) (string, bool) {
 	}
 	id := message.ID
 	if id == "" {
-		// PubSub normally caches this before delivery. The configured routers all
-		// use the default origin+sequence algorithm; do not mutate the message.
-		id = pubsub.DefaultMsgIdFn(message.Message)
+		// PubSub normally caches this before delivery. Use the same policy as
+		// the router for uncached messages and keep the wire message untouched.
+		id = gossipMessageID(s.config.NodeConfig.GossipSub, message.GetTopic())(message.Message)
 	}
 	local := message.ReceivedFrom == s.host.ID() || message.GetFrom() == s.host.ID()
 	return hex.EncodeToString([]byte(id)), local
@@ -190,8 +195,8 @@ func (s *Server) deliveryEventWithClock(message *pubsub.Message, topic string, r
 		return event, true
 	}
 	// Raw bytes intentionally contain no publisher, run ID, or sent timestamp.
-	// The existing PubSub ID distinguishes even identical raw payloads. It does
-	// not provide application timestamps or embedded run isolation.
+	// The configured PubSub ID correlates raw payloads; content hash policies
+	// intentionally deduplicate identical bytes. Raw data carries no timestamp.
 	if wireID == "" {
 		return model.TraceEvent{}, false
 	}

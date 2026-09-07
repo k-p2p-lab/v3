@@ -461,6 +461,9 @@ test('inspector escapes node/topic text and handles missing mesh values', () => 
   first.peerScores={};first.metadata={pubsubEnabled:'false',dhtEnabled:'false'};
   api.renderTopologyDetails(first);
   assert.ok(output.innerHTML.includes('0 scores · Average: N/A'));
+  first.metadata.scoreEnabled='false';
+  api.renderTopologyDetails(first);
+  assert.ok(output.innerHTML.includes('<dt>Peer scores</dt><dd>Disabled</dd>'));
   assert.ok(output.innerHTML.includes('<dt>PubSub router / topic mode</dt><dd>Off</dd>'));
   assert.ok(output.innerHTML.includes('<dt>DHT mode</dt><dd>Off</dd>'));
 });

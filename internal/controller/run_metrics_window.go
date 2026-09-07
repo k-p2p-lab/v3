@@ -73,6 +73,7 @@ type windowPublication struct {
 	at           time.Time
 	deadline     time.Time
 	valid        bool
+	local        bool
 }
 
 type windowDelivery struct {
@@ -161,9 +162,10 @@ func (w *sessionWindowAccumulator) observe(event model.TraceEvent) {
 					window = parsed
 				}
 			}
+			local, _ := event.Fields["localPublication"].(bool)
 			auditTargets, _ := targetNodeIDs(event.Fields["targetNodeIds"])
 			w.publications[key] = windowPublication{key: key, publisher: event.NodeID, sessionID: event.SessionID,
-				auditTargets: append([]string(nil), auditTargets...), at: event.Timestamp, deadline: event.Timestamp.Add(window), valid: valid}
+				auditTargets: append([]string(nil), auditTargets...), at: event.Timestamp, deadline: event.Timestamp.Add(window), valid: valid, local: local}
 		}
 	}
 	if event.MessageID == "" || event.NodeID == "" || event.Type != "deliver" && event.Type != "duplicate" {
@@ -280,6 +282,10 @@ func (w *sessionWindowAccumulator) summarize(runID string, asOf time.Time, publi
 		}
 	}
 	for key, publication := range w.publications {
+		// Local-only publications have no remote delivery cohort or window.
+		if publication.local {
+			continue
+		}
 		if !publication.valid {
 			result.MeasurementIncomplete = true
 			continue

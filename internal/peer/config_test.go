@@ -305,7 +305,7 @@ func TestConnectionLimitDoesNotImplicitlyEnableSoftConnectionManager(t *testing.
 }
 
 func TestPeerScoreThresholdSkipValidationAndSnapshot(t *testing.T) {
-	_, thresholds, err := peerScoreOptions(model.PeerScoreConfig{
+	_, thresholds, err := peerScoreOptions(model.PeerScoreConfig{Enabled: scoreEnabled(),
 		SkipAtomicValidation: true,
 		Thresholds: model.PeerScoreThresholdsConfig{
 			SkipAtomicValidation: true,
@@ -330,7 +330,7 @@ func TestPeerScoreThresholdSkipValidationAndSnapshot(t *testing.T) {
 }
 
 func TestPeerScoreConfigurationPassesModelAndRouterValidation(t *testing.T) {
-	score := model.PeerScoreConfig{
+	score := model.PeerScoreConfig{Enabled: scoreEnabled(),
 		SkipAtomicValidation: true,
 		DecayInterval:        "1s",
 		DecayToZero:          0.01,
@@ -399,9 +399,9 @@ func TestPubSubOptionsPreserveSupportedZeroLimits(t *testing.T) {
 	}
 }
 
-func TestPeerScoreOptionsRejectUnsupportedAppSpecificWeight(t *testing.T) {
-	_, _, err := peerScoreOptions(model.PeerScoreConfig{AppSpecificWeight: 1})
+func TestPeerScoreOptionsRequireAppSpecificScore(t *testing.T) {
+	_, _, err := peerScoreOptions(model.PeerScoreConfig{Enabled: scoreEnabled(), AppSpecificWeight: 1})
 	if err == nil {
-		t.Fatal("non-zero appSpecificWeight was silently accepted")
+		t.Fatal("non-zero appSpecificWeight without appSpecificScore was silently accepted")
 	}
 }

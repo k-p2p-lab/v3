@@ -761,6 +761,7 @@ func (s *Server) recordCreatedNode(request model.CreateNodeRequest, agentID stri
 			"profile":       node.Profile,
 			"pubsubRouter":  config.GossipSub.Router,
 			"pubsubEnabled": strconv.FormatBool(config.GossipSub.Enabled != nil && *config.GossipSub.Enabled),
+			"scoreEnabled":  strconv.FormatBool(config.GossipSub.Enabled != nil && *config.GossipSub.Enabled && config.GossipSub.Router == "gossipsub" && config.GossipSub.Score != nil && config.GossipSub.Score.IsEnabled()),
 			"allowPublish":  strconv.FormatBool(config.PublishAllowed()),
 			"topicMode":     config.GossipSub.TopicMode,
 			"topics":        strings.Join(config.GossipSub.Topics, ","),

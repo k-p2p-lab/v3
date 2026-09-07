@@ -1,0 +1,156 @@
+version: 2
+name: protocol-options
+seed: 20260907
+
+# Omitted score.enabled is disabled. Only this worker profile opts into scoring.
+# See docs/protocol-options.md for every field and built-in callback policy.
+profiles:
+  tuned:
+    type: full
+    kademlia:
+      mode: server
+      protocolPrefix: /k-p2p-lab/v3
+      bucketSize: 20
+      concurrency: 10
+      resiliency: 3
+      lookupCheckConcurrency: 64
+      routingTableRefreshPeriod: 10m
+      routingTableRefreshTimeout: 10s
+      maxRecordAge: 48h
+      disableAutoRefresh: false
+      disableProviders: false
+      disableValues: false
+      optimisticProvide: false
+      optimisticProvideJobsPoolSize: 60
+      bootstrapTimeout: 60s
+      bootstrapRetryInterval: 1s
+      bootstrapSource: controller
+      queryFilter: {policy: all}
+      routingTableFilter: {policy: all}
+      addressFilter: {policy: non-loopback}
+      # Same-overlay peers share IP groups; enable diversity only deliberately.
+      routingTableDiversity: {enabled: false}
+      datastore: memory
+      validator:
+        mode: default
+        namespaces: {lab: bytes}
+      providerStore: {mode: manager, cleanupInterval: 1h, cacheSize: 256}
+      requestHook: none
+    gossipsub:
+      router: gossipsub
+      topics: [kpl/options]
+      topicMode: subscribe
+      allowPublish: true
+      signaturePolicy: strict-sign
+      messageId: topic-sha256
+      seenMessagesStrategy: last-seen
+      seenMessagesTTL: 2m
+      floodPublish: false
+      peerExchange: true
+      maxMessageSize: 4194304
+      peerOutboundQueueSize: 64
+      validateQueueSize: 64
+      validateThrottle: 8192
+      validateWorkers: 4
+      subscriptionBufferSize: 128
+      peerFilter: {deny: []}
+      subscriptionFilter:
+        allowlist: [kpl/options]
+        maxSubscriptions: 32
+      protocols:
+        - id: /meshsub/1.2.0
+          features: [mesh, px, idontwant]
+        - id: /meshsub/1.1.0
+          features: [mesh, px]
+      protocolMatch: exact
+      topicOptions:
+        kpl/options:
+          messageId: topic-sha256
+          subscriptionBufferSize: 256
+          validator: {format: envelope, maxBytes: 4194304, timeout: 1s, concurrency: 4, inline: false}
+      rpcInspector: {maxMessages: 256, maxSubscriptions: 32, maxControlEntries: 16384}
+      # Omit discovery to keep KPL's budgeted Controller polling.
+      # Explicit controller selects libp2p discovery with the configured connector.
+      discovery:
+        mode: controller
+        ttl: 1m
+        limit: 32
+        connector:
+          cacheSize: 100
+          dialTimeout: 5s
+          minBackoff: 1s
+          maxBackoff: 1m
+          timeUnit: 1s
+          base: 2
+          jitter: full
+          seed: 20260907
+      params:
+        d: 6
+        dLow: 4
+        dHigh: 12
+        dScore: 3
+        dOut: 2
+        dLazy: 6
+        historyLength: 5
+        historyGossip: 3
+        gossipFactor: 0.25
+        gossipRetransmission: 3
+        heartbeatInitialDelay: 100ms
+        heartbeatInterval: 1s
+        slowHeartbeatWarning: 0.1
+        fanoutTTL: 1m
+        prunePeers: 16
+        pruneBackoff: 1m
+        unsubscribeBackoff: 10s
+        connectors: 8
+        maxPendingConnections: 128
+        connectionTimeout: 30s
+        directConnectTicks: 300
+        directConnectInitialDelay: 1s
+        opportunisticGraftTicks: 60
+        opportunisticGraftPeers: 2
+        graftFloodThreshold: 10s
+        maxIHaveLength: 5000
+        maxIHaveMessages: 10
+        maxIDontWantLength: 10
+        maxIDontWantMessages: 1000
+        iWantFollowupTime: 3s
+        iDontWantMessageThreshold: 1024
+        iDontWantMessageTTL: 3
+      score:
+        enabled: true
+        skipAtomicValidation: true
+        appSpecificWeight: 0.5
+        appSpecificScore: {default: 1}
+        topicScoreCap: 100
+        decayInterval: 1s
+        decayToZero: 0.01
+        retainScore: 1m
+        thresholds:
+          skipAtomicValidation: true
+          gossipThreshold: -10
+          publishThreshold: -20
+          graylistThreshold: -40
+          acceptPXThreshold: 0
+          opportunisticGraftThreshold: 1
+        topics:
+          kpl/options:
+            skipAtomicValidation: true
+            topicWeight: 1
+            timeInMeshWeight: 0.01
+            timeInMeshQuantum: 1s
+            timeInMeshCap: 100
+            invalidMessageDeliveriesWeight: -100
+            invalidMessageDeliveriesDecay: 0.9
+      scoreInspectInterval: 1s
+      publish: {readinessMinPeers: 1, readinessTimeout: 5s, local: false}
+
+phases:
+  - {action: join, group: boot, role: boot, count: 1}
+  - {action: wait-ready, group: boot}
+  - {action: join, group: workers, role: worker, profile: tuned, count: 4, parallel: true}
+  - {action: wait-ready, group: workers}
+  - {action: sleep, duration: 20s}
+  - {action: publish, group: workers, topic: kpl/options, count: 10, payloadSize: 4096, interval: {model: fixed, value: 1s}}
+  - {action: sleep, duration: 20s}
+  - {action: stop-all}

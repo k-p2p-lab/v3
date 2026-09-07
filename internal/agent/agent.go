@@ -384,6 +384,7 @@ func (s *Server) createNode(ctx context.Context, request model.CreateNodeRequest
 			"profile":       profile,
 			"pubsubRouter":  resolvedConfig.GossipSub.Router,
 			"pubsubEnabled": strconv.FormatBool(resolvedConfig.GossipSub.Enabled != nil && *resolvedConfig.GossipSub.Enabled),
+			"scoreEnabled":  strconv.FormatBool(resolvedConfig.GossipSub.Enabled != nil && *resolvedConfig.GossipSub.Enabled && resolvedConfig.GossipSub.Router == "gossipsub" && resolvedConfig.GossipSub.Score != nil && resolvedConfig.GossipSub.Score.IsEnabled()),
 			"allowPublish":  strconv.FormatBool(resolvedConfig.PublishAllowed()),
 			"topicMode":     resolvedConfig.GossipSub.TopicMode,
 			"topics":        strings.Join(resolvedConfig.GossipSub.Topics, ","),

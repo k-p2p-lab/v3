@@ -1256,7 +1256,7 @@ function renderTopologyDetails(node) {
   const layers = { kademlia: "Kademlia routing", gossipsub: "GossipSub mesh", transport: "Transport" };
   const metadata = node.metadata || {};
   const scores = Object.values(node.peerScores || {}).filter(Number.isFinite);
-  const scoreSummary = scores.length
+  const scoreSummary = metadata.scoreEnabled === "false" ? "Disabled" : scores.length
     ? `${formatNumber(scores.length)} scores · Average: ${(scores.reduce((sum, score) => sum + score, 0) / scores.length).toFixed(2)}`
     : "0 scores · Average: N/A";
   const pubsub = metadata.pubsubEnabled === "false" ? "Off" : `${metadata.pubsubRouter || "pubsub"} / ${metadata.topicMode || "subscribe"}`;

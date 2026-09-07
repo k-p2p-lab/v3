@@ -88,19 +88,19 @@ phases:
 
 ### 프로토콜 설정
 
-중첩된 node 설정에서 현재 고정된 버전의 libp2p 패키지가 지원하는 매개변수를 조정할 수 있습니다. 모든 duration 필드는 `250ms`, `30s`, `5m` 같은 Go duration 문자열을 사용합니다.
+중첩된 node 설정에서 현재 고정된 버전의 libp2p 패키지가 지원하는 매개변수를 조정할 수 있습니다. 모든 duration 필드는 `250ms`, `30s`, `5m` 같은 Go duration 문자열을 사용합니다. [전체 프로토콜 레퍼런스](protocol-options.kr.md)에 mesh·score·PeerGater·filter·validation·discovery·publication·Kademlia의 모든 필드를 정리했습니다. [프로토콜 예제](../examples/protocol-options.yaml)도 참고하십시오.
 
 | 영역 | 조정 가능한 필드 |
 |---|---|
 | `libp2p` | `userAgent`, `natPortMap`, `relay`, `relayService`, `connectionLimit`, `connectionManager.lowWater`, `connectionManager.highWater`, `connectionManager.gracePeriod`, `dialTimeout` |
-| `kademlia` | `enabled`, `mode`, `protocolPrefix`, `protocolId`, `protocolExtension`, `bucketSize`, `concurrency`, `resiliency`, `lookupCheckConcurrency`, routing-table latency/refresh duration, `maxRecordAge`, provider/value/auto-refresh switch, optimistic-provide 설정, bootstrap timeout/retry interval |
-| `gossipsub` | `enabled`, `router`, `topicMode`, `randomDegree`, `randomNetworkSize`, `subscribe`, `allowPublish`, `topics`, `floodPublish`, `peerExchange`, message/queue/validation limit, `signaturePolicy`, `seenMessagesTTL`, `subscriptionBufferSize`, `scoreInspectInterval` |
+| `kademlia` | `enabled`, `mode`, `protocolPrefix`, `protocolId`, `protocolExtension`, `bucketSize`, `concurrency`, `resiliency`, `lookupCheckConcurrency`, routing-table latency/refresh duration, `maxRecordAge`, provider/value/auto-refresh switch, optimistic-provide 설정, bootstrap timeout/retry interval, filter·diversity·datastore·validator·providerStore·bootstrapSource·requestHook 정책 |
+| `gossipsub` | `enabled`, `router`, `topicMode`, `randomDegree`, `randomNetworkSize`, `subscribe`, `allowPublish`, `topics`, `floodPublish`, `peerExchange`, message/queue/validation limit, `signaturePolicy`, `seenMessagesTTL`, `subscriptionBufferSize`, `scoreInspectInterval`, message ID·topicOptions·filter·protocol·PeerGater·validator·RPC inspector·discovery·author·publish 정책 |
 | `gossipsub.params` | 고정된 라이브러리의 모든 `GossipSubParams` 필드: mesh degree, history, gossip factor/retransmission, heartbeat, fanout, prune/backoff, connector, connection timeout, direct-connect 및 opportunistic-graft 제어값, IHAVE 제한, IDONTWANT 제한, IWANT follow-up time |
-| `gossipsub.score` | 애플리케이션 정의 P5를 제외한 전체 PeerScore weight와 decay 설정, score threshold, IP-colocation whitelist, mesh·최초 전달·실패·잘못된 메시지 항목을 모두 포함한 `topics.<topic>` score block |
+| `gossipsub.score` | 명시적 `enabled` switch, 선언형 P5를 포함한 전체 PeerScore weight와 decay 설정, score threshold, IP-colocation whitelist, mesh·최초 전달·실패·잘못된 메시지 항목을 모두 포함한 `topics.<topic>` score block |
 
-GossipSub 전용 설정(`params`, score/inspection, `floodPublish`, `peerExchange`)은 `gossipsub` router에서만 적용됩니다. FloodSub와 RandomSub는 지원하지 않는 scoring 옵션을 거부하고 각 router 전용 제어값을 사용합니다.
+GossipSub 전용 설정(`params`, 활성 score/inspection, `floodPublish`, `peerExchange`, `directPeers`, `peerGater`)은 `gossipsub` router에서만 적용됩니다. FloodSub와 RandomSub에서는 활성 scoring을 거부하지만 비활성 tuning 블록은 보존할 수 있습니다.
 
-기본 mesh 설정은 `D=6`, `DLow=5`, `DHigh=12`, `DScore=4`, `DOut=2`, `DLazy=6`, history `5/3`, gossip factor `0.25`, heartbeat `1s`입니다. PubSub를 활성화한 `boot` preset은 `DScore=3`을 사용합니다. `full`/`worker`와 역할별 GossipSub worker preset은 v2에서 가져온 `DLow=5`, `DScore=3`, `maxIHaveLength=5500`, 초기 heartbeat `1s`를 상속합니다. 대부분의 worker preset은 v2의 hard connection limit `55`도 사용하며 `light`는 `32`를 사용합니다. Kademlia의 기본 bucket size는 `20`, protocol prefix는 `/k-p2p-lab/v3`입니다. 전체 typed schema와 적용되는 기본값은 [`internal/model/config.go`](../internal/model/config.go)를 참고하십시오.
+기본 mesh 설정은 `D=6`, `DLow=5`, `DHigh=12`, `DScore=4`, `DOut=2`, `DLazy=6`, history `5/3`, gossip factor `0.25`, heartbeat `1s`입니다. PubSub를 활성화한 `boot` preset은 `DScore=3`을 사용합니다. `full`/`worker`와 역할별 GossipSub worker preset은 v2에서 가져온 `DLow=5`, `DScore=3`, `maxIHaveLength=5500`, 초기 heartbeat `1s`를 상속합니다. 대부분의 worker preset은 v2의 hard connection limit `55`도 사용하며 `light`는 `32`를 사용합니다. Kademlia의 기본 bucket size는 `20`, protocol prefix는 `/k-p2p-lab/v3`입니다. 적용되는 기본값은 [`internal/model/config.go`](../internal/model/config.go), 분리된 typed schema는 [프로토콜 설정 구현 위치](protocol-options.kr.md#구현-경계와-의존성-수정)를 참고하십시오.
 
 `libp2p.connectionLimit`는 전체 연결 수에 적용되는 resource manager hard cap일 뿐이며 soft connection manager를 암묵적으로 생성하지 않습니다. soft low-water/high-water 정리는 `libp2p.connectionManager` 블록을 명시했을 때만 설치되며 그 블록의 `lowWater`, `highWater`, `gracePeriod`를 사용합니다. 따라서 profile마다 hard cap, soft manager 또는 둘 다를 독립적으로 선택할 수 있습니다.
 
@@ -108,9 +108,9 @@ v2 설정을 이식할 때는 이름과 달리 prefix로 사용됐던 v2 `protoc
 
 RandomSub에서 `randomDegree`는 libp2p의 process-global `RandomSubD`를 통해 최소 연결/degree 목표를 설정합니다. KPL은 Peer마다 별도 컨테이너를 사용하므로 이 global 값은 Peer 하나에만 적용됩니다. `randomNetworkSize`는 `NewRandomSub`에 별도로 전달되는 추정 전체 네트워크 크기입니다.
 
-`gossipsub.score`를 활성화하면 `scoreInspectInterval`의 기본값은 `1s`입니다. inspection이 실행될 때마다 노드의 `peerScores` 맵이 갱신됩니다. 이 값은 `/api/v1/nodes`, `/api/v1/network`, `/api/v1/snapshot`, SSE snapshot stream에서 제공되며 topology의 노드를 선택하면 세부 정보에 관측한 score 수와 평균이 표시됩니다.
+스코어링은 **기본 비활성**입니다. `gossipsub.score.enabled: true`로만 활성화하며 score 블록이나 관측 주기만으로 켜지지 않습니다. 명시적으로 켜면 `scoreInspectInterval`의 기본값은 `1s`이며 `0s`는 관측을 끕니다. inspection이 실행될 때마다 노드의 `peerScores` 맵이 갱신됩니다. 이 값은 `/api/v1/nodes`, `/api/v1/network`, `/api/v1/snapshot`, SSE snapshot stream에서 제공되며 topology의 노드를 선택하면 세부 정보에 관측한 score 수와 평균이 표시됩니다.
 
-`appSpecificWeight`는 의도적으로 지원하지 않습니다. PeerScore의 P5 항목에는 프로세스 내부의 애플리케이션 전용 score callback이 필요하지만 직렬화되는 scenario 또는 REST 설정으로는 이를 전달할 수 없습니다. 값은 `0`으로 유지해야 하며, 0이 아닌 값은 효과 없이 받아들이는 대신 설정 검증에서 명시적으로 오류가 됩니다.
+`appSpecificScore`는 고정 `default`와 선택적인 libp2p Peer ID별 `peers` map으로 P5를 제공합니다. 명시적 Peer 값은 0을 포함하여 기본값보다 우선합니다. 활성 `appSpecificWeight`가 0이 아니면 이 정책이 필요하며 모든 값과 가중치를 적용한 P5 결과는 유한해야 합니다. 활성 selective validation은 생략한 decay group에 `1s`/`0.01`, 생략한 비활성 P1 quantum에 `1s`를 적용하고 명시적 0 ticker·제수 duration은 거부합니다. Profile에서 inline으로 `score`를 덮어쓰면 전체 블록을 교체하여 명시적 0·false를 보존합니다. [점수 설정](protocol-options.kr.md#peer-scoring-기본-비활성)을 참고하십시오.
 
 ### 노드별 네트워크 조건
 

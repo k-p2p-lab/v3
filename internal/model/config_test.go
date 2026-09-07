@@ -162,25 +162,25 @@ func TestGossipSubFloatingPointParametersMustBeFinite(t *testing.T) {
 	}
 }
 
-func TestPeerScoreRejectsUnsupportedAppSpecificWeight(t *testing.T) {
-	score := PeerScoreConfig{SkipAtomicValidation: true, AppSpecificWeight: 1}
+func TestPeerScoreRequiresAppSpecificScore(t *testing.T) {
+	score := PeerScoreConfig{Enabled: boolPointer(true), SkipAtomicValidation: true, AppSpecificWeight: 1}
 	config, ok := BuiltInNodeConfig("full")
 	if !ok {
 		t.Fatal("full preset is missing")
 	}
 	config.GossipSub.Score = &score
 	err := config.Validate()
-	if err == nil || !strings.Contains(err.Error(), "appSpecificWeight is unsupported") {
-		t.Fatalf("Validate() error = %v, want unsupported appSpecificWeight error", err)
+	if err == nil || !strings.Contains(err.Error(), "appSpecificWeight requires appSpecificScore") {
+		t.Fatalf("Validate() error = %v, want missing appSpecificScore error", err)
 	}
 }
 
 func TestNodeConfigPreflightsPeerScore(t *testing.T) {
 	invalid := []PeerScoreConfig{
-		{SkipAtomicValidation: true, IPColocationFactorWhitelist: []string{"not-a-cidr"}},
-		{SkipAtomicValidation: true, DecayInterval: "500ms", DecayToZero: 0.01},
-		{SkipAtomicValidation: true, Thresholds: PeerScoreThresholdsConfig{SkipAtomicValidation: true, GossipThreshold: -2, PublishThreshold: -1}},
-		{SkipAtomicValidation: true, Topics: map[string]TopicScoreConfig{"kpl/default": {SkipAtomicValidation: true, InvalidMessageDeliveriesWeight: -1}}},
+		{Enabled: boolPointer(true), SkipAtomicValidation: true, IPColocationFactorWhitelist: []string{"not-a-cidr"}},
+		{Enabled: boolPointer(true), SkipAtomicValidation: true, DecayInterval: "500ms", DecayToZero: 0.01},
+		{Enabled: boolPointer(true), SkipAtomicValidation: true, Thresholds: PeerScoreThresholdsConfig{SkipAtomicValidation: true, GossipThreshold: -2, PublishThreshold: -1}},
+		{Enabled: boolPointer(true), SkipAtomicValidation: true, Topics: map[string]TopicScoreConfig{"kpl/default": {SkipAtomicValidation: true, InvalidMessageDeliveriesWeight: -1}}},
 	}
 	for _, score := range invalid {
 		config := NodeConfig{GossipSub: GossipSubConfig{Score: &score}}
@@ -189,7 +189,7 @@ func TestNodeConfigPreflightsPeerScore(t *testing.T) {
 		}
 	}
 
-	valid := PeerScoreConfig{
+	valid := PeerScoreConfig{Enabled: boolPointer(true),
 		SkipAtomicValidation: true,
 		DecayInterval:        "1s",
 		DecayToZero:          0.01,

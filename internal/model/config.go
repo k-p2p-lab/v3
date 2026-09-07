@@ -3,7 +3,6 @@ package model
 import (
 	"fmt"
 	"math"
-	"net"
 	"reflect"
 	"strings"
 	"time"
@@ -42,141 +41,6 @@ type ConnectionManagerConfig struct {
 	LowWater    int    `json:"lowWater" yaml:"lowWater"`
 	HighWater   int    `json:"highWater" yaml:"highWater"`
 	GracePeriod string `json:"gracePeriod" yaml:"gracePeriod"`
-}
-
-type KademliaConfig struct {
-	Enabled                       *bool  `json:"enabled,omitempty" yaml:"enabled,omitempty"`
-	Mode                          string `json:"mode,omitempty" yaml:"mode,omitempty"`
-	ProtocolPrefix                string `json:"protocolPrefix,omitempty" yaml:"protocolPrefix,omitempty"`
-	ProtocolID                    string `json:"protocolId,omitempty" yaml:"protocolId,omitempty"`
-	ProtocolExtension             string `json:"protocolExtension,omitempty" yaml:"protocolExtension,omitempty"`
-	BucketSize                    *int   `json:"bucketSize,omitempty" yaml:"bucketSize,omitempty"`
-	Concurrency                   *int   `json:"concurrency,omitempty" yaml:"concurrency,omitempty"`
-	Resiliency                    *int   `json:"resiliency,omitempty" yaml:"resiliency,omitempty"`
-	LookupCheckConcurrency        *int   `json:"lookupCheckConcurrency,omitempty" yaml:"lookupCheckConcurrency,omitempty"`
-	RoutingTableLatencyTolerance  string `json:"routingTableLatencyTolerance,omitempty" yaml:"routingTableLatencyTolerance,omitempty"`
-	RoutingTableRefreshPeriod     string `json:"routingTableRefreshPeriod,omitempty" yaml:"routingTableRefreshPeriod,omitempty"`
-	RoutingTableRefreshTimeout    string `json:"routingTableRefreshTimeout,omitempty" yaml:"routingTableRefreshTimeout,omitempty"`
-	MaxRecordAge                  string `json:"maxRecordAge,omitempty" yaml:"maxRecordAge,omitempty"`
-	DisableAutoRefresh            *bool  `json:"disableAutoRefresh,omitempty" yaml:"disableAutoRefresh,omitempty"`
-	DisableProviders              *bool  `json:"disableProviders,omitempty" yaml:"disableProviders,omitempty"`
-	DisableValues                 *bool  `json:"disableValues,omitempty" yaml:"disableValues,omitempty"`
-	OptimisticProvide             *bool  `json:"optimisticProvide,omitempty" yaml:"optimisticProvide,omitempty"`
-	OptimisticProvideJobsPoolSize *int   `json:"optimisticProvideJobsPoolSize,omitempty" yaml:"optimisticProvideJobsPoolSize,omitempty"`
-	BootstrapTimeout              string `json:"bootstrapTimeout,omitempty" yaml:"bootstrapTimeout,omitempty"`
-	BootstrapRetryInterval        string `json:"bootstrapRetryInterval,omitempty" yaml:"bootstrapRetryInterval,omitempty"`
-}
-
-type GossipSubConfig struct {
-	Enabled                *bool                 `json:"enabled,omitempty" yaml:"enabled,omitempty"`
-	Router                 string                `json:"router,omitempty" yaml:"router,omitempty"`
-	TopicMode              string                `json:"topicMode,omitempty" yaml:"topicMode,omitempty"`
-	RandomDegree           *int                  `json:"randomDegree,omitempty" yaml:"randomDegree,omitempty"`
-	RandomNetworkSize      *int                  `json:"randomNetworkSize,omitempty" yaml:"randomNetworkSize,omitempty"`
-	Subscribe              *bool                 `json:"subscribe,omitempty" yaml:"subscribe,omitempty"`
-	AllowPublish           *bool                 `json:"allowPublish,omitempty" yaml:"allowPublish,omitempty"`
-	Topics                 []string              `json:"topics,omitempty" yaml:"topics,omitempty"`
-	Params                 GossipSubParamsConfig `json:"params,omitempty" yaml:"params,omitempty"`
-	Score                  *PeerScoreConfig      `json:"score,omitempty" yaml:"score,omitempty"`
-	ScoreInspectInterval   string                `json:"scoreInspectInterval,omitempty" yaml:"scoreInspectInterval,omitempty"`
-	FloodPublish           *bool                 `json:"floodPublish,omitempty" yaml:"floodPublish,omitempty"`
-	PeerExchange           *bool                 `json:"peerExchange,omitempty" yaml:"peerExchange,omitempty"`
-	MaxMessageSize         *int                  `json:"maxMessageSize,omitempty" yaml:"maxMessageSize,omitempty"`
-	PeerOutboundQueueSize  *int                  `json:"peerOutboundQueueSize,omitempty" yaml:"peerOutboundQueueSize,omitempty"`
-	SignaturePolicy        string                `json:"signaturePolicy,omitempty" yaml:"signaturePolicy,omitempty"`
-	SeenMessagesTTL        string                `json:"seenMessagesTTL,omitempty" yaml:"seenMessagesTTL,omitempty"`
-	ValidateQueueSize      *int                  `json:"validateQueueSize,omitempty" yaml:"validateQueueSize,omitempty"`
-	ValidateThrottle       *int                  `json:"validateThrottle,omitempty" yaml:"validateThrottle,omitempty"`
-	ValidateWorkers        *int                  `json:"validateWorkers,omitempty" yaml:"validateWorkers,omitempty"`
-	SubscriptionBufferSize *int                  `json:"subscriptionBufferSize,omitempty" yaml:"subscriptionBufferSize,omitempty"`
-}
-
-// GossipSubParamsConfig covers every field in GossipSubParams provided by the
-// pinned go-libp2p-pubsub version. Pointers distinguish an omitted value from an
-// intentional zero, so experiments can override library defaults precisely.
-type GossipSubParamsConfig struct {
-	D                         *int     `json:"d,omitempty" yaml:"d,omitempty"`
-	DLow                      *int     `json:"dLow,omitempty" yaml:"dLow,omitempty"`
-	DHigh                     *int     `json:"dHigh,omitempty" yaml:"dHigh,omitempty"`
-	DScore                    *int     `json:"dScore,omitempty" yaml:"dScore,omitempty"`
-	DOut                      *int     `json:"dOut,omitempty" yaml:"dOut,omitempty"`
-	DLazy                     *int     `json:"dLazy,omitempty" yaml:"dLazy,omitempty"`
-	HistoryLength             *int     `json:"historyLength,omitempty" yaml:"historyLength,omitempty"`
-	HistoryGossip             *int     `json:"historyGossip,omitempty" yaml:"historyGossip,omitempty"`
-	GossipFactor              *float64 `json:"gossipFactor,omitempty" yaml:"gossipFactor,omitempty"`
-	GossipRetransmission      *int     `json:"gossipRetransmission,omitempty" yaml:"gossipRetransmission,omitempty"`
-	HeartbeatInitialDelay     string   `json:"heartbeatInitialDelay,omitempty" yaml:"heartbeatInitialDelay,omitempty"`
-	HeartbeatInterval         string   `json:"heartbeatInterval,omitempty" yaml:"heartbeatInterval,omitempty"`
-	SlowHeartbeatWarning      *float64 `json:"slowHeartbeatWarning,omitempty" yaml:"slowHeartbeatWarning,omitempty"`
-	FanoutTTL                 string   `json:"fanoutTTL,omitempty" yaml:"fanoutTTL,omitempty"`
-	PrunePeers                *int     `json:"prunePeers,omitempty" yaml:"prunePeers,omitempty"`
-	PruneBackoff              string   `json:"pruneBackoff,omitempty" yaml:"pruneBackoff,omitempty"`
-	UnsubscribeBackoff        string   `json:"unsubscribeBackoff,omitempty" yaml:"unsubscribeBackoff,omitempty"`
-	Connectors                *int     `json:"connectors,omitempty" yaml:"connectors,omitempty"`
-	MaxPendingConnections     *int     `json:"maxPendingConnections,omitempty" yaml:"maxPendingConnections,omitempty"`
-	ConnectionTimeout         string   `json:"connectionTimeout,omitempty" yaml:"connectionTimeout,omitempty"`
-	DirectConnectTicks        *uint64  `json:"directConnectTicks,omitempty" yaml:"directConnectTicks,omitempty"`
-	DirectConnectInitialDelay string   `json:"directConnectInitialDelay,omitempty" yaml:"directConnectInitialDelay,omitempty"`
-	OpportunisticGraftTicks   *uint64  `json:"opportunisticGraftTicks,omitempty" yaml:"opportunisticGraftTicks,omitempty"`
-	OpportunisticGraftPeers   *int     `json:"opportunisticGraftPeers,omitempty" yaml:"opportunisticGraftPeers,omitempty"`
-	GraftFloodThreshold       string   `json:"graftFloodThreshold,omitempty" yaml:"graftFloodThreshold,omitempty"`
-	MaxIHaveLength            *int     `json:"maxIHaveLength,omitempty" yaml:"maxIHaveLength,omitempty"`
-	MaxIHaveMessages          *int     `json:"maxIHaveMessages,omitempty" yaml:"maxIHaveMessages,omitempty"`
-	MaxIDontWantLength        *int     `json:"maxIDontWantLength,omitempty" yaml:"maxIDontWantLength,omitempty"`
-	MaxIDontWantMessages      *int     `json:"maxIDontWantMessages,omitempty" yaml:"maxIDontWantMessages,omitempty"`
-	IWantFollowupTime         string   `json:"iWantFollowupTime,omitempty" yaml:"iWantFollowupTime,omitempty"`
-	IDontWantMessageThreshold *int     `json:"iDontWantMessageThreshold,omitempty" yaml:"iDontWantMessageThreshold,omitempty"`
-	IDontWantMessageTTL       *int     `json:"iDontWantMessageTTL,omitempty" yaml:"iDontWantMessageTTL,omitempty"`
-}
-
-type PeerScoreConfig struct {
-	SkipAtomicValidation bool    `json:"skipAtomicValidation,omitempty" yaml:"skipAtomicValidation,omitempty"`
-	TopicScoreCap        float64 `json:"topicScoreCap,omitempty" yaml:"topicScoreCap,omitempty"`
-	// AppSpecificWeight must remain zero: a serializable node config cannot
-	// provide the application callback required by pubsub's P5 score term.
-	AppSpecificWeight           float64                     `json:"appSpecificWeight,omitempty" yaml:"appSpecificWeight,omitempty"`
-	IPColocationFactorWeight    float64                     `json:"ipColocationFactorWeight,omitempty" yaml:"ipColocationFactorWeight,omitempty"`
-	IPColocationFactorThreshold int                         `json:"ipColocationFactorThreshold,omitempty" yaml:"ipColocationFactorThreshold,omitempty"`
-	IPColocationFactorWhitelist []string                    `json:"ipColocationFactorWhitelist,omitempty" yaml:"ipColocationFactorWhitelist,omitempty"`
-	BehaviourPenaltyWeight      float64                     `json:"behaviourPenaltyWeight,omitempty" yaml:"behaviourPenaltyWeight,omitempty"`
-	BehaviourPenaltyThreshold   float64                     `json:"behaviourPenaltyThreshold,omitempty" yaml:"behaviourPenaltyThreshold,omitempty"`
-	BehaviourPenaltyDecay       float64                     `json:"behaviourPenaltyDecay,omitempty" yaml:"behaviourPenaltyDecay,omitempty"`
-	DecayInterval               string                      `json:"decayInterval,omitempty" yaml:"decayInterval,omitempty"`
-	DecayToZero                 float64                     `json:"decayToZero,omitempty" yaml:"decayToZero,omitempty"`
-	RetainScore                 string                      `json:"retainScore,omitempty" yaml:"retainScore,omitempty"`
-	SeenMessageTTL              string                      `json:"seenMessageTTL,omitempty" yaml:"seenMessageTTL,omitempty"`
-	Thresholds                  PeerScoreThresholdsConfig   `json:"thresholds" yaml:"thresholds"`
-	Topics                      map[string]TopicScoreConfig `json:"topics" yaml:"topics"`
-}
-
-type PeerScoreThresholdsConfig struct {
-	SkipAtomicValidation        bool    `json:"skipAtomicValidation,omitempty" yaml:"skipAtomicValidation,omitempty"`
-	GossipThreshold             float64 `json:"gossipThreshold" yaml:"gossipThreshold"`
-	PublishThreshold            float64 `json:"publishThreshold" yaml:"publishThreshold"`
-	GraylistThreshold           float64 `json:"graylistThreshold" yaml:"graylistThreshold"`
-	AcceptPXThreshold           float64 `json:"acceptPXThreshold" yaml:"acceptPXThreshold"`
-	OpportunisticGraftThreshold float64 `json:"opportunisticGraftThreshold" yaml:"opportunisticGraftThreshold"`
-}
-
-type TopicScoreConfig struct {
-	SkipAtomicValidation            bool    `json:"skipAtomicValidation,omitempty" yaml:"skipAtomicValidation,omitempty"`
-	TopicWeight                     float64 `json:"topicWeight" yaml:"topicWeight"`
-	TimeInMeshWeight                float64 `json:"timeInMeshWeight" yaml:"timeInMeshWeight"`
-	TimeInMeshQuantum               string  `json:"timeInMeshQuantum" yaml:"timeInMeshQuantum"`
-	TimeInMeshCap                   float64 `json:"timeInMeshCap" yaml:"timeInMeshCap"`
-	FirstMessageDeliveriesWeight    float64 `json:"firstMessageDeliveriesWeight" yaml:"firstMessageDeliveriesWeight"`
-	FirstMessageDeliveriesDecay     float64 `json:"firstMessageDeliveriesDecay" yaml:"firstMessageDeliveriesDecay"`
-	FirstMessageDeliveriesCap       float64 `json:"firstMessageDeliveriesCap" yaml:"firstMessageDeliveriesCap"`
-	MeshMessageDeliveriesWeight     float64 `json:"meshMessageDeliveriesWeight" yaml:"meshMessageDeliveriesWeight"`
-	MeshMessageDeliveriesDecay      float64 `json:"meshMessageDeliveriesDecay" yaml:"meshMessageDeliveriesDecay"`
-	MeshMessageDeliveriesThreshold  float64 `json:"meshMessageDeliveriesThreshold" yaml:"meshMessageDeliveriesThreshold"`
-	MeshMessageDeliveriesCap        float64 `json:"meshMessageDeliveriesCap" yaml:"meshMessageDeliveriesCap"`
-	MeshMessageDeliveriesActivation string  `json:"meshMessageDeliveriesActivation" yaml:"meshMessageDeliveriesActivation"`
-	MeshMessageDeliveriesWindow     string  `json:"meshMessageDeliveriesWindow" yaml:"meshMessageDeliveriesWindow"`
-	MeshFailurePenaltyWeight        float64 `json:"meshFailurePenaltyWeight" yaml:"meshFailurePenaltyWeight"`
-	MeshFailurePenaltyDecay         float64 `json:"meshFailurePenaltyDecay" yaml:"meshFailurePenaltyDecay"`
-	InvalidMessageDeliveriesWeight  float64 `json:"invalidMessageDeliveriesWeight" yaml:"invalidMessageDeliveriesWeight"`
-	InvalidMessageDeliveriesDecay   float64 `json:"invalidMessageDeliveriesDecay" yaml:"invalidMessageDeliveriesDecay"`
 }
 
 func boolPointer(value bool) *bool { return &value }
@@ -276,6 +140,9 @@ func (c NodeConfig) Merge(overlay NodeConfig) NodeConfig {
 	if overlay.Kademlia.ProtocolPrefix != "" && overlay.Kademlia.ProtocolID == "" {
 		c.Kademlia.ProtocolID = ""
 	}
+	if (overlay.Kademlia.BootstrapSource == "none" || overlay.Kademlia.BootstrapSource == "controller") && overlay.Kademlia.BootstrapPeers == nil {
+		c.Kademlia.BootstrapPeers = nil
+	}
 	// Switching network delay/shaper modes replaces the inherited alternative.
 	// Explicitly supplying both in one overlay remains invalid during Validate.
 	if overlay.Network.Delay != "" && overlay.Network.DelayDistribution == nil {
@@ -370,7 +237,11 @@ func (c NodeConfig) WithDefaults() NodeConfig {
 	if c.GossipSub.AllowPublish == nil {
 		c.GossipSub.AllowPublish = boolPointer(true)
 	}
-	if c.GossipSub.Score != nil && c.GossipSub.ScoreInspectInterval == "" {
+	if c.GossipSub.Score != nil {
+		score := c.GossipSub.Score.WithDefaults()
+		c.GossipSub.Score = &score
+	}
+	if c.GossipSub.Score != nil && c.GossipSub.Score.IsEnabled() && c.GossipSub.ScoreInspectInterval == "" {
 		c.GossipSub.ScoreInspectInterval = "1s"
 	}
 	if len(c.GossipSub.Topics) == 0 {
@@ -519,6 +390,9 @@ func (c NodeConfig) Validate() error {
 		return fmt.Errorf("libp2p connectionLimit cannot be negative")
 	}
 	if c.Kademlia.Enabled != nil && *c.Kademlia.Enabled {
+		if err := c.Kademlia.Validate(); err != nil {
+			return fmt.Errorf("kademlia: %w", err)
+		}
 		if c.Kademlia.ProtocolID != "" && c.Kademlia.ProtocolPrefix != "" {
 			return fmt.Errorf("kademlia protocolId and protocolPrefix are mutually exclusive")
 		}
@@ -547,6 +421,21 @@ func (c NodeConfig) Validate() error {
 		}
 	}
 	if c.GossipSub.Enabled != nil && *c.GossipSub.Enabled {
+		if err := c.GossipSub.ValidateExtended(); err != nil {
+			return fmt.Errorf("gossipsub: %w", err)
+		}
+		if d := c.GossipSub.Discovery; d != nil && d.Mode == "routing" {
+			if c.Kademlia.Enabled == nil || !*c.Kademlia.Enabled || (c.Kademlia.DisableProviders != nil && *c.Kademlia.DisableProviders) || (c.Kademlia.ProviderStore != nil && c.Kademlia.ProviderStore.Mode == "null") {
+				return fmt.Errorf("routing discovery requires enabled Kademlia providers and provider storage")
+			}
+		}
+		if c.GossipSub.Score != nil && c.GossipSub.Score.IsEnabled() {
+			for topic := range c.GossipSub.Score.Topics {
+				if !pubsubContains(c.GossipSub.Topics, topic) {
+					return fmt.Errorf("gossipsub score refers to unjoined topic %q", topic)
+				}
+			}
+		}
 		if len(c.GossipSub.Topics) == 0 {
 			return fmt.Errorf("gossipsub topics cannot be empty")
 		}
@@ -569,15 +458,12 @@ func (c NodeConfig) Validate() error {
 			}
 		}
 		if c.GossipSub.Router != "gossipsub" {
-			if c.GossipSub.Score != nil {
+			if c.GossipSub.Score != nil && c.GossipSub.Score.IsEnabled() {
 				return fmt.Errorf("gossipsub score requires the gossipsub router")
 			}
 			if c.GossipSub.FloodPublish != nil || c.GossipSub.PeerExchange != nil {
 				return fmt.Errorf("floodPublish and peerExchange require the gossipsub router")
 			}
-		}
-		if c.GossipSub.Score == nil && c.GossipSub.ScoreInspectInterval != "" {
-			return fmt.Errorf("scoreInspectInterval requires gossipsub score")
 		}
 		for name, value := range map[string]*int{
 			"peerOutboundQueueSize": c.GossipSub.PeerOutboundQueueSize,
@@ -639,11 +525,11 @@ func (c NodeConfig) Validate() error {
 			}
 		}
 		switch c.GossipSub.SignaturePolicy {
-		case "", "strict-sign", "strict-no-sign":
+		case "", "strict-sign", "strict-no-sign", "lax-sign", "lax-no-sign":
 		default:
 			return fmt.Errorf("invalid signaturePolicy %q", c.GossipSub.SignaturePolicy)
 		}
-		if c.GossipSub.Router == "gossipsub" && c.GossipSub.Score != nil {
+		if c.GossipSub.Score != nil {
 			if err := c.GossipSub.Score.validate(); err != nil {
 				return fmt.Errorf("gossipsub score: %w", err)
 			}
@@ -712,180 +598,6 @@ func (c NodeConfig) Validate() error {
 		}
 	}
 	return nil
-}
-
-func (c PeerScoreConfig) validate() error {
-	if !validNumber(c.TopicScoreCap) || c.TopicScoreCap < 0 {
-		return fmt.Errorf("topicScoreCap must be finite and non-negative")
-	}
-	if !validNumber(c.AppSpecificWeight) {
-		return fmt.Errorf("appSpecificWeight must be finite")
-	}
-	if c.AppSpecificWeight != 0 {
-		return fmt.Errorf("appSpecificWeight is unsupported because no application-specific score function is configured")
-	}
-	if !c.SkipAtomicValidation || c.IPColocationFactorWeight != 0 {
-		if !validNumber(c.IPColocationFactorWeight) || c.IPColocationFactorWeight > 0 {
-			return fmt.Errorf("ipColocationFactorWeight must be finite and non-positive")
-		}
-		if c.IPColocationFactorWeight != 0 && c.IPColocationFactorThreshold < 1 {
-			return fmt.Errorf("ipColocationFactorThreshold must be at least 1 when its weight is enabled")
-		}
-	}
-	for _, raw := range c.IPColocationFactorWhitelist {
-		if _, _, err := net.ParseCIDR(raw); err != nil {
-			return fmt.Errorf("invalid ipColocationFactorWhitelist entry %q: %w", raw, err)
-		}
-	}
-	if !c.SkipAtomicValidation || c.BehaviourPenaltyWeight != 0 || c.BehaviourPenaltyThreshold != 0 {
-		if !validNumber(c.BehaviourPenaltyWeight) || c.BehaviourPenaltyWeight > 0 {
-			return fmt.Errorf("behaviourPenaltyWeight must be finite and non-positive")
-		}
-		if c.BehaviourPenaltyWeight != 0 && !validDecay(c.BehaviourPenaltyDecay) {
-			return fmt.Errorf("behaviourPenaltyDecay must be between 0 and 1 when its weight is enabled")
-		}
-		if !validNumber(c.BehaviourPenaltyThreshold) || c.BehaviourPenaltyThreshold < 0 {
-			return fmt.Errorf("behaviourPenaltyThreshold must be finite and non-negative")
-		}
-	}
-
-	decayInterval, err := scoreDuration("decayInterval", c.DecayInterval)
-	if err != nil {
-		return err
-	}
-	if !c.SkipAtomicValidation || decayInterval != 0 || c.DecayToZero != 0 {
-		if decayInterval < time.Second {
-			return fmt.Errorf("decayInterval must be at least 1s")
-		}
-		if !validDecay(c.DecayToZero) {
-			return fmt.Errorf("decayToZero must be between 0 and 1")
-		}
-	}
-	for name, raw := range map[string]string{
-		"retainScore":    c.RetainScore,
-		"seenMessageTTL": c.SeenMessageTTL,
-	} {
-		value, err := scoreDuration(name, raw)
-		if err != nil {
-			return err
-		}
-		if value < 0 {
-			return fmt.Errorf("%s cannot be negative", name)
-		}
-	}
-	if err := c.Thresholds.validate(); err != nil {
-		return fmt.Errorf("thresholds: %w", err)
-	}
-	for topic, params := range c.Topics {
-		if strings.TrimSpace(topic) == "" {
-			return fmt.Errorf("score topic name cannot be empty")
-		}
-		if err := params.validate(); err != nil {
-			return fmt.Errorf("topic %q: %w", topic, err)
-		}
-	}
-	return nil
-}
-
-func (c PeerScoreThresholdsConfig) validate() error {
-	if !c.SkipAtomicValidation || c.PublishThreshold != 0 || c.GossipThreshold != 0 || c.GraylistThreshold != 0 {
-		if !validNumber(c.GossipThreshold) || c.GossipThreshold > 0 {
-			return fmt.Errorf("gossipThreshold must be finite and non-positive")
-		}
-		if !validNumber(c.PublishThreshold) || c.PublishThreshold > c.GossipThreshold {
-			return fmt.Errorf("publishThreshold must be finite and <= gossipThreshold")
-		}
-		if !validNumber(c.GraylistThreshold) || c.GraylistThreshold > c.PublishThreshold {
-			return fmt.Errorf("graylistThreshold must be finite and <= publishThreshold")
-		}
-	}
-	if !c.SkipAtomicValidation || c.AcceptPXThreshold != 0 {
-		if !validNumber(c.AcceptPXThreshold) || c.AcceptPXThreshold < 0 {
-			return fmt.Errorf("acceptPXThreshold must be finite and non-negative")
-		}
-	}
-	if !c.SkipAtomicValidation || c.OpportunisticGraftThreshold != 0 {
-		if !validNumber(c.OpportunisticGraftThreshold) || c.OpportunisticGraftThreshold < 0 {
-			return fmt.Errorf("opportunisticGraftThreshold must be finite and non-negative")
-		}
-	}
-	return nil
-}
-
-func (c TopicScoreConfig) validate() error {
-	if !validNumber(c.TopicWeight) || c.TopicWeight < 0 {
-		return fmt.Errorf("topicWeight must be finite and non-negative")
-	}
-	timeInMeshQuantum, err := scoreDuration("timeInMeshQuantum", c.TimeInMeshQuantum)
-	if err != nil {
-		return err
-	}
-	if !c.SkipAtomicValidation || c.TimeInMeshWeight != 0 || timeInMeshQuantum != 0 || c.TimeInMeshCap != 0 {
-		if timeInMeshQuantum == 0 {
-			return fmt.Errorf("timeInMeshQuantum must be non-zero")
-		}
-		if !validNumber(c.TimeInMeshWeight) || c.TimeInMeshWeight < 0 {
-			return fmt.Errorf("timeInMeshWeight must be finite and non-negative")
-		}
-		if c.TimeInMeshWeight != 0 && (timeInMeshQuantum < 0 || !finitePositive(c.TimeInMeshCap)) {
-			return fmt.Errorf("enabled time-in-mesh scoring requires a positive quantum and cap")
-		}
-	}
-	if !c.SkipAtomicValidation || c.FirstMessageDeliveriesWeight != 0 || c.FirstMessageDeliveriesDecay != 0 || c.FirstMessageDeliveriesCap != 0 {
-		if !validNumber(c.FirstMessageDeliveriesWeight) || c.FirstMessageDeliveriesWeight < 0 {
-			return fmt.Errorf("firstMessageDeliveriesWeight must be finite and non-negative")
-		}
-		if c.FirstMessageDeliveriesWeight != 0 && (!validDecay(c.FirstMessageDeliveriesDecay) || !finitePositive(c.FirstMessageDeliveriesCap)) {
-			return fmt.Errorf("enabled first-message scoring requires decay in (0,1) and a positive cap")
-		}
-	}
-	meshActivation, err := scoreDuration("meshMessageDeliveriesActivation", c.MeshMessageDeliveriesActivation)
-	if err != nil {
-		return err
-	}
-	meshWindow, err := scoreDuration("meshMessageDeliveriesWindow", c.MeshMessageDeliveriesWindow)
-	if err != nil {
-		return err
-	}
-	if !c.SkipAtomicValidation || c.MeshMessageDeliveriesWeight != 0 || c.MeshMessageDeliveriesDecay != 0 || c.MeshMessageDeliveriesThreshold != 0 || c.MeshMessageDeliveriesCap != 0 || meshActivation != 0 || meshWindow != 0 {
-		if !validNumber(c.MeshMessageDeliveriesWeight) || c.MeshMessageDeliveriesWeight > 0 {
-			return fmt.Errorf("meshMessageDeliveriesWeight must be finite and non-positive")
-		}
-		if meshWindow < 0 {
-			return fmt.Errorf("meshMessageDeliveriesWindow cannot be negative")
-		}
-		if c.MeshMessageDeliveriesWeight != 0 && (!validDecay(c.MeshMessageDeliveriesDecay) || !finitePositive(c.MeshMessageDeliveriesThreshold) || !finitePositive(c.MeshMessageDeliveriesCap) || meshActivation < time.Second) {
-			return fmt.Errorf("enabled mesh-message scoring requires decay in (0,1), positive threshold/cap, and activation >= 1s")
-		}
-	}
-	if !c.SkipAtomicValidation || c.MeshFailurePenaltyWeight != 0 || c.MeshFailurePenaltyDecay != 0 {
-		if !validNumber(c.MeshFailurePenaltyWeight) || c.MeshFailurePenaltyWeight > 0 {
-			return fmt.Errorf("meshFailurePenaltyWeight must be finite and non-positive")
-		}
-		if c.MeshFailurePenaltyWeight != 0 && !validDecay(c.MeshFailurePenaltyDecay) {
-			return fmt.Errorf("enabled mesh-failure scoring requires decay in (0,1)")
-		}
-	}
-	if !c.SkipAtomicValidation || c.InvalidMessageDeliveriesWeight != 0 || c.InvalidMessageDeliveriesDecay != 0 {
-		if !validNumber(c.InvalidMessageDeliveriesWeight) || c.InvalidMessageDeliveriesWeight > 0 {
-			return fmt.Errorf("invalidMessageDeliveriesWeight must be finite and non-positive")
-		}
-		if !validDecay(c.InvalidMessageDeliveriesDecay) {
-			return fmt.Errorf("invalidMessageDeliveriesDecay must be between 0 and 1")
-		}
-	}
-	return nil
-}
-
-func scoreDuration(name, raw string) (time.Duration, error) {
-	if raw == "" {
-		return 0, nil
-	}
-	value, err := time.ParseDuration(raw)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %w", name, err)
-	}
-	return value, nil
 }
 
 func validNumber(value float64) bool {
