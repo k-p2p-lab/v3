@@ -63,4 +63,5 @@ Start with the [Hub](https://github.com/k-p2p-lab/hub) for objectives, research,
 | [Monitoring and results](docs/monitoring.md) | Prometheus, Grafana, ZIP contents, retained data, and deletion |
 | [Topology](docs/topology.md) | Agent sectors, graph layers, topic filters, and controls |
 | [Swarm churn and publish](docs/swarm-churn-publish.md) | Multi-server continuous-churn experiment walkthrough |
+| [Prysm block scoring under churn](docs/swarm-churn-prysm-block.md) | Three delay cohorts, concurrent churn, and score observation |
 | [v2 reproduction](docs/v2-reproduction.md) | Compatibility mapping and intentional differences from K-P2PLab v2 |

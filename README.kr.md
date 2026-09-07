@@ -63,4 +63,5 @@ manager에도 Agent를 실행해야 한다면 `--workers` 대신 `--all`을 사�
 | [모니터링과 결과](docs/monitoring.kr.md) | Prometheus, Grafana, ZIP 내용, 보존 데이터와 삭제 |
 | [토폴로지](docs/topology.kr.md) | Agent 영역, 그래프 레이어, topic 필터와 조작 방법 |
 | [Swarm churn 및 publish](docs/swarm-churn-publish.kr.md) | 다중 서버 연속 churn 실험 절차 |
+| [Prysm 블록 스코어와 churn](docs/swarm-churn-prysm-block.kr.md) | 세 지연 그룹의 동시 churn과 스코어 관측 |
 | [v2 재현](docs/v2-reproduction.kr.md) | K-P2PLab v2 호환 매핑과 의도적인 차이 |

@@ -1,0 +1,239 @@
+version: 2
+name: swarm-churn-prysm-beacon-block
+seed: 260304
+onExit: cancel
+jobShutdownTimeout: 3m
+
+# Three concurrent delay cohorts, one shared topic, 10,000 total join requests.
+# Ideal aggregate rate: 10 joins/s; mean lifetime: 200s; about 2,000 workers.
+# Provision capacity for that scale or increase the shared join interval below.
+# Guide: docs/swarm-churn-prysm-block.md (Korean: matching .kr.md).
+# Scoring: Prysm v7.1.8, mainnet slot=12s, epoch=32 slots.
+# Source: https://github.com/OffchainLabs/prysm/blob/51b5a75ebbadf05af22bd2601b5baf7a9e99b66d/beacon-chain/p2p/gossip_scoring_params.go
+# KPL envelope traffic uses these scores; it is not Ethereum SSZ block traffic.
+profiles:
+  stable-boot:
+    type: boot
+  delay-low: &worker_profile
+    type: full
+    gossipsub:
+      topics: [kpl/prysm/beacon_block]
+      params:
+        d: 6
+        dLow: 5
+        dHigh: 12
+        dScore: 3
+        dOut: 2
+      scoreInspectInterval: 1s
+      score:
+        enabled: true
+        topicScoreCap: 32.72
+        appSpecificWeight: 1
+        appSpecificScore: {default: 0}
+        ipColocationFactorWeight: -35.11
+        ipColocationFactorThreshold: 10
+        behaviourPenaltyWeight: -15.92
+        behaviourPenaltyThreshold: 6
+        behaviourPenaltyDecay: 0.9857119009006162
+        decayInterval: 12s
+        decayToZero: 0.01
+        retainScore: 10h40m
+        thresholds:
+          gossipThreshold: -4000
+          publishThreshold: -8000
+          graylistThreshold: -16000
+          acceptPXThreshold: 100
+          opportunisticGraftThreshold: 5
+        topics:
+          kpl/prysm/beacon_block:
+            topicWeight: 0.8
+            timeInMeshWeight: 0.03333333333333333
+            timeInMeshQuantum: 12s
+            timeInMeshCap: 300
+            firstMessageDeliveriesWeight: 1
+            firstMessageDeliveriesDecay: 0.9928302477768374
+            firstMessageDeliveriesCap: 23
+            # Prysm's meshDeliveryIsScored=false disables BOTH P3 and P3b.
+            meshMessageDeliveriesWeight: 0
+            meshMessageDeliveriesDecay: 0.9716279515771061
+            meshMessageDeliveriesThreshold: 16
+            meshMessageDeliveriesCap: 160
+            meshMessageDeliveriesActivation: 25m36s
+            meshMessageDeliveriesWindow: 2s
+            meshFailurePenaltyWeight: 0
+            meshFailurePenaltyDecay: 0.9716279515771061
+            invalidMessageDeliveriesWeight: -140.4475
+            invalidMessageDeliveriesDecay: 0.9971259067705325
+    network:
+      scope: p2p
+      delay: 25ms
+      jitter: 2ms
+      lossPercent: 0.5
+  delay-medium:
+    <<: *worker_profile
+    network:
+      scope: p2p
+      delay: 100ms
+      jitter: 2ms
+      lossPercent: 0.5
+  delay-high:
+    <<: *worker_profile
+    network:
+      scope: p2p
+      delay: 250ms
+      jitter: 2ms
+      lossPercent: 0.5
+
+phases:
+  - name: start stable bootstrap peers
+    action: join
+    group: boot
+    role: boot
+    profile: stable-boot
+    count: 10
+    placement: balanced
+    parallel: false
+    interval: {model: exponential, mean: 500ms}
+
+  - name: wait for bootstrap readiness
+    action: wait-ready
+    group: boot
+    readyRatio: 1
+    timeout: 2m
+
+  # Each producer is sequential internally; await:false makes them overlap.
+  - &churn
+    name: churn low delay workers
+    action: join
+    job: churn-low
+    group: delay-low
+    role: worker
+    profile: delay-low
+    count: 3334
+    placement: balanced
+    parallel: false
+    await: false
+    interval: {model: exponential, mean: 1s}
+    lifetime: {model: pareto, xm: 120s, alpha: 2.5}
+
+  - <<: *churn
+    name: churn medium delay workers
+    job: churn-medium
+    group: delay-medium
+    profile: delay-medium
+    count: 3333
+
+  - <<: *churn
+    name: churn high delay workers
+    job: churn-high
+    group: delay-high
+    profile: delay-high
+    count: 3333
+
+  # Readiness barriers include expired members, so only boot uses wait-ready.
+  - name: warm up all three changing populations
+    action: wait
+    duration: 5m
+
+  # Rotate publisher cohorts: low, medium, high, ten cycles = 30 rounds.
+  # Every cohort subscribes throughout; group selects publishers only.
+  - &publish_low
+    name: publish from up to ten low delay workers
+    action: publish
+    group: delay-low
+    type: full
+    count: 10
+    topic: kpl/prysm/beacon_block
+    payloadSize: 200000
+    payloadEncoding: envelope
+    deliveryWindow: 1s
+    parallel: false
+    await: true
+    onError: continue
+    interval: {model: exponential, mean: 12s}
+
+  - &round_gap
+    name: continue all churn jobs between publish rounds
+    action: wait
+    duration: 10s
+
+  - &publish_medium
+    <<: *publish_low
+    name: publish from up to ten medium delay workers
+    group: delay-medium
+  - *round_gap
+  - &publish_high
+    <<: *publish_low
+    name: publish from up to ten high delay workers
+    group: delay-high
+  - *round_gap
+
+  # Rounds 4-6.
+  - *publish_low
+  - *round_gap
+  - *publish_medium
+  - *round_gap
+  - *publish_high
+  - *round_gap
+  # Rounds 7-9.
+  - *publish_low
+  - *round_gap
+  - *publish_medium
+  - *round_gap
+  - *publish_high
+  - *round_gap
+  # Rounds 10-12.
+  - *publish_low
+  - *round_gap
+  - *publish_medium
+  - *round_gap
+  - *publish_high
+  - *round_gap
+  # Rounds 13-15.
+  - *publish_low
+  - *round_gap
+  - *publish_medium
+  - *round_gap
+  - *publish_high
+  - *round_gap
+  # Rounds 16-18.
+  - *publish_low
+  - *round_gap
+  - *publish_medium
+  - *round_gap
+  - *publish_high
+  - *round_gap
+  # Rounds 19-21.
+  - *publish_low
+  - *round_gap
+  - *publish_medium
+  - *round_gap
+  - *publish_high
+  - *round_gap
+  # Rounds 22-24.
+  - *publish_low
+  - *round_gap
+  - *publish_medium
+  - *round_gap
+  - *publish_high
+  - *round_gap
+  # Rounds 25-27.
+  - *publish_low
+  - *round_gap
+  - *publish_medium
+  - *round_gap
+  - *publish_high
+  - *round_gap
+  # Rounds 28-30.
+  - *publish_low
+  - *round_gap
+  - *publish_medium
+  - *round_gap
+  - *publish_high
+
+  - name: collect trailing deliveries and telemetry during churn
+    action: wait
+    duration: 30s
+
+  - name: stop all three churn jobs and clean up all peers
+    action: stop-all
