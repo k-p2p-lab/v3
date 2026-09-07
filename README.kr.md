@@ -2,6 +2,8 @@
 
 [English](README.md) | 한국어
 
+[K-P2PLab Hub](https://github.com/k-p2p-lab/hub)는 프로젝트 공통 개념과 연구 배경을 관리하며, 이 저장소는 실행 가능한 v3 구현, 배포 절차, 설정과 버전별 동작을 관리합니다.
+
 K-P2PLab v3는 하나 이상의 Linux 호스트에서 재현 가능한 libp2p Kademlia 및 PubSub 실험을 실행합니다. Controller가 시나리오를 스케줄링하고 호스트마다 Agent 하나가 동작하며, 각 Peer는 독립된 Docker 컨테이너와 네트워크 네임스페이스에서 실행됩니다. 웹 대시보드와 기본 제공 Prometheus/Grafana 스택에서 토폴로지, churn, 전파와 저장 결과를 확인할 수 있습니다.
 
 코드, UI와 문서의 기본 언어는 영어이며 한국어 문서는 대응하는 `.kr.md` 파일로 유지합니다.
@@ -56,6 +58,7 @@ manager에도 Agent를 실행해야 한다면 `--workers` 대신 `--all`을 사�
 
 | 문서 | 내용 |
 |---|---|
+| [구현 아키텍처](docs/architecture.kr.md) | v3 컴포넌트, 제어 및 실험 경로, Docker 네트워크, 배치와 격리 경계 |
 | [Linux 배포](docs/linux-deployment.kr.md) | 단일 호스트 준비, 권한, 저장소, 원격 접속과 종료 |
 | [Swarm 배포](docs/swarm.kr.md) | registry 설정, 노드 선택, 배포, 업데이트, 확장과 철거 |
 | [시나리오 설정](docs/scenario-reference.kr.md) | YAML action, profile, 프로토콜 설정, distribution과 네트워크 조건 |

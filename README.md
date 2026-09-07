@@ -2,6 +2,8 @@
 
 English | [Korean](README.kr.md)
 
+[K-P2PLab Hub](https://github.com/k-p2p-lab/hub) contains the project-wide concepts and research context; this repository owns the runnable v3 implementation, deployment procedures, configuration, and version-specific behavior.
+
 K-P2PLab v3 runs reproducible libp2p Kademlia and PubSub experiments across one or more Linux hosts. A Controller schedules scenarios, one Agent manages each host, and every Peer runs in its own Docker container and network namespace. The web Dashboard and the bundled Prometheus/Grafana stack expose topology, churn, propagation, and saved results.
 
 English is the default language for code, the UI, and documentation. Korean documentation is maintained in matching `.kr.md` files.
@@ -56,6 +58,7 @@ Use `--all` instead of `--workers` when the manager must also run an Agent. Open
 
 | Guide | Contents |
 |---|---|
+| [Implementation architecture](docs/architecture.md) | v3 components, control and experiment paths, Docker networks, placement, and isolation boundaries |
 | [Linux deployment](docs/linux-deployment.md) | Single-host preparation, permissions, storage, remote access, and shutdown |
 | [Swarm deployment](docs/swarm.md) | Registry setup, node selection, deployment, updates, scaling, and removal |
 | [Scenario configuration](docs/scenario-reference.md) | YAML actions, profiles, protocol controls, distributions, and network conditions |
