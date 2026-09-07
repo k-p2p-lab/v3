@@ -257,9 +257,11 @@ case "$1 ${2:-}" in
         esac ;;
     'network create') event network-create; printf 'network1\n' ;;
     'stack config')
+        printf '%s\n%s\n' "${KPL_CONTROLLER_METRICS_URL:-}" "${KPL_PROMETHEUS_EXTERNAL_URL:-}" > "$s/config-public-urls"
         printf '%s' "${KPL_API_TOKEN:-}" > "$s/config-token"
         printf '%s\n' "${KPL_IMAGE:-}" >> "$s/config-images" ;;
     'stack deploy')
+        printf '%s\n%s\n' "${KPL_CONTROLLER_METRICS_URL:-}" "${KPL_PROMETHEUS_EXTERNAL_URL:-}" > "$s/deploy-public-urls"
         printf '%s\n' "${KPL_IMAGE:-}" >> "$s/deploy-images"
         event stack-deploy ;;
     'stack services') printf 'mock stack services\n' ;;
@@ -911,6 +913,28 @@ for invalid_subnet in 10.60.0.0/99 999.1.1.0/24 not-a-cidr 10.60.0.0; do
     no_mutation
     if grep -q '^network create\|^node update\|^stack deploy' "$KPL_TEST_STATE/calls"; then exit 1; fi
 done
+
+# Prometheus scrape and self links use the control-node address and published
+# ports, consistently during Compose validation and deployment (including IPv6).
+reset_case
+run deploy worker-a
+printf '%s\n' 'http://10.20.0.7:8080/metrics' 'http://10.20.0.7:9090/' > "$scratch/expected"
+cmp "$scratch/expected" "$KPL_TEST_STATE/config-public-urls"
+cmp "$scratch/expected" "$KPL_TEST_STATE/deploy-public-urls"
+for address in 10.30.0.8 fd00::7; do
+    reset_case
+    export KPL_TEST_CONTROL_ADDR=$address KPL_HTTP_PORT=18080 PROMETHEUS_PORT=19090
+    run deploy worker-a
+    case "$address" in *:*) address=[$address] ;; esac
+    printf 'http://%s:18080/metrics\nhttp://%s:19090/\n' "$address" "$address" > "$scratch/expected"
+    cmp "$scratch/expected" "$KPL_TEST_STATE/config-public-urls"
+    cmp "$scratch/expected" "$KPL_TEST_STATE/deploy-public-urls"
+done
+reset_case
+export KPL_TEST_CONTROL_ADDR='bad/address'
+reject deploy worker-a
+no_mutation
+[ ! -e "$KPL_TEST_STATE/config-public-urls" ]
 
 # New helper flags and arity are also validated before contacting Docker.
 for arguments in 'nodes --all' 'login unexpected' 'publish --platforms' 'publish --unknown' 'publish --platforms linux/amd64 extra' 'check extra' 'access extra' 'logs unknown' 'logs --follow' 'scenario --unknown'; do

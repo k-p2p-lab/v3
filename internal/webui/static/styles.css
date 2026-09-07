@@ -121,6 +121,9 @@ main { width: min(1600px, 100%); margin: 0 auto; padding: 1.4rem clamp(1rem, 3vw
 .measurement-summary span, .measurement-summary small { display: block; color: var(--muted); font-size: 0.75rem; line-height: 1.4; }
 .measurement-summary strong { display: block; margin: 0.35rem 0; font-size: 1.3rem; font-variant-numeric: tabular-nums; }
 .measurement-summary .observation-counts { font-size: 1rem; line-height: 1.5; }
+.measurement-help { margin: 0.55rem 0; color: var(--muted); font-size: 0.75rem; }
+.measurement-help summary { width: fit-content; cursor: pointer; padding: 0.3rem 0; }
+.measurement-help summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
 .measurement-note { margin: 0.55rem 0; color: var(--muted); font-size: 0.75rem; line-height: 1.45; }
 @media (max-width: 760px) {
   .measurement-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }

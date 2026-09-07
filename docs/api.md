@@ -11,6 +11,7 @@ The Controller exposes the following public and operational endpoints. When `KPL
 | `GET` | `/metrics` | Prometheus exposition for Controller and experiment metrics |
 | `GET` | `/api/v1/health` | Controller health and current UTC time used for Peer clock sampling |
 | `GET` | `/api/v1/ui-config` | Published Prometheus and Grafana ports used by Dashboard navigation |
+| `GET` | `/api/v1/prometheus/controller-targets` | Public Controller metrics endpoint as a Prometheus HTTP service-discovery group |
 | `GET` | `/api/v1/prometheus/agent-targets` | Prometheus HTTP service-discovery groups for online Agents with advertised metrics URLs |
 | `GET` | `/api/v1/snapshot` | Full dashboard snapshot, including node `peerScores` |
 | `GET` | `/api/v1/agents` | Agent state |
@@ -33,6 +34,8 @@ The Controller exposes the following public and operational endpoints. When `KPL
 The `runId` query parameter on `/api/v1/bootstrap` is required. The registry returns only ready `boot` nodes with usable identity and address data from that run, so concurrent experiments cannot discover one another's bootstrap peers. `/api/v1/discovery` requires all three shown query parameters, excludes the requester, and returns configured topic participants rather than observed delivery or mesh outcomes. `/api/v1/prometheus/agent-targets` is a read-only operational endpoint used by the supplied Swarm Prometheus configuration; it omits offline Agents and Agents without a valid metrics URL.
 
 The bootstrap response is an array of `{nodeId, peerId, addresses}` records (or `null` when empty). Unlike discovery, bootstrap does not filter on Agent online status. Discovery returns an array, empty when no candidates match, with an additional `subscribed` flag. It returns the full eligible candidate set; the requesting Peer applies rendezvous ranking, connection budgets, and retries as described in [topology](topology.md#bootstrap-and-topic-discovery).
+
+`/api/v1/prometheus/controller-targets` advertises the Controller `--metrics-url` (`KPL_CONTROLLER_METRICS_URL`) and returns `[]` when it is unset. It is a public, read-only endpoint; the URL must be HTTP(S), end in `/metrics`, and have no credentials, query, fragment, or loopback/unspecified address. The Swarm helper supplies the control node address and `KPL_HTTP_PORT` automatically.
 
 ## Submit, stop, and observe runs
 

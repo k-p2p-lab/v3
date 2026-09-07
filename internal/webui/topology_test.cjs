@@ -86,7 +86,7 @@ test('historical and unknown measurements are not relabeled as current delivery 
     assert.equal(view.initial, 'N/A');
     assert.equal(view.coverage, 'N/A');
     assert.equal(view.primaryDetail, 'On time: 0 / 0 stable pairs');
-    assert.equal(view.note, 'No continuous-session measurements available.');
+    assert.equal(view.note, api.deliveryMetricView({}).note);
     assert.doesNotMatch(view.progress, /Awaiting/);
     assert.doesNotMatch(JSON.stringify(view), /Legacy|Historical|dispatch pairs|60%|80%/);
   }
@@ -731,4 +731,78 @@ test('reduced-motion preference defaults to still layout and preserves explicit 
   ids.get('topologyMotion').emit('click');setReduced(false);
   assert.equal(state.topology.motion.enabled,false);
   assert.equal(frames.queue.size,0);
+});
+
+test('measurement help stays fixed as windows mature and observation gaps change', () => {
+  const api = context();
+  const note = api.deliveryMetricView({}).note;
+  for (const metrics of [
+    {definition:'session-window-v1',pendingPublications:10},
+    {definition:'session-window-v1',finalizedPublications:10,measurementIncomplete:true,publicationAvailabilityUnknownPairs:5},
+    {definition:'session-window-v1',legacyPublications:4,unscopedPublications:2},
+  ]) assert.equal(api.deliveryMetricView(metrics).note, note);
+  const markup = fs.readFileSync(path.join(__dirname, 'static/index.html'), 'utf8');
+  const help = markup.match(/<details[^>]*id="measurementHelp"[^>]*>[\s\S]*?<\/details>/)?.[0];
+  assert.ok(help);
+  assert.doesNotMatch(help.match(/<details[^>]*>/)[0], /\bopen\b/);
+  assert.match(help, /<summary>How delivery is measured<\/summary>/);
+});
+
+test('identical live content does not replace text or markup', () => {
+  let text = '', textWrites = 0, htmlWrites = 0;
+  const element = {
+    get textContent() { return text; },
+    set textContent(value) { text = value; textWrites++; },
+    set innerHTML(value) { htmlWrites++; },
+  };
+  const api = context({$:()=>element});
+  api.setText(element, 12); api.setText(element, '12');
+  assert.equal(textWrites, 1);
+  api.setText(element, 13); assert.equal(textWrites, 2);
+  api.setConnection('live', 'Live'); api.setConnection('live', 'Live');
+  assert.equal(htmlWrites, 1);
+  api.setConnection('offline', 'Reconnecting'); assert.equal(htmlWrites, 2);
+  const event = {type:'publish', timestamp:'2026-09-07T00:00:00Z', nodeId:'one'};
+  api.renderEvents([event]); api.renderEvents([{...event}]);
+  assert.equal(htmlWrites, 3);
+  api.renderEvents([{...event, type:'deliver'}]); assert.equal(htmlWrites, 4);
+});
+
+test('snapshot bursts render the latest state once per update interval', () => {
+  const state = {snapshot:null, snapshotRenderTimer:null};
+  const pending = [], rendered = [];
+  const api = context({state, setTimeout:(fn, delay)=>{pending.push({fn,delay});return pending.length;}});
+  api.render = snapshot => rendered.push(snapshot);
+  for (let i=0; i<100; i++) api.scheduleSnapshotRender({sequence:i});
+  assert.equal(state.snapshot.sequence,99);
+  assert.equal(pending.length,1);
+  assert.equal(pending[0].delay,250);
+  pending[0].fn();
+  assert.deepEqual(rendered.map(snapshot=>snapshot.sequence),[99]);
+  api.scheduleSnapshotRender({sequence:100});
+  assert.equal(pending.length,2);
+  pending[1].fn();
+  assert.deepEqual(rendered.map(snapshot=>snapshot.sequence),[99,100]);
+});
+
+test('telemetry updates preserve SVG identity and focus while refreshing scores and state', () => {
+  const {ids,document,sandbox,state,render} = uiFixture();
+  sandbox.setupTopologyControls(); render();
+  const svg = ids.get('topology'), world = svg.children[0];
+  const first = svg.querySelectorAll('.topology-peer').find(node=>node.dataset.nodeId==='one');
+  first.focus(); state.topology.selected='one';
+  const nodes = state.snapshot.nodes.map(node=>({...node, peerScores:{remote:8}, overlayObservedAt:'2026-09-07T00:00:00Z'}));
+  const edges = state.snapshot.edges;
+  render([...nodes].reverse(), [...edges].reverse());
+  assert.equal(svg.children[0],world);
+  assert.equal(document.activeElement,first);
+  assert.ok(svg.querySelectorAll('.topology-peer').includes(first));
+  assert.match(ids.get('topologyDetails').innerHTML, /Average: 8.00/);
+  render(nodes.map(node=>({...node,state:node.id==='one'?'starting':node.state})),edges);
+  assert.notEqual(svg.children[0],world);
+  assert.equal(document.activeElement.dataset.nodeId,'one');
+  assert.match(document.activeElement.getAttribute('aria-label'),/starting/);
+  render(nodes, edges.map(edge=>({...edge,reportedBy:[edge.source]})));
+  assert.match(svg.querySelectorAll('.topology-edge')[0].children[0].textContent,/Reported by:/);
+  assert.match(ids.get('topologyDetails').innerHTML,/Selected Peer reported/);
 });

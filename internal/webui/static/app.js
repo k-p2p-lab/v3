@@ -1,6 +1,6 @@
 const $ = (selector) => document.querySelector(selector);
 const state = {
-  snapshot: null, stream: null, reconnectTimer: null,
+  snapshot: null, stream: null, reconnectTimer: null, snapshotRenderTimer: null,
   savedResults: null, resultsLoading: false, resultsError: "",
   resultsRefreshTimer: null, resultsRefreshPending: false, runStates: null,
   savedScenarios: null, scenariosLoading: false, scenariosError: "", scenarioActionError: "",
@@ -92,6 +92,22 @@ phases:
 function escapeHTML(value) {
   return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
 }
+
+// Preserve text selection, focus and layout when a snapshot has no visible changes.
+const renderedHTML = new WeakMap();
+
+function setText(element, value) {
+  const text = String(value ?? "");
+  if (element.textContent !== text) element.textContent = text;
+}
+
+function setHTML(element, markup) {
+  if (renderedHTML.get(element) === markup) return;
+  element.innerHTML = markup;
+  renderedHTML.set(element, markup);
+}
+
+const measurementHelp = "Each publication uses its configured deliveryWindow. Only mature publications and sessions subscribed throughout that window enter the main ratio. Ranges are logical bounds from missing evidence, not confidence intervals. Starting delivery and coverage are conditional on the known starting cohort. Sessions with unproved publication-time availability are outside that cohort; see observation quality for counts. Publications without the required measurement evidence are excluded.";
 
 function loadAgentNumbers() {
   const numbers = new Map();
@@ -223,9 +239,7 @@ function deliveryMetricView(metrics) {
     coverageDetail: `Stable: ${n("expectedDeliveries")} / ${n("initialExpectedDeliveries")} known starting pairs · Departed: ${n("departedPairs")}`,
     observation: `${n("unknownDeliveries")} receipt unknown · ${n("continuityUnknownPairs")} continuity unknown · ${n("publicationAvailabilityUnknownPairs")} start unknown`,
     outcomes: `Known missed: ${n("missedDeliveries")} · Observed late: ${n("lateDeliveries")}`,
-    note: metrics.definition
-      ? `Each publication uses its configured deliveryWindow. Only mature publications and sessions subscribed throughout that window enter the main ratio. Ranges are logical bounds from missing evidence, not confidence intervals. Starting delivery and coverage are conditional on the known starting cohort.${metrics.publicationAvailabilityUnknownPairs > 0 || metrics.measurementIncomplete ? " Some candidate starting sessions remain outside that cohort because their publication-time availability could not be proved; see observation quality." : ""}${metrics.legacyPublications > 0 || metrics.unscopedPublications > 0 ? " Publications without the required measurement evidence are excluded." : ""}`
-      : "No continuous-session measurements available.",
+    note: measurementHelp,
   };
 }
 
@@ -293,8 +307,19 @@ async function scenarioRequest(path, options = {}, kind = "read") {
 
 function setConnection(mode, label) {
   const element = $("#connectionState");
-  element.className = `connection-state ${mode}`;
-  element.innerHTML = `<i></i>${escapeHTML(label)}`;
+  const className = `connection-state ${mode}`;
+  if (element.className !== className) element.className = className;
+  setHTML(element, `<i></i>${escapeHTML(label)}`);
+}
+
+// Coalesce bursts of telemetry while keeping the latest snapshot available to controls.
+function scheduleSnapshotRender(snapshot) {
+  state.snapshot = snapshot;
+  if (state.snapshotRenderTimer != null) return;
+  state.snapshotRenderTimer = setTimeout(() => {
+    state.snapshotRenderTimer = null;
+    render(state.snapshot);
+  }, 250);
 }
 
 function connectStream() {
@@ -302,11 +327,12 @@ function connectStream() {
   const stream = new EventSource("/api/v1/stream");
   state.stream = stream;
   stream.addEventListener("snapshot", (event) => {
-    state.snapshot = JSON.parse(event.data);
-    render(state.snapshot);
+    if (state.stream !== stream) return;
+    scheduleSnapshotRender(JSON.parse(event.data));
     setConnection("live", "Live");
   });
   stream.onerror = () => {
+    if (state.stream !== stream) return;
     setConnection("offline", "Reconnecting");
     stream.close();
     clearTimeout(state.reconnectTimer);
@@ -318,10 +344,12 @@ function syncDetailPanelHeight() {
   const agents = $(".agents-panel");
   const events = $(".events-panel");
   if (!agents || !events) return;
-  events.style.removeProperty("height");
-  if (window.matchMedia?.("(max-width: 1050px)").matches) return;
+  if (window.matchMedia?.("(max-width: 1050px)").matches) {
+    if (events.style.height) events.style.removeProperty("height");
+    return;
+  }
   const height = agents.getBoundingClientRect().height;
-  if (height > 0) events.style.height = `${height}px`;
+  if (height > 0 && events.style.height !== `${height}px`) events.style.height = `${height}px`;
 }
 
 function setupDetailPanelSizing() {
@@ -340,36 +368,36 @@ function render(snapshot) {
   const measurement = sessionMetrics(metrics);
   const metricRun = (snapshot.experiments || []).find((run) => run.id === metrics.runId);
   const metricIteration = metricRun?.repetitions > 1 ? ` · Run ${formatNumber(metricRun.iteration)} of ${formatNumber(metricRun.repetitions)}` : "";
-  $("#messageMetricsScope").textContent = metrics.runId
+  setText($("#messageMetricsScope"), metrics.runId
     ? `Message metrics: ${metricRun?.name ? `${metricRun.name} · ` : ""}${metrics.runId}${metricIteration}`
-    : "Message metrics: No run selected";
+    : "Message metrics: No run selected");
   rememberAgents([...agents.map((agent) => agent.id), ...nodes.map((node) => node.agentId)]);
   const online = agents.filter((agent) => agent.state === "online").length;
   const capacity = agents.reduce((sum, agent) => sum + Math.max(0, agent.capacity - agent.activeNodes), 0);
   const ready = nodes.filter((node) => node.state === "ready").length;
-  $("#agentMetric").textContent = `${online} / ${agents.length}`;
-  $("#capacityMetric").textContent = `Available slots: ${formatNumber(capacity)}`;
-  $("#peerMetric").textContent = formatNumber(ready);
-  $("#connectionMetric").textContent = `Transport links: ${formatNumber(filterTopologyEdges(nodes, edges, { transport: true }).length)}`;
-  $("#latencyMetric").textContent = measurement.latencySamples > 0 ? `${formatNumber(measurement.p95LatencyMs, 1)} ms` : "N/A";
-  $("#averageLatencyMetric").textContent = measurement.latencySamples > 0 ? `Average: ${formatNumber(measurement.averageLatencyMs, 1)} ms · Samples: ${formatNumber(measurement.latencySamples)}` : "No eligible latency samples";
+  setText($("#agentMetric"), `${online} / ${agents.length}`);
+  setText($("#capacityMetric"), `Available slots: ${formatNumber(capacity)}`);
+  setText($("#peerMetric"), formatNumber(ready));
+  setText($("#connectionMetric"), `Transport links: ${formatNumber(filterTopologyEdges(nodes, edges, { transport: true }).length)}`);
+  setText($("#latencyMetric"), measurement.latencySamples > 0 ? `${formatNumber(measurement.p95LatencyMs, 1)} ms` : "N/A");
+  setText($("#averageLatencyMetric"), measurement.latencySamples > 0 ? `Average: ${formatNumber(measurement.averageLatencyMs, 1)} ms · Samples: ${formatNumber(measurement.latencySamples)}` : "No eligible latency samples");
   const delivery = deliveryMetricView(metrics);
-  $("#reachLabel").textContent = delivery.label;
-  $("#reachMetric").textContent = delivery.primary;
-  $("#deliveryMetric").textContent = delivery.primaryDetail;
-  $("#measurementProgress").textContent = delivery.progress;
-  $("#initialReachMetric").textContent = delivery.initial;
-  $("#initialDeliveryMetric").textContent = delivery.initialDetail;
-  $("#coverageMetric").textContent = delivery.coverage;
-  $("#coverageDetail").textContent = delivery.coverageDetail;
-  $("#observationMetric").textContent = delivery.observation;
-  $("#outcomesMetric").textContent = delivery.outcomes;
-  $("#measurementNote").textContent = delivery.note;
-  $("#eventTotalsMetric").textContent = `Published: ${formatNumber(metrics.published)} · Delivered: ${formatNumber(metrics.delivered)}`;
-  $("#duplicateMetric").textContent = measurement.duplicateSamples > 0 ? formatNumber(measurement.averageDuplicates, 2) : "N/A";
-  $("#duplicateSamplesMetric").textContent = `Eligible duplicates: ${formatNumber(measurement.eligibleDuplicates)} · Delivered pairs: ${formatNumber(measurement.duplicateSamples)}`;
-  $("#duplicateTotalMetric").textContent = `All duplicate events: ${formatNumber(metrics.duplicates)}`;
-  $("#updatedAt").textContent = new Date(snapshot.generatedAt).toLocaleTimeString("en-US");
+  setText($("#reachLabel"), delivery.label);
+  setText($("#reachMetric"), delivery.primary);
+  setText($("#deliveryMetric"), delivery.primaryDetail);
+  setText($("#measurementProgress"), delivery.progress);
+  setText($("#initialReachMetric"), delivery.initial);
+  setText($("#initialDeliveryMetric"), delivery.initialDetail);
+  setText($("#coverageMetric"), delivery.coverage);
+  setText($("#coverageDetail"), delivery.coverageDetail);
+  setText($("#observationMetric"), delivery.observation);
+  setText($("#outcomesMetric"), delivery.outcomes);
+  setText($("#measurementNote"), delivery.note);
+  setText($("#eventTotalsMetric"), `Published: ${formatNumber(metrics.published)} · Delivered: ${formatNumber(metrics.delivered)}`);
+  setText($("#duplicateMetric"), measurement.duplicateSamples > 0 ? formatNumber(measurement.averageDuplicates, 2) : "N/A");
+  setText($("#duplicateSamplesMetric"), `Eligible duplicates: ${formatNumber(measurement.eligibleDuplicates)} · Delivered pairs: ${formatNumber(measurement.duplicateSamples)}`);
+  setText($("#duplicateTotalMetric"), `All duplicate events: ${formatNumber(metrics.duplicates)}`);
+  setText($("#updatedAt"), new Date(snapshot.generatedAt).toLocaleTimeString("en-US"));
   renderRuns(snapshot.experiments || []);
   renderAgents(agents);
   renderEvents(snapshot.events || []);
@@ -384,12 +412,12 @@ function renderRuns(runs) {
     state.resultsRefreshTimer = setTimeout(refreshSavedResults, 250);
   }
   state.runStates = runStates;
-  $("#runCount").textContent = runs.length;
+  setText($("#runCount"), runs.length);
   if (!runs.length) {
-    $("#runList").innerHTML = '<div class="empty-copy">No experiments yet.</div>';
+    setHTML($("#runList"), '<div class="empty-copy">No experiments yet.</div>');
     return;
   }
-  $("#runList").innerHTML = runs.map((run) => {
+  setHTML($("#runList"), runs.map((run) => {
     const progress = run.totalPhases ? Math.round((run.phase / run.totalPhases) * 100) : 0;
     const stopping = state.pendingStops.has(run.batchId || run.id);
     const stop = isPendingRun(run) ? `<button class="stop-button" data-stop-run="${escapeHTML(run.id)}" type="button" title="Stop this run and cancel the remaining queued runs in its batch." ${stopping ? "disabled" : ""}>${stopping ? "Stopping…" : run.repetitions > 1 ? "Stop batch" : "Stop"}</button>` : "";
@@ -403,7 +431,7 @@ function renderRuns(runs) {
       ${run.error ? `<div class="run-meta"><span>${escapeHTML(run.error)}</span></div>` : ""}
       <div class="run-actions">${resultDownloadLink(run)}${downloadSize}</div>
     </article>`;
-  }).join("");
+  }).join(""));
 }
 
 function isPendingRun(run) {
@@ -1043,10 +1071,10 @@ async function confirmResultDeletion() {
 function renderAgents(agents) {
   rememberAgents(agents.map((agent) => agent.id));
   if (!agents.length) {
-    $("#agentRows").innerHTML = '<tr><td colspan="8" class="empty-cell">No Agents registered.</td></tr>';
+    setHTML($("#agentRows"), '<tr><td colspan="8" class="empty-cell">No Agents registered.</td></tr>');
     return;
   }
-  $("#agentRows").innerHTML = [...agents].sort((a, b) => agentNumber(a.id) - agentNumber(b.id)).map((agent) => {
+  setHTML($("#agentRows"), [...agents].sort((a, b) => agentNumber(a.id) - agentNumber(b.id)).map((agent) => {
     const usage = agent.capacity ? Math.min(100, Math.round((agent.activeNodes / agent.capacity) * 100)) : 0;
     return `<tr>
       <td class="agent-number">${agentNumber(agent.id)}</td>
@@ -1058,7 +1086,7 @@ function renderAgents(agents) {
       <td>${escapeHTML(relativeTime(agent.lastSeen))}</td>
       <td>${agentMetricsLink(agent)}</td>
     </tr>`;
-  }).join("");
+  }).join(""));
 }
 
 function safeAgentMetricsURL(value) {
@@ -1085,10 +1113,10 @@ function agentMetricsLink(agent) {
 function renderEvents(events) {
   const recent = events.slice(-40).reverse();
   if (!recent.length) {
-    $("#eventList").innerHTML = '<li class="empty-copy">No events collected.</li>';
+    setHTML($("#eventList"), '<li class="empty-copy">No events collected.</li>');
     return;
   }
-  $("#eventList").innerHTML = recent.map((event) => {
+  setHTML($("#eventList"), recent.map((event) => {
     const latency = event.fields?.latencyAvailable === false ? "latency unavailable" : event.latencyMs > 0 ? `${formatNumber(event.latencyMs, 1)} ms` : "";
     const nodePrefix = event.runId ? `${event.runId}-` : "";
     const nodeLabel = nodePrefix && event.nodeId?.startsWith(nodePrefix) ? event.nodeId.slice(nodePrefix.length) : event.nodeId;
@@ -1105,7 +1133,7 @@ function renderEvents(events) {
     const detail = [nodeLabel, event.remotePeerId ? `${peerArrow} ${event.remotePeerId.slice(0, 10)}` : "", control, latency].filter(Boolean).join(" · ");
     const runID = event.runId ? `<small class="event-run-id" title="${escapeHTML(`Experiment ID: ${event.runId}`)}">Experiment · ${escapeHTML(event.runId)}</small>` : "";
     return `<li class="event-item"><time datetime="${escapeHTML(event.timestamp)}">${new Date(event.timestamp).toLocaleTimeString("en-US", { hour12: false })}</time><span class="event-type" title="${escapeHTML(event.type)}">${escapeHTML(event.type)}</span><span class="event-summary" title="${escapeHTML(detail)}">${escapeHTML(detail)}</span>${runID}</li>`;
-  }).join("");
+  }).join(""));
 }
 
 function svgElement(tag, attributes = {}, text) {
@@ -1148,7 +1176,18 @@ function renderTopology(nodes, edges) {
   ]);
   const changed = topology.signature !== signature;
   topology.signature = signature;
-  const graph = { nodes, edges: connections, ...layout, width, height, peerElements: [], edgeElements: [] };
+  const domSignature = JSON.stringify([
+    signature, width, height,
+    nodes.map((node) => [node.id, node.role, node.state, layout.positions.get(node.id).slot]).sort(),
+    connections.map((edge) => [edge.source, edge.target, edge.protocol, edge.topics, edge.reportedBy, Object.entries(edge.topicReports).sort()]).sort(),
+    layout.groups.map((group) => [group.id, group.count]),
+  ]);
+  const reuseElements = topology.domSignature === domSignature;
+  topology.domSignature = domSignature;
+  const previous = topology.graph;
+  const graph = { nodes, edges: connections, ...layout, width, height,
+    peerElements: reuseElements ? previous.peerElements : [],
+    edgeElements: reuseElements ? previous.edgeElements : [] };
   topology.graph = graph;
   if (changed) {
     reheatTopologyLayout(graph);
@@ -1159,67 +1198,69 @@ function renderTopology(nodes, edges) {
     }
   }
   $("#topologyEmpty").hidden = nodes.length > 0;
-  $("#topologyLinkCount").textContent = `${formatNumber(nodes.length)} Peers · ${formatNumber(connections.length)} visible links`;
+  setText($("#topologyLinkCount"), `${formatNumber(nodes.length)} Peers · ${formatNumber(connections.length)} visible links`);
   const observed = nodes.filter((node) => node.overlayObservedAt && !node.overlayObservedAt.startsWith("0001-")).length;
-  $("#topologyReportStatus").textContent = nodes.length && observed < nodes.length
+  setText($("#topologyReportStatus"), nodes.length && observed < nodes.length
     ? `Overlay reports: ${observed}/${nodes.length} Peers. Waiting for reports from the remaining Peers; older Peers may report transport only.`
-    : "Each slice is an Agent. Peers arrange around their visible connections; lines show relationships, not packet traffic.";
-  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  const world = svgElement("g", { id: "topologyWorld" });
-  svg.replaceChildren(world);
-  for (const [index, group] of layout.groups.entries()) {
-    const background = svgElement("g", { class: "topology-agent", style: `--sector-hue: ${200 + (index % 4) * 17}` });
-    background.append(svgElement("path", { d: topologySectorPath(group), class: "topology-agent-background" }));
-    const label = svgElement("g", { class: "topology-agent-heading", transform: `translate(${group.labelX} ${group.labelY})` });
-    label.append(svgElement("rect", { x: -21, y: -18, width: 42, height: 32, rx: 11, class: "topology-agent-badge" }));
-    label.append(svgElement("text", { x: 0, y: 5, "text-anchor": "middle", class: "topology-label", "aria-label": `Agent ${agentNumber(group.id)}` }, agentNumber(group.id)));
-    label.append(svgElement("text", { x: 0, y: 31, "text-anchor": "middle", class: "topology-agent-count" }, `${group.count} Peers`));
-    label.append(svgElement("title", {}, `Agent ${agentNumber(group.id)} · ${group.id}`));
-    background.append(label);
-    world.append(background);
-  }
-  // Paint low-emphasis transport/routing relations below the GossipSub mesh.
-  const order = { transport: 0, kademlia: 1, gossipsub: 2 };
-  for (const edge of [...connections].sort((a, b) => order[a.protocol] - order[b.protocol])) {
-    const path = svgElement("path", {
-      class: `topology-edge ${edge.protocol}`, "data-source": edge.source, "data-target": edge.target,
-    });
-    const layer = edge.protocol === "gossipsub" ? "GossipSub mesh" : edge.protocol === "kademlia" ? "Kademlia routing" : "Transport";
-    const reports = edge.protocol === "gossipsub" && edge.topics.length
-      ? edge.topics.map((topic) => `${topic}: ${(edge.topicReports[topic] || []).join(", ") || "reporter not available"}`).join("\n")
-      : edge.reportedBy.join(", ") || "reporter not available";
-    path.append(svgElement("title", {}, `${layer}: ${edge.source} — ${edge.target}\nReported by: ${reports}`));
-    world.append(path);
-    graph.edgeElements.push({ element: path, edge });
-  }
-  if (layout.groups.length) {
-    const { cx, cy } = layout.groups[0];
-    const hub = svgElement("g", { class: "topology-hub", transform: `translate(${cx} ${cy})` });
-    hub.append(svgElement("circle", { r: 32 }));
-    hub.append(svgElement("text", { "text-anchor": "middle", y: 2, class: "topology-hub-count" }, formatNumber(nodes.length)));
-    hub.append(svgElement("text", { "text-anchor": "middle", y: 17, class: "topology-hub-label" }, "PEERS"));
-    world.append(hub);
-  }
-  for (const node of nodes) {
-    const point = layout.positions.get(node.id);
-    const mode = node.state !== "ready" ? "issue" : node.role === "boot" ? "boot" : "worker";
-    const peer = svgElement("g", {
-      class: "topology-peer", "data-node-id": node.id, tabindex: 0, role: "button",
-      "aria-label": `Peer ${point.slot}, Agent ${agentNumber(node.agentId)}: ${node.id}, ${node.state}`,
-      "aria-pressed": String(topology.selected === node.id),
-    });
-    peer.append(svgElement("circle", { r: 17, class: "topology-hit-area" }));
-    peer.append(svgElement("circle", { r: node.role === "boot" ? 8 : 6.5, class: `topology-node ${mode}` }));
-    peer.append(svgElement("text", { x: 0, y: 20, "text-anchor": "middle", class: "topology-slot" }, point.slot));
-    peer.append(svgElement("title", {}, `${node.id}\nAgent ${agentNumber(node.agentId)} · ${node.role} · ${node.state}\nSelect to inspect relationships and Peer details.`));
-    world.append(peer);
-    graph.peerElements.push({ element: peer, id: node.id });
+    : "Each slice is an Agent. Peers arrange around their visible connections; lines show relationships, not packet traffic.");
+  if (!reuseElements) {
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    const world = svgElement("g", { id: "topologyWorld" });
+    svg.replaceChildren(world);
+    for (const [index, group] of layout.groups.entries()) {
+      const background = svgElement("g", { class: "topology-agent", style: `--sector-hue: ${200 + (index % 4) * 17}` });
+      background.append(svgElement("path", { d: topologySectorPath(group), class: "topology-agent-background" }));
+      const label = svgElement("g", { class: "topology-agent-heading", transform: `translate(${group.labelX} ${group.labelY})` });
+      label.append(svgElement("rect", { x: -21, y: -18, width: 42, height: 32, rx: 11, class: "topology-agent-badge" }));
+      label.append(svgElement("text", { x: 0, y: 5, "text-anchor": "middle", class: "topology-label", "aria-label": `Agent ${agentNumber(group.id)}` }, agentNumber(group.id)));
+      label.append(svgElement("text", { x: 0, y: 31, "text-anchor": "middle", class: "topology-agent-count" }, `${group.count} Peers`));
+      label.append(svgElement("title", {}, `Agent ${agentNumber(group.id)} · ${group.id}`));
+      background.append(label);
+      world.append(background);
+    }
+    // Paint low-emphasis transport/routing relations below the GossipSub mesh.
+    const order = { transport: 0, kademlia: 1, gossipsub: 2 };
+    for (const edge of [...connections].sort((a, b) => order[a.protocol] - order[b.protocol])) {
+      const path = svgElement("path", {
+        class: `topology-edge ${edge.protocol}`, "data-source": edge.source, "data-target": edge.target,
+      });
+      const layer = edge.protocol === "gossipsub" ? "GossipSub mesh" : edge.protocol === "kademlia" ? "Kademlia routing" : "Transport";
+      const reports = edge.protocol === "gossipsub" && edge.topics.length
+        ? edge.topics.map((topic) => `${topic}: ${(edge.topicReports[topic] || []).join(", ") || "reporter not available"}`).join("\n")
+        : edge.reportedBy.join(", ") || "reporter not available";
+      path.append(svgElement("title", {}, `${layer}: ${edge.source} — ${edge.target}\nReported by: ${reports}`));
+      world.append(path);
+      graph.edgeElements.push({ element: path, edge });
+    }
+    if (layout.groups.length) {
+      const { cx, cy } = layout.groups[0];
+      const hub = svgElement("g", { class: "topology-hub", transform: `translate(${cx} ${cy})` });
+      hub.append(svgElement("circle", { r: 32 }));
+      hub.append(svgElement("text", { "text-anchor": "middle", y: 2, class: "topology-hub-count" }, formatNumber(nodes.length)));
+      hub.append(svgElement("text", { "text-anchor": "middle", y: 17, class: "topology-hub-label" }, "PEERS"));
+      world.append(hub);
+    }
+    for (const node of nodes) {
+      const point = layout.positions.get(node.id);
+      const mode = node.state !== "ready" ? "issue" : node.role === "boot" ? "boot" : "worker";
+      const peer = svgElement("g", {
+        class: "topology-peer", "data-node-id": node.id, tabindex: 0, role: "button",
+        "aria-label": `Peer ${point.slot}, Agent ${agentNumber(node.agentId)}: ${node.id}, ${node.state}`,
+        "aria-pressed": String(topology.selected === node.id),
+      });
+      peer.append(svgElement("circle", { r: 17, class: "topology-hit-area" }));
+      peer.append(svgElement("circle", { r: node.role === "boot" ? 8 : 6.5, class: `topology-node ${mode}` }));
+      peer.append(svgElement("text", { x: 0, y: 20, "text-anchor": "middle", class: "topology-slot" }, point.slot));
+      peer.append(svgElement("title", {}, `${node.id}\nAgent ${agentNumber(node.agentId)} · ${node.role} · ${node.state}\nSelect to inspect relationships and Peer details.`));
+      world.append(peer);
+      graph.peerElements.push({ element: peer, id: node.id });
+    }
   }
   paintTopologyPositions();
   if (topology.autoFit) topology.camera = fitTopologyCamera(layout.bounds, width, height);
   applyTopologyCamera();
   highlightTopology();
-  if (focusedNodeID) {
+  if (!reuseElements && focusedNodeID) {
     [...svg.querySelectorAll("[data-node-id]")].find((peer) => peer.dataset.nodeId === focusedNodeID)?.focus({ preventScroll: true });
   }
   updateTopologyMotionControl();
@@ -1267,7 +1308,7 @@ function animateTopology(timestamp) {
 
 function updateTopologyMotionControl() {
   const button = $("#topologyMotion"), motion = state.topology.motion;
-  button.textContent = motion.enabled ? "Pause motion" : "Resume motion";
+  setText(button, motion.enabled ? "Pause motion" : "Resume motion");
   button.setAttribute("aria-pressed", String(!motion.enabled));
 }
 
@@ -1323,7 +1364,7 @@ function highlightTopology() {
 function renderTopologyDetails(node) {
   const details = $("#topologyDetails");
   if (!node) {
-    details.innerHTML = '<p class="topology-detail-hint">Hover over a Peer to highlight its visible neighbors. Select it to keep the details open. Drag the background to pan; use + / − or Ctrl + scroll to zoom.</p>';
+    setHTML(details, '<p class="topology-detail-hint">Hover over a Peer to highlight its visible neighbors. Select it to keep the details open. Drag the background to pan; use + / − or Ctrl + scroll to zoom.</p>');
     return;
   }
   const graph = state.topology.graph;
@@ -1358,7 +1399,7 @@ function renderTopologyDetails(node) {
     const reports = topologyReportSummary(edge, node.id);
     return `<li><i class="link-key ${edge.protocol}" aria-hidden="true"></i><span><strong>${escapeHTML(layers[edge.protocol])}</strong> · Agent ${agentNumber(other.agentId)} / Peer ${slot}<small>${escapeHTML(other.id)} · ${escapeHTML(reports)}</small></span></li>`;
   }).join("");
-  details.innerHTML = `<dl class="topology-detail-grid">${entries.map(([label, value]) => `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(value)}</dd></div>`).join("")}</dl><div class="topology-neighbors"><h3>Visible relationships (${edges.length})</h3>${relations ? `<ul>${relations}</ul>` : '<p class="topology-detail-hint">No relationships match the current layer and topic filters.</p>'}</div>`;
+  setHTML(details, `<dl class="topology-detail-grid">${entries.map(([label, value]) => `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(value)}</dd></div>`).join("")}</dl><div class="topology-neighbors"><h3>Visible relationships (${edges.length})</h3>${relations ? `<ul>${relations}</ul>` : '<p class="topology-detail-hint">No relationships match the current layer and topic filters.</p>'}</div>`);
 }
 
 function setupTopologyControls() {

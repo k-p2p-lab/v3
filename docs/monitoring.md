@@ -152,6 +152,10 @@ sh scripts/swarm.sh logs prometheus
 sh scripts/swarm.sh logs grafana
 ```
 
+The Controller target also uses a browser-reachable address: `GET /api/v1/prometheus/controller-targets` returns the control node's Swarm address and published `KPL_HTTP_PORT`. The deployment helper derives `KPL_CONTROLLER_METRICS_URL` and `KPL_PROMETHEUS_EXTERNAL_URL` on each deployment, including custom ports and IPv6. Prometheus uses the latter as [`--web.external-url`](https://prometheus.io/docs/prometheus/latest/command-line/prometheus/) for its own links. Internal DNS remains in discovery requests and the Grafana datasource. Prometheus containers must be able to reach the control node's published HTTP port. An unset Controller metrics URL returns an empty target list.
+
+The Dashboard coalesces telemetry bursts into at most four renders per second and retains unchanged text, lists, and topology elements. **How delivery is measured** holds the fixed measurement explanation; its expanded state persists across updates. The observation quality cards continue to show changing counts.
+
 The Swarm stack discovers registered targets from `GET /api/v1/prometheus/agent-targets`. Use `sh scripts/swarm.sh access` to inspect the advertised URLs, ensure the configured port is free on every selected Agent node, and permit TCP traffic from the control node. If operators open an Agent metrics link directly, permit their browser's trusted management network as well; block untrusted sources. `up{job="kpl-agent"}` distinguishes successful scrapes from registered targets that are unreachable through a firewall or an incorrect Swarm `NodeAddr`.
 
 Image versions are pinned to Prometheus `v3.13.2` and Grafana `13.2.1`. When upgrading, consult the official [Prometheus downloads](https://prometheus.io/download/) and [Grafana Docker installation guide](https://grafana.com/docs/grafana/latest/setup-grafana/installation/docker/), then revalidate the configuration and dashboards.

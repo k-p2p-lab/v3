@@ -23,6 +23,11 @@ import (
 )
 
 func (s *Server) Run(ctx context.Context) error {
+	if s.config.MetricsURL != "" {
+		if _, _, _, ok := prometheusTargetFromURL(s.config.MetricsURL); !ok {
+			return errors.New("Controller metrics URL must be a non-loopback HTTP(S) URL ending in /metrics, without credentials, query or fragment")
+		}
+	}
 	if err := prepareDataDir(s.config.DataDir); err != nil {
 		return err
 	}
@@ -96,6 +101,7 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 	mux.HandleFunc("/api/v1/health", s.handleHealth)
 	mux.HandleFunc("/api/v1/ui-config", s.handleUIConfig)
 	mux.HandleFunc("/api/v1/prometheus/agent-targets", s.handlePrometheusAgentTargets)
+	mux.HandleFunc("/api/v1/prometheus/controller-targets", s.handlePrometheusControllerTargets)
 	mux.HandleFunc("/api/v1/snapshot", s.handleSnapshot)
 	mux.HandleFunc("/api/v1/agents", s.handleAgents)
 	mux.HandleFunc("/api/v1/agents/register", s.handleAgentRegister)
@@ -121,6 +127,21 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 type prometheusTargetGroup struct {
 	Targets []string          `json:"targets"`
 	Labels  map[string]string `json:"labels"`
+}
+
+func (s *Server) handlePrometheusControllerTargets(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	groups := make([]prometheusTargetGroup, 0, 1)
+	if target, scheme, _, ok := prometheusTargetFromURL(s.config.MetricsURL); ok {
+		groups = append(groups, prometheusTargetGroup{
+			Targets: []string{target},
+			Labels:  map[string]string{"__scheme__": scheme},
+		})
+	}
+	writeJSON(w, http.StatusOK, groups)
 }
 
 func (s *Server) handlePrometheusAgentTargets(w http.ResponseWriter, r *http.Request) {

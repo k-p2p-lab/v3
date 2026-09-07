@@ -99,6 +99,8 @@ sh scripts/swarm.sh remove
 
 worker가 계속 들어오고 수명에 따라 나가는 더 긴 실험은 [churn 중 무작위 반복 발행](swarm-churn-publish.kr.md)을 참고하십시오. 안정적인 bootstrap 두 개와 반복적인 발행 대상 선택, 마지막 수집·정리 단계를 사용합니다.
 
+배포 helper는 control 노드 주소와 게시 포트로 Controller metrics 및 Prometheus 자체 링크의 브라우저용 주소를 자동 생성합니다. 별도의 `.env.swarm` 설정은 필요하지 않습니다. Prometheus에서 해당 노드의 `KPL_HTTP_PORT`에 접근할 수 있어야 합니다. 자세한 내용은 [모니터링](monitoring.kr.md)을 참고하십시오.
+
 ## 설정과 네트워크
 
 일반적인 설정 변경은 helper를 사용합니다.
@@ -213,6 +215,10 @@ helper는 기존 서비스가 `${KPL_STACK_NAME}_{controller,agent,prometheus,gr
 # 위의 기존 배포 변수가 export된 manager에서 실행합니다.
 docker node update --label-add "kpl.${KPL_STACK_NAME}.agent=true" worker-a
 docker node update --label-add "kpl.${KPL_STACK_NAME}.agent=true" worker-b
+control_address=$(docker node inspect --format '{{.Status.Addr}}' "$KPL_CONTROL_NODE_ID")
+case "$control_address" in *:*) control_address=[$control_address] ;; esac
+export KPL_CONTROLLER_METRICS_URL="http://$control_address:${KPL_HTTP_PORT:-8080}/metrics"
+export KPL_PROMETHEUS_EXTERNAL_URL="http://$control_address:${PROMETHEUS_PORT:-9090}/"
 docker stack config --compose-file stack.swarm.yaml >/dev/null
 docker stack deploy --with-registry-auth --compose-file stack.swarm.yaml "$KPL_STACK_NAME"
 sh scripts/swarm.sh status

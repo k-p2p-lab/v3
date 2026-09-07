@@ -28,6 +28,7 @@ type ServerConfig struct {
 	Listen         string
 	DataDir        string
 	Token          string
+	MetricsURL     string
 	PrometheusPort int
 	GrafanaPort    int
 }

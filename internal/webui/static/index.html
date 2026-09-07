@@ -78,7 +78,10 @@
         <small id="outcomesMetric">Known missed: 0 · Observed late: 0</small>
       </article>
     </section>
-    <p class="measurement-note" id="measurementNote">No continuous-session measurements available.</p>
+    <details class="measurement-help" id="measurementHelp">
+      <summary>How delivery is measured</summary>
+      <p class="measurement-note" id="measurementNote">Each publication uses its configured deliveryWindow. Only mature publications and sessions subscribed throughout that window enter the main ratio. Ranges are logical bounds from missing evidence, not confidence intervals. Starting delivery and coverage are conditional on the known starting cohort. Sessions with unproved publication-time availability are outside that cohort; see observation quality for counts. Publications without the required measurement evidence are excluded.</p>
+    </details>
 
     <section class="workspace-grid">
       <article class="panel topology-panel">

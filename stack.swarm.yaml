@@ -8,6 +8,7 @@ services:
     command: [controller, --listen, ':8080', --data-dir, /var/lib/kpl/data]
     environment:
       KPL_API_TOKEN: "${KPL_API_TOKEN:?Set KPL_API_TOKEN}"
+      KPL_CONTROLLER_METRICS_URL: "${KPL_CONTROLLER_METRICS_URL:?Deploy with scripts/swarm.sh}"
       PROMETHEUS_PORT: "${PROMETHEUS_PORT:-9090}"
       GRAFANA_PORT: "${GRAFANA_PORT:-3000}"
     volumes: [controller-data:/var/lib/kpl/data]
@@ -66,11 +67,12 @@ services:
     image: prom/prometheus:v3.13.2
     command:
       - --config.file=/etc/prometheus/prometheus.yml
+      - --web.external-url=${KPL_PROMETHEUS_EXTERNAL_URL:?Deploy with scripts/swarm.sh}
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=15d
       - --storage.tsdb.retention.size=5GB
     configs:
-      - source: prometheus-agent-http-sd-v2
+      - source: prometheus-public-targets-v3
         target: /etc/prometheus/prometheus.yml
     volumes: [prometheus-data:/prometheus]
     networks: [monitoring]
@@ -126,7 +128,7 @@ volumes:
   grafana-data:
 
 configs:
-  prometheus-agent-http-sd-v2:
+  prometheus-public-targets-v3:
     file: ./monitoring/prometheus/swarm.yml
   grafana-datasource:
     file: ./monitoring/grafana/provisioning/datasources/prometheus.yaml

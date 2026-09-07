@@ -59,6 +59,7 @@ func runController(ctx context.Context, logger *slog.Logger, args []string) erro
 	listen := flags.String("listen", ":8080", "HTTP listen address")
 	dataDir := flags.String("data-dir", "data", "experiment data directory")
 	token := flags.String("token", os.Getenv("KPL_API_TOKEN"), "optional shared API token")
+	metricsURL := flags.String("metrics-url", os.Getenv("KPL_CONTROLLER_METRICS_URL"), "public Controller /metrics URL advertised to Prometheus")
 	prometheusPort := flags.String("prometheus-port", os.Getenv("PROMETHEUS_PORT"), "public Prometheus port advertised to the Dashboard (default 9090)")
 	grafanaPort := flags.String("grafana-port", os.Getenv("GRAFANA_PORT"), "public Grafana port advertised to the Dashboard (default 3000)")
 	if err := flags.Parse(args); err != nil {
@@ -76,6 +77,7 @@ func runController(ctx context.Context, logger *slog.Logger, args []string) erro
 		Listen:         *listen,
 		DataDir:        *dataDir,
 		Token:          *token,
+		MetricsURL:     *metricsURL,
 		PrometheusPort: parsedPrometheusPort,
 		GrafanaPort:    parsedGrafanaPort,
 	}, logger)

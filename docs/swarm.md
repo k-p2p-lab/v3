@@ -99,6 +99,8 @@ Removal waits for Controller shutdown, then Agent shutdown and Peer cleanup, bef
 
 For a longer experiment with workers continuously joining and expiring, follow [random publishing during churn](swarm-churn-publish.md). It uses two stable bootstrap Peers, repeated publisher selection, and a final collection/cleanup stage.
 
+The deploy helper derives browser-facing Controller metrics and Prometheus self-link URLs from the control node address and the published ports. These values are generated automatically, not stored as additional `.env.swarm` settings. Prometheus must reach `KPL_HTTP_PORT` on that node; see [monitoring](monitoring.md#retention-and-operation).
+
 ## Configuration and Network
 
 Use helper commands for ordinary configuration changes:
@@ -213,6 +215,10 @@ First stop existing experiments and confirm Peer cleanup. Export the existing st
 # Run on the manager after exporting the existing deployment values above.
 docker node update --label-add "kpl.${KPL_STACK_NAME}.agent=true" worker-a
 docker node update --label-add "kpl.${KPL_STACK_NAME}.agent=true" worker-b
+control_address=$(docker node inspect --format '{{.Status.Addr}}' "$KPL_CONTROL_NODE_ID")
+case "$control_address" in *:*) control_address=[$control_address] ;; esac
+export KPL_CONTROLLER_METRICS_URL="http://$control_address:${KPL_HTTP_PORT:-8080}/metrics"
+export KPL_PROMETHEUS_EXTERNAL_URL="http://$control_address:${PROMETHEUS_PORT:-9090}/"
 docker stack config --compose-file stack.swarm.yaml >/dev/null
 docker stack deploy --with-registry-auth --compose-file stack.swarm.yaml "$KPL_STACK_NAME"
 sh scripts/swarm.sh status

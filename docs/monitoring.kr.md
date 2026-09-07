@@ -152,6 +152,10 @@ sh scripts/swarm.sh logs prometheus
 sh scripts/swarm.sh logs grafana
 ```
 
+Controller target도 브라우저에서 열 수 있는 주소를 사용합니다. `GET /api/v1/prometheus/controller-targets`는 control 노드의 Swarm 주소와 게시된 `KPL_HTTP_PORT`를 반환합니다. 배포 helper는 매 배포에서 `KPL_CONTROLLER_METRICS_URL`과 `KPL_PROMETHEUS_EXTERNAL_URL`을 생성하며 사용자 지정 포트와 IPv6를 반영합니다. Prometheus 자체 링크에는 후자를 [`--web.external-url`](https://prometheus.io/docs/prometheus/latest/command-line/prometheus/)로 전달합니다. 탐색 요청과 Grafana datasource는 내부 DNS를 사용합니다. Prometheus 컨테이너에서 control 노드의 게시된 HTTP 포트에 접근할 수 있어야 합니다. Controller metrics URL이 미설정이면 target 목록은 비어 있습니다.
+
+Dashboard는 몰려오는 telemetry를 초당 최대 4회 화면 갱신으로 병합하고, 동일한 텍스트·목록·토폴로지 요소를 유지합니다. **How delivery is measured**에 고정된 측정 설명을 담았으며 펼침 상태도 갱신 중 유지됩니다. 관측 품질 카드에는 변화하는 집계값을 계속 표시합니다.
+
 Swarm stack은 `GET /api/v1/prometheus/agent-targets`에서 등록된 target을 탐색합니다. `sh scripts/swarm.sh access`로 광고 주소를 확인하고, 설정한 포트가 선택된 모든 Agent 노드에서 비어 있으며 control 노드에서 TCP 접근이 허용되는지 확인하십시오. 운영자가 Agent metrics 링크를 직접 열 때에는 브라우저가 속한 신뢰 관리망에서도 접근을 허용하고 신뢰하지 않는 출발지는 차단하십시오. `up{job="kpl-agent"}`를 보면 등록되었지만 방화벽이나 잘못된 Swarm `NodeAddr` 때문에 접근할 수 없는 target을 성공한 scrape와 구분할 수 있습니다.
 
 현재 이미지 버전은 Prometheus `v3.13.2`와 Grafana `13.2.1`로 고정했습니다. 업데이트 시 공식 [Prometheus 다운로드](https://prometheus.io/download/)와 [Grafana Docker 설치 문서](https://grafana.com/docs/grafana/latest/setup-grafana/installation/docker/)를 참고하고 설정·대시보드를 재검증하십시오.

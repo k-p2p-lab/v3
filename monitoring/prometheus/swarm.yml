@@ -5,8 +5,11 @@ global:
 
 scrape_configs:
   - job_name: kpl-controller
-    static_configs:
-      - targets: [controller:8080]
+    # Discovery uses internal DNS; the returned scrape URL uses the published
+    # control-node address so the Targets page link also works in a browser.
+    http_sd_configs:
+      - url: http://controller:8080/api/v1/prometheus/controller-targets
+        refresh_interval: 5s
   - job_name: kpl-agent
     # The Controller returns each registered Agent's node-address metrics URL.
     # This avoids the Swarm service VIP and keeps the control API unpublished.

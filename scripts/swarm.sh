@@ -216,6 +216,13 @@ case "$command_name" in
         ;;
 esac
 
+control_node_host() {
+    control_host=$(dock node inspect --format '{{.Status.Addr}}' "$KPL_CONTROL_NODE_ID") || fail 'Cannot inspect the control node address.'
+    case "$control_host" in ''|*[!0-9a-fA-F:.]*) fail 'Docker returned an invalid control node address.' ;; esac
+    case "$control_host" in *:*) control_host=[$control_host] ;; esac
+    printf '%s\n' "$control_host"
+}
+
 [ "$(dock info --format '{{.Swarm.LocalNodeState}} {{.Swarm.ControlAvailable}}')" = 'active true' ] || fail 'Run against an active Swarm manager.'
 case "$command_name" in
     nodes) dock node ls; exit ;;
@@ -231,9 +238,7 @@ case "$command_name" in
         swarm_validate_setting KPL_AGENT_METRICS_PORT "$agent_metrics_port"
         swarm_validate_setting PROMETHEUS_PORT "$prometheus_port"
         swarm_validate_setting GRAFANA_PORT "$grafana_port"
-        access_host=$(dock node inspect --format '{{.Status.Addr}}' "$KPL_CONTROL_NODE_ID") || fail 'Cannot inspect the control node address.'
-        case "$access_host" in ''|*[!0-9a-fA-F:.]*) fail 'Docker returned an invalid control node address.' ;; esac
-        case "$access_host" in *:*) access_host=[$access_host] ;; esac
+        access_host=$(control_node_host) || exit 1
         printf 'Controller: http://%s:%s\nPrometheus: http://%s:%s\nGrafana: http://%s:%s\n' "$access_host" "$http_port" "$access_host" "$prometheus_port" "$access_host" "$grafana_port"
         agent_nodes=$(dock node ls --quiet --filter "node.label=$agent_label=true") || fail 'Cannot list selected Agent nodes.'
         if [ -n "$agent_nodes" ]; then
@@ -468,6 +473,10 @@ case "$command_name" in
         : "${KPL_API_TOKEN:?Set KPL_API_TOKEN}"
         : "${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD}"
         sh "$root/scripts/check-swarm.sh" --config-only
+        # Published endpoints must also be usable by browsers outside the overlay.
+        public_control_host=$(control_node_host) || exit 1
+        export KPL_CONTROLLER_METRICS_URL="http://$public_control_host:${KPL_HTTP_PORT:-8080}/metrics"
+        export KPL_PROMETHEUS_EXTERNAL_URL="http://$public_control_host:${PROMETHEUS_PORT:-9090}/"
         # Validate interpolation without printing credentials.
         dock stack config --compose-file "$root/stack.swarm.yaml" >/dev/null
         ready_node "$KPL_CONTROL_NODE_ID"
