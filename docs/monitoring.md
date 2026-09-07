@@ -58,6 +58,8 @@ After a restart, a saved run that still says `running` or `queued` is displayed 
 
 **Saved results → Delete** permanently deletes the selected run's scenario, metadata, events, and live metric index after confirmation. Running/queued experiments, members of an active batch, and results being downloaded are protected. The deletion API is `DELETE /api/v1/results/{id}` with the configured bearer token. It does not stop Peers; previously scraped Prometheus/Grafana history remains. Deletion markers prevent late telemetry from recreating a deleted result; preserve them with Controller data in backups and migrations. Reconstructing ZIP metrics uses memory proportional to distinct event IDs and message/receiver pairs; the raw file copy itself is streamed. See the [REST API guide](api.md) for status codes and download headers.
 
+Automatic ZIP size requests (`HEAD`) and list inspections do not block deletion. Opening the delete confirmation cancels that row's background size request and pauses further size requests until the dialog closes. A late size result cannot restore deleted data or its cache. Actual ZIP downloads (`GET`) still protect their captured result until the request finishes. The delete request has a 30-second browser timeout; on timeout the Controller may still finish, so refresh or retry the same result. A slow follow-up list refresh does not keep the dialog controls disabled.
+
 The existing public GET policy also applies to the saved-result list and downloads. API clients can use:
 
 ```bash

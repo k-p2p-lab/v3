@@ -8,7 +8,7 @@ const state = {
   scenarioValidating: false, scenarioValidation: null, scenarioValidationVersion: 0,
   scenarioDeletingId: null, pendingScenarioDeleteId: null, scenarioLoadVersion: 0, scenarioSubmitting: false,
   resultSizeInflight: new Set(), resultSizeQueue: [], resultSizeActive: 0, resultSizeUnavailable: new Set(),
-  resultSizeExpiryTimer: null, resultSizeExpiryAt: 0,
+  resultSizeExpiryTimer: null, resultSizeExpiryAt: 0, resultSizeControllers: new Map(),
   agentNumbers: loadAgentNumbers(),
   pendingStops: new Set(), deletedResultIDs: new Set(),
   pendingDelete: null, deletingResultId: null, apiToken: null,
@@ -406,6 +406,7 @@ function render(snapshot) {
 }
 
 function renderRuns(runs) {
+  runs = runs.filter((run) => !state.deletedResultIDs?.has(run.id));
   const runStates = JSON.stringify(runs.map((run) => [run.id, run.state]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
   if (state.runStates !== null && state.runStates !== runStates) {
     clearTimeout(state.resultsRefreshTimer);
@@ -515,8 +516,13 @@ function parseResultDownloadSizeHeaders(headers, now = Date.now()) {
   return { downloadBytes, downloadSizeExpiresAtMs: expiry };
 }
 
+function resultSizePaused(id) {
+  return state.pendingDelete?.id === id || state.deletingResultId === id || Boolean(state.deletedResultIDs?.has(id));
+}
+
 async function fetchResultDownloadBytes(id) {
   const controller = new AbortController();
+  (state.resultSizeControllers ??= new Map()).set(id, controller);
   const timeout = setTimeout(() => controller.abort(), 30000);
   try {
     const path = `/api/v1/experiments/${encodeURIComponent(id)}/download`;
@@ -525,6 +531,7 @@ async function fetchResultDownloadBytes(id) {
     return parseResultDownloadSizeHeaders(response.headers);
   } finally {
     clearTimeout(timeout);
+    if (state.resultSizeControllers.get(id) === controller) state.resultSizeControllers.delete(id);
   }
 }
 
@@ -534,10 +541,11 @@ function renderResultSizeViews() {
 }
 
 async function resolveResultDownloadSize(id, requestedRun) {
+  let canceledForDeletion = false;
   try {
     const measured = await fetchResultDownloadBytes(id);
     const run = (state.savedResults || []).find((result) => result.id === id);
-    if (run === requestedRun) {
+    if (run === requestedRun && !resultSizePaused(id)) {
       if (needsResultDownloadSize(run)) {
         run.downloadBytes = measured.downloadBytes;
         if (measured.downloadSizeExpiresAtMs) run.downloadSizeExpiresAtMs = measured.downloadSizeExpiresAtMs;
@@ -545,14 +553,15 @@ async function resolveResultDownloadSize(id, requestedRun) {
       }
       state.resultSizeUnavailable.delete(id);
     }
-  } catch {
+  } catch (error) {
+    canceledForDeletion = error === "result-deletion";
     const run = (state.savedResults || []).find((result) => result.id === id);
-    if (run === requestedRun && needsResultDownloadSize(run)) state.resultSizeUnavailable.add(id);
+    if (!canceledForDeletion && run === requestedRun && !resultSizePaused(id) && needsResultDownloadSize(run)) state.resultSizeUnavailable.add(id);
   } finally {
     state.resultSizeActive--;
     state.resultSizeInflight.delete(id);
     const current = (state.savedResults || []).find((result) => result.id === id);
-    if (current !== requestedRun) enqueueResultDownloadSize(current);
+    if (current !== requestedRun || canceledForDeletion) enqueueResultDownloadSize(current);
     renderResultSizeViews();
     pumpResultSizeQueue();
     scheduleResultSizeExpiry();
@@ -563,7 +572,7 @@ function pumpResultSizeQueue() {
   while (state.resultSizeActive < 2 && state.resultSizeQueue.length) {
     const id = state.resultSizeQueue.shift();
     const run = (state.savedResults || []).find((result) => result.id === id);
-    if (!needsResultDownloadSize(run)) {
+    if (!needsResultDownloadSize(run) || resultSizePaused(id)) {
       state.resultSizeInflight.delete(id);
       continue;
     }
@@ -573,7 +582,7 @@ function pumpResultSizeQueue() {
 }
 
 function enqueueResultDownloadSize(run) {
-  if (!needsResultDownloadSize(run) || state.resultSizeInflight.has(run.id)) return;
+  if (!needsResultDownloadSize(run) || resultSizePaused(run.id) || state.resultSizeInflight.has(run.id)) return;
   state.resultSizeUnavailable.delete(run.id);
   state.resultSizeInflight.add(run.id);
   state.resultSizeQueue.push(run.id);
@@ -1016,6 +1025,7 @@ function requestResultDeletion(id) {
   const run = (state.savedResults || []).find((result) => result.id === id);
   if (!run || resultLocked(run)) return;
   state.pendingDelete = run;
+  state.resultSizeControllers?.get(id)?.abort("result-deletion");
   $("#deleteResultName").textContent = run.name || run.id;
   $("#deleteResultID").textContent = run.id;
   $("#deleteApiToken").value = token();
@@ -1042,9 +1052,11 @@ async function confirmResultDeletion() {
   $("#confirmDeleteResult").textContent = "Deleting…";
   $("#cancelDeleteResult").disabled = true;
   renderSavedResults();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
   try {
     try {
-      await api(`/api/v1/results/${encodeURIComponent(run.id)}`, { method: "DELETE" });
+      await api(`/api/v1/results/${encodeURIComponent(run.id)}`, { method: "DELETE", signal: controller.signal });
     } catch (error) {
       if (error.status !== 404) throw error;
     }
@@ -1053,18 +1065,21 @@ async function confirmResultDeletion() {
     state.pendingDelete = null;
     $("#deleteResultDialog").close();
     showToast(`Deleted saved result: ${run.name || run.id}.`);
-    await refreshSavedResults();
   } catch (error) {
-    $("#deleteResultError").textContent = error.status === 409
+    $("#deleteResultError").textContent = error.name === "AbortError"
+      ? "Deletion timed out; it may still finish on the Controller. Refresh the list to check, or retry deleting this result."
+      : error.status === 409
       ? "This result is active, belongs to an active batch, or is being downloaded. Wait for it to finish, then try again."
       : `Could not delete the saved result: ${error.message}`;
-    await refreshSavedResults();
   } finally {
+    clearTimeout(timeout);
     state.deletingResultId = null;
     $("#confirmDeleteResult").disabled = false;
     $("#confirmDeleteResult").textContent = "Delete result";
     $("#cancelDeleteResult").disabled = false;
-    renderSavedResults();
+    renderResultSizeViews();
+    // A slow list refresh must not keep the deletion dialog locked.
+    void refreshSavedResults();
   }
 }
 
@@ -1612,7 +1627,10 @@ $("#deleteResultDialog").addEventListener("cancel", (event) => {
   if (state.deletingResultId) event.preventDefault();
 });
 $("#deleteResultDialog").addEventListener("close", () => {
-  if (!state.deletingResultId) state.pendingDelete = null;
+  if (!state.deletingResultId) {
+    state.pendingDelete = null;
+    queueResultDownloadSizes(state.savedResults || []);
+  }
 });
 
 setupTopologyControls();

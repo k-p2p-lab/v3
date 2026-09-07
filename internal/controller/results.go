@@ -416,7 +416,7 @@ func (s *Server) handleResults(w http.ResponseWriter, r *http.Request) {
 				s.logger.Warn("read saved result metadata", "run", id, "error", err)
 				result = savedResult{ID: id, Name: id, State: "unreadable"}
 			} else if !result.Active && result.State != "queued" {
-				snapshot, snapshotErr := s.captureResult(id)
+				snapshot, snapshotErr := s.captureResultFiles(id, false)
 				if snapshotErr == nil {
 					archiveInfo, ready := s.cachedResultArchiveInfo(snapshot, time.Now().UTC())
 					snapshot.close()
@@ -514,6 +514,13 @@ func (s *Server) readSavedResult(runs *os.Root, id string) (savedResult, error) 
 }
 
 func (s *Server) captureResult(id string) (*resultSnapshot, error) {
+	return s.captureResultFiles(id, true)
+}
+
+// Inspections (list and HEAD) keep open file descriptors but do not prevent
+// deletion. Only an actual ZIP download needs a deletion lease. On the Swarm
+// Linux hosts, captured descriptors remain readable after files are unlinked.
+func (s *Server) captureResultFiles(id string, download bool) (*resultSnapshot, error) {
 	if !validResultID(id) {
 		return nil, errResultNotFound
 	}
@@ -555,17 +562,19 @@ func (s *Server) captureResult(id string) (*resultSnapshot, error) {
 		}
 		snapshot.active = s.resultActive(id)
 		snapshot.exportedAt = time.Now().UTC()
-		if s.resultDownloads == nil {
-			s.resultDownloads = make(map[string]int)
-		}
-		s.resultDownloads[id]++
-		snapshot.release = func() {
-			s.state.persistMu.Lock()
-			s.resultDownloads[id]--
-			if s.resultDownloads[id] == 0 {
-				delete(s.resultDownloads, id)
+		if download {
+			if s.resultDownloads == nil {
+				s.resultDownloads = make(map[string]int)
 			}
-			s.state.persistMu.Unlock()
+			s.resultDownloads[id]++
+			snapshot.release = func() {
+				s.state.persistMu.Lock()
+				s.resultDownloads[id]--
+				if s.resultDownloads[id] == 0 {
+					delete(s.resultDownloads, id)
+				}
+				s.state.persistMu.Unlock()
+			}
 		}
 		return nil
 	}()
@@ -604,7 +613,7 @@ func (s *Server) handleResultDownload(w http.ResponseWriter, r *http.Request, id
 		methodNotAllowed(w)
 		return
 	}
-	snapshot, err := s.captureResult(id)
+	snapshot, err := s.captureResultFiles(id, r.Method == http.MethodGet)
 	if err != nil {
 		if errors.Is(err, errResultNotFound) {
 			http.NotFound(w, r)
@@ -744,6 +753,15 @@ func (s *Server) releaseResultArchiveSlot() {
 }
 
 func (s *Server) finishResultArchiveFlight(runID string, flight *resultArchiveFlight, candidate *resultArchiveInfo) {
+	if candidate != nil {
+		// A size inspection may finish after deletion. Coordinate with the
+		// deletion marker so it cannot repopulate the removed result's cache.
+		s.state.persistMu.Lock()
+		defer s.state.persistMu.Unlock()
+		if deleted, err := s.state.resultDeletedLocked(runID); err != nil || deleted {
+			candidate = nil
+		}
+	}
 	s.resultArchiveMu.Lock()
 	defer s.resultArchiveMu.Unlock()
 	if candidate != nil {

@@ -62,6 +62,8 @@ curl -X POST http://control-node:8080/api/v1/experiments \
 
 대시보드의 **Download results**로 실험 결과를 ZIP으로 받을 수 있습니다. **Saved results**에는 이전 Controller 실행에서 보존된 결과도 표시되며, **Refresh**로 목록을 다시 읽습니다. 실행 중 실험의 **Download snapshot**은 다운로드 시작 시점까지 저장된 기록을 담습니다. 최근 300개 이벤트 버퍼와 별개로 저장된 전체 이벤트 로그를 내보냅니다. 파일 구성과 수집 한계는 [실험 결과 다운로드](monitoring.kr.md#실험-결과-다운로드)를 참고하십시오.
 
+`DELETE /api/v1/results/{id}`는 삭제 성공 시 `204`, 결과가 없으면 `404`, 실행·배치가 활성 상태이거나 실제 `GET` 다운로드가 결과를 사용 중이면 `409`를 반환합니다. 자동 `HEAD` 크기 계산과 목록 조회는 다운로드 충돌로 처리하지 않습니다.
+
 ## 내부 cluster endpoint
 
 이 REST/JSON endpoint는 컴포넌트 사이 통신에 사용합니다. 등록, heartbeat와 전달 event는 **Controller로**, lifecycle 명령은 **Agent로** 전송합니다.

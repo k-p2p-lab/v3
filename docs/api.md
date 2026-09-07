@@ -62,6 +62,8 @@ Raw events are stored at `data/runs/<run-id>/events.jsonl`; the exact input is s
 
 Use **Download results** in the Dashboard to export a run as ZIP. **Saved results** also lists files retained from previous Controller sessions; **Refresh** reloads that list. Running experiments offer **Download snapshot**, which contains the records saved when the download starts. These exports include the full saved event log, independently of the 300-event recent buffer. See [result downloads](monitoring.md#download-experiment-results) for archive contents and collection limits.
 
+`DELETE /api/v1/results/{id}` returns `204` on deletion, `404` if the result is absent, and `409` while the run/batch is active or an actual `GET` download holds it. Automatic `HEAD` size calculations and list reads do not cause a download conflict.
+
 ## Internal cluster endpoints
 
 These REST/JSON endpoints serve component communication. Registration, heartbeats, and forwarded events are sent **to the Controller**; lifecycle commands are sent **to an Agent**.
