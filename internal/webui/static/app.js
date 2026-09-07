@@ -203,25 +203,28 @@ function ratioRange(available, lower, upper, unknown) {
   return unknown > 0 ? `${percentage(lower)}–${percentage(upper)}` : percentage(lower);
 }
 
+function sessionMetrics(metrics) {
+  return metrics?.definition === "session-window-v1" ? metrics : {};
+}
+
 function deliveryMetricView(metrics) {
-  const windowed = metrics.definition === "session-window-v1";
+  metrics = sessionMetrics(metrics);
   const n = (key) => formatNumber(metrics[key]);
   const coverageUpper = Number.isFinite(Number(metrics.stableCoverageUpperBound)) ? metrics.stableCoverageUpperBound : metrics.stableCoverage;
   return {
-    windowed,
-    label: windowed ? "Continuous-session delivery" : "Legacy dispatch delivery",
-    primary: ratioRange(metrics.deliveryRatioAvailable, metrics.reachability, metrics.deliveryRatioUpperBound, windowed ? metrics.unknownDeliveries : 0),
-    primaryDetail: windowed ? `On time: ${n("eligibleDeliveries")} / ${n("expectedDeliveries")} stable pairs` : `Reached: ${n("eligibleDeliveries")} / ${n("expectedDeliveries")} dispatch pairs`,
-    progress: windowed ? `Windows: ${(metrics.deliveryWindows || []).join(", ") || "Awaiting publication"} · Mature: ${n("finalizedPublications")} · Pending: ${n("pendingPublications")}` : "Historical definition · No fixed deadline",
+    label: "Continuous-session delivery",
+    primary: ratioRange(metrics.deliveryRatioAvailable, metrics.reachability, metrics.deliveryRatioUpperBound, metrics.unknownDeliveries),
+    primaryDetail: `On time: ${n("eligibleDeliveries")} / ${n("expectedDeliveries")} stable pairs`,
+    progress: `Windows: ${(metrics.deliveryWindows || []).join(", ") || (metrics.definition ? "Awaiting publication" : "N/A")} · Mature: ${n("finalizedPublications")} · Pending: ${n("pendingPublications")}`,
     initial: ratioRange(metrics.initialDeliveryRatioAvailable, metrics.initialDeliveryRatio, metrics.initialDeliveryRatioUpperBound, metrics.initialUnknownDeliveries),
     initialDetail: `On time: ${n("initialEligibleDeliveries")} / ${n("initialExpectedDeliveries")} known starting pairs`,
     coverage: ratioRange(metrics.stableCoverageAvailable, metrics.stableCoverage, coverageUpper, metrics.continuityUnknownPairs),
     coverageDetail: `Stable: ${n("expectedDeliveries")} / ${n("initialExpectedDeliveries")} known starting pairs · Departed: ${n("departedPairs")}`,
     observation: `${n("unknownDeliveries")} receipt unknown · ${n("continuityUnknownPairs")} continuity unknown · ${n("publicationAvailabilityUnknownPairs")} start unknown`,
     outcomes: `Known missed: ${n("missedDeliveries")} · Observed late: ${n("lateDeliveries")}`,
-    note: windowed
+    note: metrics.definition
       ? `Each publication uses its configured deliveryWindow. Only mature publications and sessions subscribed throughout that window enter the main ratio. Ranges are logical bounds from missing evidence, not confidence intervals. Starting delivery and coverage are conditional on the known starting cohort.${metrics.publicationAvailabilityUnknownPairs > 0 || metrics.measurementIncomplete ? " Some candidate starting sessions remain outside that cohort because their publication-time availability could not be proved; see observation quality." : ""}${metrics.legacyPublications > 0 || metrics.unscopedPublications > 0 ? " Publications without the required measurement evidence are excluded." : ""}`
-      : "Historical dispatch cohorts have no fixed receipt deadline or session continuity evidence. New runs use continuous-session measurement.",
+      : "No continuous-session measurements available.",
   };
 }
 
@@ -333,6 +336,7 @@ function render(snapshot) {
   const nodes = snapshot.nodes || [];
   const edges = snapshot.edges || [];
   const metrics = snapshot.metrics || {};
+  const measurement = sessionMetrics(metrics);
   const metricRun = (snapshot.experiments || []).find((run) => run.id === metrics.runId);
   const metricIteration = metricRun?.repetitions > 1 ? ` · Run ${formatNumber(metricRun.iteration)} of ${formatNumber(metricRun.repetitions)}` : "";
   $("#messageMetricsScope").textContent = metrics.runId
@@ -346,14 +350,13 @@ function render(snapshot) {
   $("#capacityMetric").textContent = `Available slots: ${formatNumber(capacity)}`;
   $("#peerMetric").textContent = formatNumber(ready);
   $("#connectionMetric").textContent = `Transport links: ${formatNumber(filterTopologyEdges(nodes, edges, { transport: true }).length)}`;
-  $("#latencyMetric").textContent = metrics.latencySamples > 0 ? `${formatNumber(metrics.p95LatencyMs, 1)} ms` : "N/A";
-  $("#averageLatencyMetric").textContent = metrics.latencySamples > 0 ? `Average: ${formatNumber(metrics.averageLatencyMs, 1)} ms · Samples: ${formatNumber(metrics.latencySamples)}` : "No eligible latency samples";
+  $("#latencyMetric").textContent = measurement.latencySamples > 0 ? `${formatNumber(measurement.p95LatencyMs, 1)} ms` : "N/A";
+  $("#averageLatencyMetric").textContent = measurement.latencySamples > 0 ? `Average: ${formatNumber(measurement.averageLatencyMs, 1)} ms · Samples: ${formatNumber(measurement.latencySamples)}` : "No eligible latency samples";
   const delivery = deliveryMetricView(metrics);
   $("#reachLabel").textContent = delivery.label;
   $("#reachMetric").textContent = delivery.primary;
   $("#deliveryMetric").textContent = delivery.primaryDetail;
   $("#measurementProgress").textContent = delivery.progress;
-  $("#measurementSummary").hidden = !delivery.windowed;
   $("#initialReachMetric").textContent = delivery.initial;
   $("#initialDeliveryMetric").textContent = delivery.initialDetail;
   $("#coverageMetric").textContent = delivery.coverage;
@@ -362,8 +365,8 @@ function render(snapshot) {
   $("#outcomesMetric").textContent = delivery.outcomes;
   $("#measurementNote").textContent = delivery.note;
   $("#eventTotalsMetric").textContent = `Published: ${formatNumber(metrics.published)} · Delivered: ${formatNumber(metrics.delivered)}`;
-  $("#duplicateMetric").textContent = metrics.duplicateSamples > 0 ? formatNumber(metrics.averageDuplicates, 2) : "N/A";
-  $("#duplicateSamplesMetric").textContent = `Eligible duplicates: ${formatNumber(metrics.eligibleDuplicates)} · Delivered pairs: ${formatNumber(metrics.duplicateSamples)}`;
+  $("#duplicateMetric").textContent = measurement.duplicateSamples > 0 ? formatNumber(measurement.averageDuplicates, 2) : "N/A";
+  $("#duplicateSamplesMetric").textContent = `Eligible duplicates: ${formatNumber(measurement.eligibleDuplicates)} · Delivered pairs: ${formatNumber(measurement.duplicateSamples)}`;
   $("#duplicateTotalMetric").textContent = `All duplicate events: ${formatNumber(metrics.duplicates)}`;
   $("#updatedAt").textContent = new Date(snapshot.generatedAt).toLocaleTimeString("en-US");
   renderRuns(snapshot.experiments || []);

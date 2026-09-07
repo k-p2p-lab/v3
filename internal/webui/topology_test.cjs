@@ -32,7 +32,7 @@ async function waitUntil(predicate, message) {
   assert.fail(message);
 }
 
-test('delivery display distinguishes conditional reach, missing observations, pending and legacy', () => {
+test('delivery display distinguishes conditional reach, missing observations and pending', () => {
   const api = context();
   const metrics = {definition:'session-window-v1',deliveryRatioAvailable:true,reachability:0.7,deliveryRatioUpperBound:0.9,unknownDeliveries:2,expectedDeliveries:7,eligibleDeliveries:5,pendingPublications:3,finalizedPublications:8,initialDeliveryRatioAvailable:true,initialDeliveryRatio:0.6,initialDeliveryRatioUpperBound:0.8,initialUnknownDeliveries:2,initialExpectedDeliveries:10,stableCoverageAvailable:true,stableCoverage:0.7,stableCoverageUpperBound:0.8,departedPairs:2,continuityUnknownPairs:1,publicationAvailabilityUnknownPairs:3,availabilityUnknownPairs:4};
   let view = api.deliveryMetricView(metrics);
@@ -47,10 +47,93 @@ test('delivery display distinguishes conditional reach, missing observations, pe
   view = api.deliveryMetricView({...metrics, initialDeliveryRatioAvailable:false, stableCoverageAvailable:false});
   assert.equal(view.initial, 'N/A');
   assert.equal(view.coverage, 'N/A');
-  view = api.deliveryMetricView({definition:'dispatch-cohort-v1',deliveryRatioAvailable:true,reachability:0.6});
-  assert.equal(view.primary,'60%');
-  assert.equal(view.windowed,false);
-  assert.match(view.label,/Legacy/);
+});
+
+test('initial markup and empty snapshots use the same current measurement cards', () => {
+  const markup = fs.readFileSync(path.join(__dirname, 'static/index.html'), 'utf8');
+  const api = context();
+  const empty = api.deliveryMetricView({});
+  const fields = {
+    reachLabel: 'label', reachMetric: 'primary', deliveryMetric: 'primaryDetail',
+    measurementProgress: 'progress', initialReachMetric: 'initial', initialDeliveryMetric: 'initialDetail',
+    coverageMetric: 'coverage', coverageDetail: 'coverageDetail', observationMetric: 'observation',
+    outcomesMetric: 'outcomes', measurementNote: 'note',
+  };
+  for (const [id, field] of Object.entries(fields)) {
+    const text = markup.match(new RegExp(`id="${id}"[^>]*>([^<]*)<`))?.[1];
+    assert.equal(text, empty[field], `${id} changes meaning on the first snapshot`);
+  }
+  assert.equal(empty.label, 'Continuous-session delivery');
+  assert.equal(empty.primary, 'N/A');
+  assert.doesNotMatch(markup.match(/<section[^>]*id="measurementSummary"[^>]*>/)[0], /\bhidden\b/);
+  assert.doesNotMatch(markup, /Legacy|Historical definition|dispatch pairs/);
+  for (const metrics of [undefined, null, {runId:'starting'}, {definition:'dispatch-cohort-v1', published:0}]) {
+    assert.deepEqual(plain(api.deliveryMetricView(metrics)), plain(empty));
+  }
+});
+
+test('historical and unknown measurements are not relabeled as current delivery values', () => {
+  const api = context();
+  for (const definition of ['dispatch-cohort-v1', 'unknown-format', undefined]) {
+    const view = api.deliveryMetricView({
+      definition, deliveryRatioAvailable:true, reachability:0.6,
+      eligibleDeliveries:6, expectedDeliveries:10, finalizedPublications:2,
+      initialDeliveryRatioAvailable:true, initialDeliveryRatio:0.6,
+      stableCoverageAvailable:true, stableCoverage:0.8,
+    });
+    assert.equal(view.label, 'Continuous-session delivery');
+    assert.equal(view.primary, 'N/A');
+    assert.equal(view.initial, 'N/A');
+    assert.equal(view.coverage, 'N/A');
+    assert.equal(view.primaryDetail, 'On time: 0 / 0 stable pairs');
+    assert.equal(view.note, 'No continuous-session measurements available.');
+    assert.doesNotMatch(view.progress, /Awaiting/);
+    assert.doesNotMatch(JSON.stringify(view), /Legacy|Historical|dispatch pairs|60%|80%/);
+  }
+});
+
+test('metric rendering stays consistent from idle through a run and back to measurement waiting', () => {
+  const elements = new Map();
+  const api = context({
+    $: (selector) => {
+      if (!elements.has(selector)) elements.set(selector, {textContent:''});
+      return elements.get(selector);
+    },
+  });
+  for (const name of ['rememberAgents', 'renderRuns', 'renderAgents', 'renderEvents', 'syncDetailPanelHeight', 'renderTopology']) {
+    api[name] = () => {};
+  }
+  const render = (metrics) => api.render({generatedAt:'2026-09-07T00:00:00Z', metrics});
+  const text = (id) => elements.get(`#${id}`).textContent;
+  const assertWaiting = () => {
+    assert.equal(text('reachLabel'), 'Continuous-session delivery');
+    for (const id of ['reachMetric', 'latencyMetric', 'duplicateMetric', 'initialReachMetric', 'coverageMetric']) {
+      assert.equal(text(id), 'N/A', id);
+    }
+    assert.equal(text('averageLatencyMetric'), 'No eligible latency samples');
+    assert.equal(text('duplicateSamplesMetric'), 'Eligible duplicates: 0 · Delivered pairs: 0');
+  };
+  render();
+  assertWaiting();
+  const observed = {
+    runId:'run-one', deliveryRatioAvailable:true, reachability:0.6,
+    eligibleDeliveries:6, expectedDeliveries:10,
+    latencySamples:6, p95LatencyMs:25, averageLatencyMs:20,
+    duplicateSamples:6, averageDuplicates:0.5, eligibleDuplicates:3,
+    published:2, delivered:6, duplicates:3,
+  };
+  render({...observed, definition:'dispatch-cohort-v1'});
+  assertWaiting();
+  assert.equal(text('eventTotalsMetric'), 'Published: 2 · Delivered: 6');
+  assert.equal(text('duplicateTotalMetric'), 'All duplicate events: 3');
+  render({...observed, definition:'session-window-v1'});
+  assert.equal(text('reachLabel'), 'Continuous-session delivery');
+  assert.equal(text('reachMetric'), '60%');
+  assert.equal(text('latencyMetric'), '25 ms');
+  assert.equal(text('duplicateMetric'), '0.5');
+  render({runId:'run-two'});
+  assertWaiting();
+  assert.equal(text('eventTotalsMetric'), 'Published: 0 · Delivered: 0');
 });
 
 test('saved result download sizes distinguish loading, unavailable, live, and unreadable states', () => {
