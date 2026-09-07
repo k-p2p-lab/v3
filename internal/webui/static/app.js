@@ -1257,7 +1257,7 @@ function renderTopology(nodes, edges) {
     }
     for (const node of nodes) {
       const point = layout.positions.get(node.id);
-      const mode = node.state !== "ready" ? "issue" : node.role === "boot" ? "boot" : "worker";
+      const mode = node.state === "starting" ? "starting" : node.state !== "ready" ? "issue" : node.role === "boot" ? "boot" : "worker";
       const peer = svgElement("g", {
         class: "topology-peer", "data-node-id": node.id, tabindex: 0, role: "button",
         "aria-label": `Peer ${point.slot}, Agent ${agentNumber(node.agentId)}: ${node.id}, ${node.state}`,

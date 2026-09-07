@@ -171,10 +171,15 @@ func (s *state) heartbeat(h model.AgentHeartbeat) error {
 				node.StartedAt = now
 			}
 		}
-		if old, found := s.nodes[node.ID]; found && old.State == model.NodeStopping && node.State != model.NodeStopping && node.State != model.NodeStopped && node.State != model.NodeFailed {
-			// Stopping is a local tombstone. A heartbeat assembled before the
-			// DELETE must not resurrect the peer or consume capacity again.
-			node = old
+		if old, found := s.nodes[node.ID]; found {
+			// Node IDs are never reused. Completed exits cannot be revived by
+			// a late report, including one carrying an old cleanup failure.
+			if old.State == model.NodeStopped && node.State != model.NodeStopped {
+				node = old
+			} else if old.State == model.NodeStopping && node.State != model.NodeStopping && node.State != model.NodeStopped && node.State != model.NodeFailed {
+				// A heartbeat assembled before DELETE must not undo the stop.
+				node = old
+			}
 		}
 		s.nodes[node.ID] = node
 		if s.reservations[node.ID] == h.Agent.ID {

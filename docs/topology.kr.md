@@ -46,7 +46,9 @@ Registry는 주소와 설정된 topic 참여 정보만 제공하며 전달 결�
 
 ## 갱신과 노드 수명
 
-Peer는 약 2초마다 상태를 보고하고 Agent가 현재 snapshot을 전달합니다. 네트워크·스케줄링·보고 실패로 지연이 추가됩니다. stopping·stopped·starting·failed endpoint에는 관계 선을 표시하지 않습니다. stopping·stopped 원은 숨기고 failed Peer는 문제 상태로 남깁니다.
+Peer는 약 2초마다 상태를 보고하고 Agent가 현재 snapshot을 전달합니다. 네트워크·스케줄링·보고 실패로 지연이 추가됩니다. stopping·stopped·starting·failed endpoint에는 관계 선을 표시하지 않습니다. stopping·stopped 원은 숨깁니다. starting Peer는 황색 **Starting**, failed Peer는 **Issue**로 구분합니다.
+
+컨테이너 정리가 정상 완료되면 Agent heartbeat에는 Peer 식별자, 종료 상태, 수명 시각, 토픽 레이블을 유지하고 과거 연결·routing/mesh·스코어와 큰 설정 메타데이터는 제외합니다. churn으로 종료 기록이 누적되어도 과거 overlay 데이터 때문에 상태 요청이 비대해지는 것을 줄입니다. Agent의 노드 조회 endpoint에는 전체 기록이 남으며, 실행 중인 Peer와 정리 실패는 상세 정보를 계속 전송합니다. Dashboard가 연결되지 않아도 Controller snapshot에 종료 상태가 반영됩니다. 늦은 heartbeat나 생성 응답은 stopped Peer를 starting·ready·failed로 되돌리지 못하며, Dashboard를 다시 열면 현재 snapshot으로 그래프를 구성합니다.
 
 오프라인 Agent와 10초 이상 오래된 Peer 보고는 선에서 제외합니다. 서로 다른 서버 시계를 직접 빼지 않도록, Controller는 동일 Agent가 기록한 두 시각으로 Peer 보고 나이를 계산한 뒤 수신 후 경과 시간을 자기 시계로 더합니다. 이는 Agent가 보고한 나이와 수신 후 시간이며 네트워크 전송 중 시간의 상한을 뜻하지 않습니다. 과거 형식에 시각 정보가 없으면 이 나이를 확정할 수 없습니다. `OverlayObservedAt`은 overlay 보고 지원 여부를 식별하는 Peer 시각으로, 브라우저·Controller 현재 시각과 직접 비교해 stale을 판정하지 않습니다.
 

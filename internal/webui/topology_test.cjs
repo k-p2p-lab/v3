@@ -806,3 +806,23 @@ test('telemetry updates preserve SVG identity and focus while refreshing scores 
   assert.match(svg.querySelectorAll('.topology-edge')[0].children[0].textContent,/Reported by:/);
   assert.match(ids.get('topologyDetails').innerHTML,/Selected Peer reported/);
 });
+
+
+test('fresh and reconnected snapshots hide completed exits and distinguish starting from issues', () => {
+  const nodes=[peer('ended','a','stopped'),peer('leaving','a','stopping'),peer('joining','a','starting'),peer('failed','a','failed'),peer('healthy')];
+  const check=({ids,render})=>{
+    render(nodes,[]);
+    const svg=ids.get('topology');
+    assert.deepEqual(svg.querySelectorAll('.topology-peer').map(el=>el.dataset.nodeId).sort(),['failed','healthy','joining']);
+    const nodeCircle=id=>svg.querySelectorAll('.topology-peer').find(el=>el.dataset.nodeId===id).querySelectorAll('.topology-node')[0];
+    assert.ok(nodeCircle('joining').classList.contains('starting'));
+    assert.equal(nodeCircle('joining').classList.contains('issue'),false);
+    assert.ok(nodeCircle('failed').classList.contains('issue'));
+    assert.ok(nodeCircle('healthy').classList.contains('worker'));
+  };
+  // A new page has never received exit events or previous snapshots.
+  check(uiFixture());
+  const reconnect=uiFixture();
+  reconnect.render(nodes.map(node=>({...node,state:'starting'})),[]);
+  check(reconnect);
+});

@@ -153,6 +153,7 @@ main { width: min(1600px, 100%); margin: 0 auto; padding: 1.4rem clamp(1rem, 3vw
 .legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
 .legend-dot { width: 0.55rem; height: 0.55rem; border-radius: 50%; background: var(--green); }
 .legend-dot.boot { background: var(--cyan); }
+.legend-dot.starting { background: var(--amber); }
 .legend-dot.issue { background: var(--red); }
 .count-badge { min-width: 2rem; padding: 0.25rem 0.45rem; border-radius: 999px; text-align: center; color: var(--cyan); background: rgba(57, 214, 208, 0.1); font-size: 0.8rem; }
 
@@ -195,6 +196,7 @@ main { width: min(1600px, 100%); margin: 0 auto; padding: 1.4rem clamp(1rem, 3vw
 .topology-node { stroke: #071018; stroke-width: 2; }
 .topology-node.worker { fill: var(--green); }
 .topology-node.boot { fill: var(--cyan); }
+.topology-node.starting { fill: var(--amber); }
 .topology-node.issue { fill: var(--red); }
 .topology-label { fill: var(--cyan); font-size: 19px; font-weight: 750; }
 .topology-slot { fill: #c1d2dc; font-size: 10px; pointer-events: none; font-variant-numeric: tabular-nums; paint-order: stroke; stroke: #07131c; stroke-width: 2.5px; stroke-linejoin: round; }

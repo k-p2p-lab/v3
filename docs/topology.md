@@ -46,7 +46,9 @@ The registry supplies addresses and configured topic participation; it does not 
 
 ## Freshness and lifecycle
 
-Peers send status about every two seconds; Agents forward their current snapshots. Network, scheduling, and status failures add delay. Stopping, stopped, starting, and failed endpoints have no displayed relationship lines. Stopping/stopped Peer circles are hidden; failed Peers remain visible as issues.
+Peers send status about every two seconds; Agents forward their current snapshots. Network, scheduling, and status failures add delay. Stopping, stopped, starting, and failed endpoints have no displayed relationship lines. Stopping/stopped Peer circles are hidden; starting Peers appear in amber as **Starting**, and failed Peers remain visible as **Issue**.
+
+After successful container cleanup, Agent heartbeats retain the Peer identity, terminal state, lifecycle timestamps, and topic labels while omitting its old connections, routing/mesh memberships, scores, and bulky configuration metadata. This keeps accumulated churn history from overwhelming the status request with obsolete overlay data. The Agent’s node inspection endpoint retains the full record; active Peers and cleanup failures still send full diagnostics. Controller snapshots reflect these exits even when no Dashboard is connected. Late heartbeats and create responses cannot turn a stopped Peer back into starting/ready/failed, and reopening the Dashboard uses this current snapshot.
 
 Offline Agents and Peer status older than ten seconds are excluded from lines. To avoid comparing clocks on different servers, the Controller derives Peer-report age from two timestamps produced by the same Agent, then advances that age on its own clock after receiving the heartbeat. This is the age reported by the Agent plus time since receipt, not a bound on time spent in transit. Missing legacy timestamps cannot establish that age. `OverlayObservedAt` identifies a supported overlay snapshot; it is the Peer's clock and is not compared directly with browser/Controller time to declare staleness.
 
