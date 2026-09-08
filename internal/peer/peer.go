@@ -39,6 +39,7 @@ type Server struct {
 	relays            []pubsub.RelayCancelFunc
 	scoreMu           sync.RWMutex
 	peerScores        map[string]float64
+	bandwidth         *bandwidthReporter
 	telemetry         *telemetry
 	logger            *slog.Logger
 	startedAt         time.Time
@@ -120,6 +121,8 @@ func newServer(ctx context.Context, config model.PeerProcessConfig, logger *slog
 	options = append(options, libp2p.AddrsFactory(func([]multiaddr.Multiaddr) []multiaddr.Multiaddr {
 		return []multiaddr.Multiaddr{address}
 	}))
+	bandwidth := newBandwidthReporter()
+	options = append(options, libp2p.BandwidthReporter(bandwidth))
 	h, err := libp2p.New(options...)
 	if err != nil {
 		return nil, fmt.Errorf("create libp2p host: %w", err)
@@ -131,6 +134,7 @@ func newServer(ctx context.Context, config model.PeerProcessConfig, logger *slog
 		topics:     make(map[string]*pubsub.Topic),
 		peerScores: make(map[string]float64),
 		telemetry:  telemetry,
+		bandwidth:  bandwidth,
 		logger:     logger,
 		startedAt:  time.Now().UTC(),
 	}
@@ -155,11 +159,18 @@ func (s *Server) Run(parentCtx context.Context) (runErr error) {
 	telemetryCtx, stopTelemetry := context.WithCancel(context.Background())
 	telemetryDone := make(chan error, 1)
 	go func() { telemetryDone <- s.telemetry.run(telemetryCtx) }()
+	bandwidthCtx, stopBandwidth := context.WithCancel(context.Background())
+	var bandwidthDone chan struct{}
 	defer func() {
 		stopParentWatch()
 		s.telemetry.stopMeasurement()
 		cancel()
 		s.Close()
+		stopBandwidth()
+		if bandwidthDone != nil {
+			<-bandwidthDone
+		}
+		s.emitBandwidth(true)
 		stopTelemetry()
 		runErr = errors.Join(runErr, <-telemetryDone)
 	}()
@@ -169,6 +180,8 @@ func (s *Server) Run(parentCtx context.Context) (runErr error) {
 		}
 		s.logger.Warn("start peer without synchronized clock", "error", err)
 	}
+	bandwidthDone = make(chan struct{})
+	go func() { defer close(bandwidthDone); s.bandwidthLoop(bandwidthCtx) }()
 	go s.telemetry.clockSyncLoop(ctx, s.config.ControllerURL)
 	if err := s.connectBootstrap(ctx); err != nil {
 		return err
@@ -346,6 +359,10 @@ func (s *Server) handlePublish(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		http.Error(w, "invalid request: expected a single JSON value", http.StatusBadRequest)
 		return
 	}
 	if request.PayloadSize <= 0 {

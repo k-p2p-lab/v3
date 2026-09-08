@@ -102,7 +102,7 @@ services:
     configs:
       - {source: grafana-datasource, target: /etc/grafana/provisioning/datasources/prometheus.yaml}
       - {source: grafana-provider, target: /etc/grafana/provisioning/dashboards/kpl.yaml}
-      - {source: grafana-dashboard-session-window-v5, target: /var/lib/grafana/dashboards/kpl-experiments.json}
+      - {source: grafana-dashboard-bandwidth-v6, target: /var/lib/grafana/dashboards/kpl-experiments.json}
     volumes: [grafana-data:/var/lib/grafana]
     networks: [monitoring]
     ports:
@@ -134,5 +134,5 @@ configs:
     file: ./monitoring/grafana/provisioning/datasources/prometheus.yaml
   grafana-provider:
     file: ./monitoring/grafana/provisioning/dashboards/kpl.yaml
-  grafana-dashboard-session-window-v5:
+  grafana-dashboard-bandwidth-v6:
     file: ./monitoring/grafana/dashboards/kpl-experiments.json

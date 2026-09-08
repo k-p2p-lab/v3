@@ -760,18 +760,19 @@ func (s *Server) flushEvents(ctx context.Context) {
 		s.eventsMu.Unlock()
 		return
 	}
-	count := len(s.events)
-	if count > 5000 {
-		count = 5000
+	data, count, err := model.MarshalEventBatchPrefix(s.config.ID, s.events)
+	if err != nil {
+		s.eventsMu.Unlock()
+		s.logger.Error("encode telemetry batch", "error", err)
+		return
 	}
 	batchEvents := append([]model.TraceEvent(nil), s.events[:count]...)
 	s.eventsInFlight += count
 	s.events = append([]model.TraceEvent(nil), s.events[count:]...)
 	s.eventsMu.Unlock()
-	batch := model.EventBatch{AgentID: s.config.ID, Events: batchEvents}
 	flushCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	err := s.postJSON(flushCtx, "/api/v1/events/batch", batch, nil)
+	err = s.postData(flushCtx, "/api/v1/events/batch", data, nil)
 	s.eventsMu.Lock()
 	s.eventsInFlight -= count
 	if err != nil {
@@ -833,6 +834,10 @@ func (s *Server) postJSON(ctx context.Context, path string, input, output any) e
 	if err != nil {
 		return err
 	}
+	return s.postData(ctx, path, data, output)
+}
+
+func (s *Server) postData(ctx context.Context, path string, data []byte, output any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.config.ControllerURL, "/")+path, bytes.NewReader(data))
 	if err != nil {
 		return err

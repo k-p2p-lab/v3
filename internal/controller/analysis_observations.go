@@ -167,7 +167,7 @@ func makeAnalysisObservation(runID string, now time.Time, nodes []model.Node, ag
 	sort.Strings(names)
 	for _, name := range names {
 		group := analysisGroup{Group: name, Layers: []analysisLayer{}}
-		sum, negative, low, high := 0.0, 0, math.Inf(1), math.Inf(-1)
+		mean, negative, low, high := 0.0, 0, math.Inf(1), math.Inf(-1)
 		for _, node := range groups[name] {
 			switch node.State {
 			case model.NodeReady:
@@ -190,7 +190,14 @@ func makeAnalysisObservation(runID string, now time.Time, nodes []model.Node, ag
 				}
 				observed = true
 				group.ScoreCount++
-				sum += score
+				n := float64(group.ScoreCount)
+				if math.Signbit(mean) == math.Signbit(score) {
+					mean += (score - mean) / n
+				} else {
+					// Opposite signs can overflow score-mean even though
+					// both inputs and their average are finite.
+					mean = mean*((n-1)/n) + score/n
+				}
 				low = math.Min(low, score)
 				high = math.Max(high, score)
 				if score < 0 {
@@ -202,7 +209,7 @@ func makeAnalysisObservation(runID string, now time.Time, nodes []model.Node, ag
 			}
 		}
 		if group.ScoreCount > 0 {
-			mean, ratio := sum/float64(group.ScoreCount), float64(negative)/float64(group.ScoreCount)
+			ratio := float64(negative) / float64(group.ScoreCount)
 			group.ScoreMean, group.ScoreMin, group.ScoreMax, group.NegativeScoreRatio = &mean, &low, &high, &ratio
 		}
 		for _, protocol := range []string{"transport", "kademlia", "gossipsub"} {

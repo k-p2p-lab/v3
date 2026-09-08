@@ -66,7 +66,7 @@ Older Peers lacking overlay snapshots provide only Transport lines. The graph re
 
 `protocol` is `transport`, `kademlia`, or `gossipsub`. GossipSub edges are distinct per topic in the API. Duplicate reports are merged deterministically, and unknown endpoints, ambiguous Peer identities within a run, and cross-run relationships are excluded. IDs in the graph and API are Node IDs; reported neighbor lists inside Node objects use libp2p Peer IDs.
 
-These snapshots are live state, not a complete historical topology database. Saved `events.jsonl` retains collected GRAFT/PRUNE events, subject to telemetry loss, but ZIP exports do not yet include an exhaustive history of DHT tables or mesh snapshots. Protocol filtering and topology layout do not alter the [delivery metric definitions](experiment-metrics.md).
+These snapshots are live state, not a complete historical topology database. Saved `events.jsonl` retains collected GRAFT/PRUNE events, subject to telemetry loss. New runs also include group degree/clustering and score summaries in `observations.jsonl` for [saved-result charts](visualization.md). These summaries cannot reconstruct an exhaustive history of DHT tables, mesh edges, or individual observer-to-peer scores. Protocol filtering and topology layout do not alter the [delivery metric definitions](experiment-metrics.md).
 
 ## Development checks
 

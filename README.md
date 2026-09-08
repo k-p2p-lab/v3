@@ -17,6 +17,8 @@ English is the default language for code, the UI, and documentation. Korean docu
 - Live Kademlia, GossipSub GRAFT, and transport topology with Agent sectors and topic filters
 - Churn-aware delivery, latency, duplicate, coverage, and observation-quality metrics
 - Reusable scenario library plus repeat runs, persisted results, ZIP export, and deletion
+- Saved-result distributions, timelines and comparisons of up to four runs, with JSON/CSV/SVG export
+- Measured libp2p stream throughput and cumulative bytes by protocol, with collection-quality indicators
 
 ## Prerequisites
 
@@ -66,3 +68,6 @@ Start with the [Hub](https://github.com/k-p2p-lab/hub) for objectives, research,
 | [Swarm churn and publish](docs/swarm-churn-publish.md) | Multi-server continuous-churn experiment walkthrough |
 | [Prysm block scoring under churn](docs/swarm-churn-prysm-block.md) | Three delay cohorts, concurrent churn, and score observation |
 | [v2 reproduction](docs/v2-reproduction.md) | Compatibility mapping and intentional differences from K-P2PLab v2 |
+| [Protocol configuration](docs/protocol-options.md) | Complete PubSub, scoring, Kademlia and named-policy controls |
+| [Bandwidth measurement](docs/bandwidth.md) | Stream usage, rate calculation, protocol attribution and collection limits |
+| [v2 analysis coverage](docs/v2-analysis-coverage.md) | All reviewed parser outputs and Python analyses, definition differences and unsupported features |

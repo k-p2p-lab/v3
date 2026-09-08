@@ -123,7 +123,7 @@ UI와 `metrics.json`은 산술평균, nearest-rank P95, `latencySamples`를 제�
 
 평균은 안정 대상의 기한 내 성공 쌍에서 같은 수신 기간 안에 관측한 추가 복사본 수를 성공 쌍 수로 나눕니다. 복사본이 없는 성공 쌍은 0으로 포함하고 성공 쌍이 없으면 N/A입니다. 로컬·이탈·늦은 join 수신자 및 기간 밖의 복사본은 전체 이벤트 수에는 남지만 평균에서 제외합니다. 성공 쌍의 추가 복사본이 0, 1, 5개이면 평균은 `6 / 3 = 2`입니다. 중복 telemetry 누락은 이 관측 평균도 낮출 수 있습니다.
 
-envelope 이벤트는 애플리케이션 메시지 ID로 연결합니다. raw는 `pubsub-<hex native message ID>`를 사용하여 같은 바이트를 발행해도 메시지를 구분합니다. `fields.pubsubMessageId`는 원래 ID의 16진수 인코딩을 담습니다. wire 형식과 PubSub의 발신자+sequence 메시지 ID 계산은 유지하며 telemetry의 원본 sequence는 별도 카운터입니다. 이벤트 ID는 재시도에도 유지하여 Controller가 한 번만 저장·집계합니다.
+envelope 이벤트는 애플리케이션 메시지 ID로 연결합니다. raw는 `pubsub-<hex native message ID>`를 사용하고 `fields.pubsubMessageId`에는 해당 native ID의 16진수 인코딩을 담습니다. ID는 설정된 전역 또는 topic별 [메시지 ID 정책](protocol-options.kr.md#pubsub-활성화와-공통-설정)을 따릅니다. 기본 발신자+sequence 정책은 같은 바이트의 별도 발행을 구분하지만 `sha256`·`topic-sha256`은 같은 내용을 동일 PubSub 메시지로 합칠 수 있습니다. Telemetry 상관관계 처리는 raw 메시지에 바이트를 추가하지 않으며 원본 sequence는 별도 카운터입니다. 이벤트 ID는 재시도에도 유지하여 Controller가 한 번만 저장·집계합니다.
 
 ## GossipSub 제어 트래픽
 
@@ -140,6 +140,12 @@ PRUNE peer-exchange record는 별도로 집계합니다. IHAVE, GRAFT, PRUNE에�
 `send`는 로컬 outbound queue가 RPC를 수락했다는 뜻이며 stream write나 원격 수신을 증명하지 않습니다. `recv`는 이후 router admission과 flood limit 판단 전의 inbound 관측입니다. 두 방향을 더하면 같은 전송의 양 끝 관측을 중복해 셀 수 있으므로 고유 wire RPC 총수로 해석하면 안 됩니다. `drop`은 queue 포화나 oversized RPC 같은 로컬 송신 전 폐기이며 `netem` 패킷 손실이 아닙니다. 기존의 단순 `graft`와 `prune` 이벤트는 로컬 mesh 전이를 뜻하므로 wire `send_graft`/`recv_graft`, `send_prune`/`recv_prune`와 분리합니다.
 
 [v2 재현 가이드](v2-reproduction.kr.md)에서 제어 trace의 호환성 차이를 설명합니다. IDONTWANT 발생에는 GossipSub v1.2 지원과 메시지 크기도 영향을 줍니다. 고정된 기본값에서는 보통 data가 1,024바이트 이상일 때 생성되므로 이를 시험하려면 payload를 키우거나 `gossipsub.params.iDontWantMessageThreshold`를 낮추십시오.
+
+## P2P 스트림 대역폭
+
+대역폭 표본은 프로세스 세션마다 실제 libp2p 스트림 바이트를 셉니다. 전송률은 누적 바이트 차이를 소스의 단조 경과시간 차이로 나누며, 위 구독 대상 집합이나 수신 마감과 독립적으로 집계합니다. 전달·중복 복사와 프로토콜 제어 트래픽을 포함하고 HTTP 관리 트래픽·transport 오버헤드·물리 회선 용량은 측정 범위에서 제외합니다.
+
+`metrics.bandwidth`, 저장 분석 차트, `kpl_p2p_*` 지표는 전송량·구간 전송률·종료 표본 품질을 제공합니다. 설정 제한인 `network.rateMbps`나 publish/deliver 이벤트의 PubSub data 크기를 더하는 `kpl_message_bytes_total`과는 다른 값입니다. 단위·프로토콜 귀속·표본 누락·재시작 동작은 [Bandwidth 측정](bandwidth.kr.md)을 참고하십시오.
 
 ## 집계 범위, 내보내기, 모니터링
 

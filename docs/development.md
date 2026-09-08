@@ -11,11 +11,20 @@ Run the following commands from the repository root in Linux:
 ```sh
 go build -o bin/kpl ./cmd/kpl
 go test -buildvcs=false ./... -timeout 120s
+go vet ./...
 sh scripts/test-swarm-agent.sh
 sh scripts/test-check-swarm.sh
 sh scripts/test-swarm-config.sh
 sh scripts/test-swarm.sh
 ```
+
+For concurrency checks, run:
+
+```sh
+GORACE=atexit_sleep_ms=0 go test -race -buildvcs=false ./... -count=1 -timeout 120s
+```
+
+The Agent tests launch the test executable repeatedly to simulate Docker commands. This setting removes the race runtime's exit delay for each child process; race detection remains enabled.
 
 Validate a scenario without running it:
 

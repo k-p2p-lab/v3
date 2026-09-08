@@ -28,7 +28,7 @@ Controller는 아래 공개 및 운영 엔드포인트를 제공합니다. `KPL_
 | `GET` | `/api/v1/results` | 이전 Controller 실행에서 저장한 실험을 포함하는 결과 목록 |
 | `DELETE` | `/api/v1/results/{id}` | 비활성 저장 결과 삭제. 진행 중 배치·다운로드 보호 |
 | `GET` | `/api/v1/experiments/{id}/analysis` | 저장 이벤트·관측치를 분석한 그래프 데이터와 집계 JSON |
-| `GET` | `/api/v1/experiments/{id}/download` | 저장된 시나리오·메타데이터·수집 이벤트를 ZIP으로 다운로드 |
+| `GET` / `HEAD` | `/api/v1/experiments/{id}/download` | 시나리오·메타데이터·이벤트·선택적 관측 파일·파생 지표를 ZIP으로 다운로드하거나 응답 본문 없이 크기 계산 |
 | `POST` | `/api/v1/experiments` | YAML 1회 실행 또는 JSON `{scenario, repetitions}`로 1~100회 순차 실행 |
 | `POST` | `/api/v1/experiments/{id}/stop` | 실행을 취소한 뒤 제한 시간 내 job 종료와 generation-fenced Peer cleanup 수행 |
 
@@ -59,7 +59,7 @@ curl -X POST http://control-node:8080/api/v1/experiments \
 
 시나리오 라이브러리 endpoint는 재사용할 편집기 입력을 실험 결과와 별도로 저장합니다. 목록에서는 YAML을 제외하고, 개별 GET·POST·PUT 응답에는 포함합니다. UI 사용 순서, payload, 검증 제한과 저장 위치는 [시나리오 라이브러리 안내](scenario-library.kr.md)를 참고하십시오.
 
-원시 이벤트는 `data/runs/<run-id>/events.jsonl`, 실행 입력은 같은 디렉터리의 `scenario.yaml`, 실험 메타데이터는 `experiment.json`에 저장됩니다. Swarm에서는 영구 `controller-data` 볼륨을 `/var/lib/kpl/data`에 마운트하며, 실험별 파일은 그 아래 `runs/<run-id>`에 저장됩니다.
+typed 대역폭 표본을 포함한 원시 이벤트는 `<data-dir>/runs/<run-id>/events.jsonl`, 실행 입력은 같은 디렉터리의 `scenario.yaml`, 실험 메타데이터는 `experiment.json`, 수집한 토폴로지·점수 요약은 선택적 `observations.jsonl`에 저장됩니다. 로컬 Controller의 기본 data 디렉터리는 `data`입니다. Swarm에서는 영구 `controller-data` 볼륨을 `/var/lib/kpl/data`에 마운트하며, 실험별 파일은 그 아래 `runs/<run-id>`에 저장됩니다.
 
 대시보드의 **Download results**로 실험 결과를 ZIP으로 받을 수 있습니다. **Saved results**에는 이전 Controller 실행에서 보존된 결과도 표시되며, **Refresh**로 목록을 다시 읽습니다. 실행 중 실험의 **Download snapshot**은 다운로드 시작 시점까지 저장된 기록을 담습니다. 최근 300개 이벤트 버퍼와 별개로 저장된 전체 이벤트 로그를 내보냅니다. 파일 구성과 수집 한계는 [실험 결과 다운로드](monitoring.kr.md#실험-결과-다운로드)를 참고하십시오.
 
@@ -82,13 +82,17 @@ curl -X POST http://control-node:8080/api/v1/experiments \
 | Peer → Agent | `POST` | `/api/v1/telemetry` | telemetry batch 제출 |
 | Agent → Peer | `GET` / `POST` | `/health` / `/publish` | Peer HTTP API로 readiness 확인 또는 publish |
 
+telemetry 요청은 이벤트 5000개와 JSON 본문 10 MiB로 제한됩니다. Peer와 Agent는 이스케이프와 envelope를 포함한 인코딩 바이트 수로 batch를 나누며, 재시도에도 원본 순서와 이벤트 식별자를 유지합니다. 수락된 앞부분은 제거한 후 나머지를 전송합니다. 두 수신자는 admission 전에 모든 이벤트를 검사합니다. 단일 이벤트가 인코딩된 10 MiB batch에 들어갈 수 없으면 `413`을 반환하며 해당 요청의 이벤트는 하나도 수락하지 않습니다. Agent는 자신의 식별자로 정규화한 뒤 검사합니다. Controller에 직접 제출한 이벤트도 이 검사를 거치므로 저장 분석에서 읽을 수 없는 과대 로그 행을 만들지 않습니다.
+
+JSON 본문에는 값 하나만 있어야 합니다. 본문 한도 내의 후행 공백은 허용하며, 두 번째 JSON 값·후행 쓰레기 데이터·디코더 본문 한도 초과는 `400`을 반환합니다. Controller/Agent의 일반 JSON handler는 10 MiB, Peer `/publish`는 1 MiB 한도를 사용합니다. 시나리오 요청 envelope에는 위에서 설명한 별도 한도가 적용됩니다. Peer 내부에서 생성된 이벤트가 JSON으로 인코딩되지 않거나 단일 batch 한도를 넘으면 로그와 `telemetry_drop`에 유실 수를 남기고, 소스 sequence의 빈 번호를 유지한 채 후속 이벤트를 전송합니다. 네트워크 실패 시에는 대기 중인 batch를 보존해 재시도합니다.
+
 Agent는 Controller가 cleanup에 사용하는 다음 endpoint도 제공합니다.
 
 | Method | Agent path | 설명 |
 |---|---|---|
 | `DELETE` | `/api/v1/runs/{runId}/nodes?generation=N` | unsigned `generation`이 필수이며, run fence를 N까지 원자적으로 높이고 이후 generation N 이하의 create를 거부하며 해당 generation의 기존 노드를 종료한 뒤 `202 Accepted`를 반환합니다. |
 
-내부 endpoint는 운영자 API와 별개로 변경될 수 있습니다. 요청과 snapshot의 필드 정의는 [`internal/model/model.go`](../internal/model/model.go), handler는 [`internal/controller/api.go`](../internal/controller/api.go)와 [`internal/agent/api.go`](../internal/agent/api.go)에 있습니다.
+내부 endpoint는 운영자 API와 별개로 변경될 수 있습니다. 요청과 snapshot의 필드 정의는 [`internal/model/model.go`](../internal/model/model.go), 대역폭 타입은 [`internal/model/bandwidth.go`](../internal/model/bandwidth.go), handler는 [`internal/controller/api.go`](../internal/controller/api.go)와 [`internal/agent/api.go`](../internal/agent/api.go)에 있습니다.
 
 ## 인증
 
@@ -99,3 +103,5 @@ Agent는 Controller가 cleanup에 사용하는 다음 endpoint도 제공합니�
 같은 네 가지 job counter가 `/api/v1/snapshot`과 SSE snapshot에도 포함됩니다. 대시보드는 각 run에 이를 표시하므로 Controller 로그를 열지 않아도 실행 중, 성공, 실패, 취소된 background 작업 수를 확인할 수 있습니다.
 
 [시각화 가이드](visualization.kr.md)에서 분석 응답, 그래프와 내보내기 형식을 확인하십시오.
+
+[Bandwidth 측정](bandwidth.kr.md) · [v2 전체 분석 대조](v2-analysis-coverage.kr.md)

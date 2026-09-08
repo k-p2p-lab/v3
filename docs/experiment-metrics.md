@@ -123,7 +123,7 @@ An extra copy is a receiver's GossipSub `RawTracer.DuplicateMessage` observation
 
 The duplicate average divides observed extra copies within the same delivery window at stable, on-time successful receiver pairs by the number of those successful pairs. Zero-copy successful pairs contribute zero; no successful pairs means N/A. Local copies, copies at departed/late-joining sessions, and copies outside the window remain in overall event counts but not this mean. For successful pairs with 0, 1, and 5 extra copies, the mean is `6 / 3 = 2`. Missing duplicate telemetry can still lower this observed average.
 
-Envelope events share the application message ID. Raw events use `pubsub-<hex native message ID>`, distinguishing separate publications of identical bytes. `fields.pubsubMessageId` contains the hexadecimal encoding of the native ID. Wire format and PubSub's origin-plus-sequence message-ID algorithm are unchanged; the telemetry source sequence is a different counter. Event IDs survive retries so the Controller stores and counts each event once.
+Envelope events share the application message ID. Raw events use `pubsub-<hex native message ID>`, and `fields.pubsubMessageId` contains the hexadecimal encoding of that native ID. It follows the configured global or topic-specific [message-ID policy](protocol-options.md#pubsub-activation-and-common-controls). The default origin-plus-sequence policy distinguishes separate publications of identical bytes; `sha256` and `topic-sha256` can collapse identical content into the same PubSub message. Telemetry correlation adds no bytes to raw messages, and its source sequence is a separate counter. Event IDs survive retries so the Controller stores and counts each event once.
 
 ## GossipSub control traffic
 
@@ -140,6 +140,12 @@ PRUNE peer-exchange records are counted separately. IHAVE, GRAFT, and PRUNE carr
 `send` means the local outbound queue accepted the RPC; it does not prove a stream write or remote receipt. `recv` is an inbound observation before later router admission and flood-limit decisions. Adding both directions can count the two endpoint observations of one transfer and must not be treated as a unique wire-RPC total. `drop` is a local pre-send discard such as queue saturation or an oversized RPC, not a packet dropped by `netem`. The existing plain `graft` and `prune` events describe local mesh transitions and remain separate from wire `send_graft`/`recv_graft` and `send_prune`/`recv_prune` events.
 
 The [v2 reproduction guide](v2-reproduction.md) describes the control-trace compatibility differences. IDONTWANT also depends on GossipSub v1.2 support and message size. With the pinned defaults it is normally produced only for data at least 1,024 bytes; use a larger payload or lower `gossipsub.params.iDontWantMessageThreshold` when an experiment is intended to exercise it.
+
+## P2P stream bandwidth
+
+Bandwidth samples count actual libp2p stream bytes for each process session. Throughput uses cumulative byte differences divided by source monotonic elapsed time; it is independent of the subscriber cohorts and delivery deadlines above. Forwarding, duplicate copies and protocol control traffic are included. HTTP management, transport overhead and physical link capacity are outside this measurement.
+
+`metrics.bandwidth`, saved-analysis charts and `kpl_p2p_*` metrics expose transferred bytes, interval rates and final-sample quality. These values differ from the configured `network.rateMbps` limit and from `kpl_message_bytes_total`, which sums the recorded PubSub data sizes of publish/deliver events. See [bandwidth measurement](bandwidth.md) for units, protocol attribution, missing samples and restart behavior.
 
 ## Scope, export, and monitoring
 

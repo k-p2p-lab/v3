@@ -37,6 +37,8 @@ type runMetricAccumulator struct {
 	control                          map[gossipSubControlKey]*model.GossipSubControlMetric
 	published, delivered, duplicates int
 	window                           sessionWindowAccumulator
+	bandwidth                        bandwidthAccumulator
+	onBandwidth                      func(bandwidthInterval)
 }
 
 func newRunMetricAccumulator() *runMetricAccumulator {
@@ -75,6 +77,9 @@ func (a *runMetricAccumulator) observe(event model.TraceEvent) bool {
 	}
 	a.window.observe(event)
 	a.observeGossipSubControl(event)
+	if interval := a.bandwidth.observe(event); interval != nil && a.onBandwidth != nil {
+		a.onBandwidth(*interval)
+	}
 	if event.Type != "publish" && event.Type != "deliver" && event.Type != "duplicate" {
 		return true
 	}
@@ -200,6 +205,7 @@ func (a *runMetricAccumulator) summarize(runID string, asOf ...time.Time) (model
 		result, samples = a.summarizeLegacy(runID)
 	}
 	result.GossipSubControl = a.summarizeGossipSubControl()
+	result.Bandwidth = a.bandwidth.summarize()
 	return result, samples
 }
 

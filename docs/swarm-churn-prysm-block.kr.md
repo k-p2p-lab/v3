@@ -61,7 +61,7 @@ sh scripts/swarm.sh scenario examples/swarm-churn-prysm-block.yaml
 
 토폴로지에서 노드를 선택하면 관측한 점수 개수와 평균을 볼 수 있습니다. `peerScores[remotePeerId]`는 **관측 노드가 상대 Peer에 부여한 점수**이며 관측 노드 자신의 평판이 아닙니다. 평가자 그룹 × 평가 대상 그룹의 점수와 mesh 포함 여부, 노드 나이, ready 모집단을 함께 비교합니다.
 
-점수와 전체 mesh 이력은 **Prometheus나 결과 ZIP에 시계열로 자동 저장되지 않습니다**. 저장소에서 다음 Bash 수집기를 warm-up 중 시작하고 마지막 수집 구간 뒤 Ctrl-C로 종료하십시오. Controller URL과 실제 run ID를 교체합니다. `curl`, `jq`가 필요하며 공개 읽기 전용 snapshot API를 사용합니다. 요청·처리 시간에 더해 5초마다 기록합니다.
+Controller는 그룹별 점수·토폴로지 요약을 약 5초마다 `observations.jsonl`에 자동 저장하며 결과 ZIP과 [Saved results → Analyze](visualization.kr.md)에서 제공합니다. 평가자 그룹별 요약이므로 개별 점수 쌍, 평가 대상 그룹별 내역, 전체 mesh 이력은 남기지 않으며 Prometheus에도 점수 시계열은 없습니다. 평가자 그룹 × 평가 대상 그룹 분석에는 저장소에서 다음 Bash 수집기를 warm-up 중 시작하고 마지막 수집 구간 뒤 Ctrl-C로 종료하십시오. Controller URL과 실제 run ID를 교체합니다. `curl`, `jq`가 필요하며 공개 읽기 전용 snapshot API를 사용합니다. 요청·처리 시간에 더해 5초마다 기록합니다.
 
 ```bash
 KPL_CONTROLLER_URL=http://control-node:8080
@@ -76,7 +76,7 @@ do
 done
 ```
 
-[`score-cohorts.jq`](../scripts/score-cohorts.jq)는 같은 run에서 online Agent의 ready Peer와 현재 transport 연결이 있는 점수 쌍만 선택하여 연결 해제 후 보존된 점수를 제외합니다. 평가 방향별 그룹 평균·최소·최대, 음수 평가 쌍 수, mesh 쌍 수, starting/ready 모집단을 출력합니다. `pairs`는 평가 쌍 수이며 고유 평가 대상 노드 수가 아닙니다. 행이 없으면 해당 관측이 없는 것이며 점수 0을 뜻하지 않습니다. 평균에서는 평가 쌍마다 같은 가중치를 사용합니다. 상태 보고가 오래됐거나 반복될 수 있고, `generatedAt`은 API 생성 시각이며 정확한 score inspection 시각은 아닙니다. 이상이 있으면 노드의 `lastSeen`과 Agent 상태도 확인합니다. 개별 Peer의 원본 데이터가 필요하면 snapshot도 저장하십시오.
+[`score-cohorts.jq`](../scripts/score-cohorts.jq)는 같은 run에서 online Agent의 ready Peer와 현재 transport 연결이 있는 점수 쌍만 선택하여 연결 해제 후 보존된 점수를 제외합니다. 평가 방향별 그룹 평균·최소·최대, 음수 평가 쌍 수, mesh 쌍 수, starting/ready 모집단을 출력합니다. 자동 요약은 신선하게 보고한 평가자의 점수 전체를 사용하지만 이 수집기는 현재 transport 연결이 있는 쌍만 사용하므로 평균이 다를 수 있습니다. `pairs`는 평가 쌍 수이며 고유 평가 대상 노드 수가 아닙니다. 행이 없으면 해당 관측이 없는 것이며 점수 0을 뜻하지 않습니다. 평균에서는 평가 쌍마다 같은 가중치를 사용합니다. 상태 보고가 오래됐거나 반복될 수 있고, `generatedAt`은 API 생성 시각이며 정확한 score inspection 시각은 아닙니다. 이상이 있으면 노드의 `lastSeen`과 Agent 상태도 확인합니다. 개별 Peer의 원본 데이터가 필요하면 snapshot도 저장하십시오.
 
 ```sh
 curl --fail --output "$KPL_RUN_ID-snapshot.json" \

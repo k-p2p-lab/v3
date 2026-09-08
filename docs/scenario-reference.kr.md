@@ -100,7 +100,7 @@ phases:
 
 GossipSub 전용 설정(`params`, 활성 score/inspection, `floodPublish`, `peerExchange`, `directPeers`, `peerGater`)은 `gossipsub` router에서만 적용됩니다. FloodSub와 RandomSub에서는 활성 scoring을 거부하지만 비활성 tuning 블록은 보존할 수 있습니다.
 
-기본 mesh 설정은 `D=6`, `DLow=5`, `DHigh=12`, `DScore=4`, `DOut=2`, `DLazy=6`, history `5/3`, gossip factor `0.25`, heartbeat `1s`입니다. PubSub를 활성화한 `boot` preset은 `DScore=3`을 사용합니다. `full`/`worker`와 역할별 GossipSub worker preset은 v2에서 가져온 `DLow=5`, `DScore=3`, `maxIHaveLength=5500`, 초기 heartbeat `1s`를 상속합니다. 대부분의 worker preset은 v2의 hard connection limit `55`도 사용하며 `light`는 `32`를 사용합니다. Kademlia의 기본 bucket size는 `20`, protocol prefix는 `/k-p2p-lab/v3`입니다. 적용되는 기본값은 [`internal/model/config.go`](../internal/model/config.go), 분리된 typed schema는 [프로토콜 설정 구현 위치](protocol-options.kr.md#구현-경계와-의존성-수정)를 참고하십시오.
+기본 mesh 설정은 `D=6`, `DLow=5`, `DHigh=12`, `DScore=4`, `DOut=2`, `DLazy=6`, history `5/3`, gossip factor `0.25`, heartbeat `1s`입니다. PubSub를 활성화한 `boot` preset은 `DScore=3`을 사용합니다. `full`/`worker`와 역할별 GossipSub worker preset은 v2에서 가져온 `DLow=5`, `DScore=3`, `maxIHaveLength=5500`, 초기 heartbeat `1s`를 상속합니다. 대부분의 worker preset은 v2의 hard connection limit `55`도 사용하며 `light`는 `32`를 사용합니다. Kademlia의 기본 bucket size는 `20`, protocol prefix는 `/k-p2p-lab/v3`입니다. 적용되는 기본값은 [`internal/model/config.go`](../internal/model/config.go), 분리된 typed schema는 [프로토콜 설정 구현 위치](protocol-options.kr.md#구현-경계)를 참고하십시오.
 
 `libp2p.connectionLimit`는 전체 연결 수에 적용되는 resource manager hard cap일 뿐이며 soft connection manager를 암묵적으로 생성하지 않습니다. soft low-water/high-water 정리는 `libp2p.connectionManager` 블록을 명시했을 때만 설치되며 그 블록의 `lowWater`, `highWater`, `gracePeriod`를 사용합니다. 따라서 profile마다 hard cap, soft manager 또는 둘 다를 독립적으로 선택할 수 있습니다.
 
@@ -114,7 +114,7 @@ RandomSub에서 `randomDegree`는 libp2p의 process-global `RandomSubD`를 통�
 
 ### 노드별 네트워크 조건
 
-Profile 또는 join 단계의 `node` 블록에 `network`를 추가할 수 있습니다. 기본 `scope: p2p`는 각 Peer 컨테이너 안에서 포트 `20000`의 송신 P2P TCP에만 적용합니다. v2처럼 제어 API·telemetry까지 포함한 전체 송신을 제한하려면 `scope: all`을 지정하십시오. `delay`는 편도 egress 추가 지연이며 왕복 지연의 목표값이 아닙니다.
+Profile 또는 join 단계의 `node` 블록에 `network`를 추가할 수 있습니다. 기본 `scope: p2p`는 각 Peer 컨테이너 안에서 포트 `20000`의 송신 P2P TCP에만 적용합니다. v2처럼 제어 API·telemetry까지 포함한 전체 송신을 제한하려면 `scope: all`을 지정하십시오. `delay`는 편도 egress 추가 지연이며 왕복 지연의 목표값이 아닙니다. `rateMbps`와 `tbf.rateMbps`는 송신 제한을 설정하고 [Bandwidth 측정](bandwidth.kr.md)은 실제 libp2p 스트림 사용량을 별도로 기록합니다.
 
 ```yaml
 node:

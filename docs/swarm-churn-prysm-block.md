@@ -61,7 +61,7 @@ sh scripts/swarm.sh scenario examples/swarm-churn-prysm-block.yaml
 
 A topology node's score count/mean describes its observations: `peerScores[remotePeerId]` is **the observer's opinion of the remote peer**, not the observer's own reputation. Compare observer-group × evaluated-group scores, mesh membership, age, and ready populations.
 
-Scores and full mesh history are **not automatically saved in Prometheus or the result ZIP**. Run this Bash collector from the repository during warm-up and stop it with Ctrl-C after the final collection window. Replace the Controller URL and actual run ID. It requires `curl` and `jq` and uses the public read-only snapshot API. Each interval includes request/processing time plus 5 seconds.
+The Controller automatically saves group score and topology summaries about every five seconds in `observations.jsonl`, included in the result ZIP and shown by [Saved results → Analyze](visualization.md). These are observer-group summaries; they do not retain individual score pairs, evaluated-group breakdowns or full mesh history, and Prometheus does not expose score time series. For observer-group × evaluated-group analysis, run this Bash collector from the repository during warm-up and stop it with Ctrl-C after the final collection window. Replace the Controller URL and actual run ID. It requires `curl` and `jq` and uses the public read-only snapshot API. Each interval includes request/processing time plus 5 seconds.
 
 ```bash
 KPL_CONTROLLER_URL=http://control-node:8080
@@ -76,7 +76,7 @@ do
 done
 ```
 
-[`score-cohorts.jq`](../scripts/score-cohorts.jq) keeps ready peers on online Agents and transport-connected scored pairs in that run, excluding retained scores of disconnected peers. It emits directed group means/min/max, negative-pair counts, mesh-pair counts, and starting/ready populations. Pair counts are observations, not unique evaluated peers; missing rows mean no qualifying scores, not zero. Means weight directed pairs equally. Status can be stale or repeated; `generatedAt` is API generation time, not the exact score-inspection time. Inspect node `lastSeen` and Agent health when diagnosing stale data. For raw per-peer data, save a snapshot too:
+[`score-cohorts.jq`](../scripts/score-cohorts.jq) keeps ready peers on online Agents and transport-connected scored pairs in that run, excluding retained scores of disconnected peers. It emits directed group means/min/max, negative-pair counts, mesh-pair counts, and starting/ready populations. Unlike the automatic summaries, which include all scores from fresh reporting observers, this collector restricts scores to currently transport-connected pairs. Its means can therefore differ. Pair counts are observations, not unique evaluated peers; missing rows mean no qualifying scores, not zero. Means weight directed pairs equally. Status can be stale or repeated; `generatedAt` is API generation time, not the exact score-inspection time. Inspect node `lastSeen` and Agent health when diagnosing stale data. For raw per-peer data, save a snapshot too:
 
 ```sh
 curl --fail --output "$KPL_RUN_ID-snapshot.json" \

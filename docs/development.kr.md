@@ -11,11 +11,20 @@ Linux 환경의 저장소 루트에서 다음 명령을 실행하십시오.
 ```sh
 go build -o bin/kpl ./cmd/kpl
 go test -buildvcs=false ./... -timeout 120s
+go vet ./...
 sh scripts/test-swarm-agent.sh
 sh scripts/test-check-swarm.sh
 sh scripts/test-swarm-config.sh
 sh scripts/test-swarm.sh
 ```
+
+동시성 검사는 다음 명령으로 실행합니다.
+
+```sh
+GORACE=atexit_sleep_ms=0 go test -race -buildvcs=false ./... -count=1 -timeout 120s
+```
+
+Agent 테스트는 Docker 명령을 모의하기 위해 테스트 실행 파일을 여러 번 자식 프로세스로 실행합니다. 이 설정은 각 자식 프로세스가 종료할 때 race 런타임이 기다리는 시간을 없애며, race 검출은 계속 활성화합니다.
 
 실행하지 않고 시나리오를 검증하는 명령은 다음과 같습니다.
 

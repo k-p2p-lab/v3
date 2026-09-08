@@ -25,13 +25,13 @@ Swarm은 Prometheus/Grafana 포트를 control 노드에 게시합니다. 각 Age
 
 ## Dashboard 내장 시각화
 
-**Saved results → Analyze**에서 전파 CDF, 지연 분포, 메시지·토폴로지·점수 시계열과 최대 4개 실행 비교를 확인할 수 있습니다. 이 화면은 저장 파일을 직접 분석하며 Prometheus와 독립적으로 동작합니다. [시각화 사용법](visualization.kr.md)을 참고하십시오.
+**Saved results → Analyze**에서 전파 CDF, 지연 분포, 메시지·토폴로지·점수 시계열, 프로토콜별 대역폭과 최대 4개 실행 비교를 확인할 수 있습니다. 이 화면은 저장 파일을 직접 분석하며 Prometheus와 독립적으로 동작합니다. [시각화 사용법](visualization.kr.md)을 참고하십시오.
 
 ## 실행과 분석
 
 1. 대시보드의 **Run experiment**에서 [`examples/monitoring.yaml`](../examples/monitoring.yaml)을 실행합니다. envelope 발행과 raw 발행을 함께 확인하는 작은 실험입니다.
    **Run** 옆 **Runs**를 1~100으로 지정하면 순차 반복합니다. 회차마다 별도 결과를 남기며 실패 또는 **Stop batch**는 나머지를 취소합니다. [반복 실행과 지표 정의](experiment-metrics.kr.md)를 참고하십시오.
-2. Grafana에서 **Run**(run_id), **Agent**, **Topic**을 선택합니다. 여러 run을 고르면 선택한 실험의 트래픽·지연을 합산하며, 네트워크 설정 시계열은 범례에서 run별로 구분합니다.
+2. Grafana에서 **Run**(run_id), **Agent**, **Topic**을 선택합니다. 여러 run을 고르면 선택한 실험의 트래픽·지연을 합산하며, 네트워크 설정·대역폭 시계열은 범례에서 run별로 구분합니다. 세션 도달률 패널은 Run만, 대역폭·control 패널은 Topic 없이 Run과 Agent를 적용합니다.
 3. 실험이 끝난 뒤에도 시간 범위를 해당 실행 구간으로 지정하면 시계열을 볼 수 있습니다. 기본 새로고침은 5초입니다.
 
 Prometheus는 Controller와 Agent의 `/metrics`를 5초마다 수집합니다. Controller가 등록된 Agent의 metrics URL을 HTTP service discovery로 반환하고, Prometheus가 service VIP 대신 각 Agent의 host-mode 포트에 직접 접근합니다. Peer를 직접 scrape하거나 각 컨테이너에 exporter를 추가하지 않습니다. Controller는 기존 Peer telemetry를 누적 집계하므로 `scope: all`에서 telemetry가 손실되면 Controller가 만드는 Peer 지표도 영향을 받습니다. 모니터링 서비스는 별도 Docker network에 있으며 Peer에는 추가 네트워크·권한을 부여하지 않습니다.
@@ -48,7 +48,7 @@ ZIP에는 다음 파일이 들어 있습니다.
 | `experiment.json` | 저장된 실험 메타데이터·상태·seed·job 카운터 원문 |
 | `events.jsonl` | 내보내기 기준 시점까지 저장된 전체 이벤트. 한 줄에 JSON 하나이며, 기록된 이벤트가 없으면 빈 파일 |
 | `observations.jsonl` | 새 실행에서 5초마다 저장한 그룹별 상태·차수·clustering·score 관측. 이전 결과에는 없을 수 있음 |
-| `metrics.json` | 동일 이벤트 로그 경계에서 재계산한 세션 기간 도달률 범위, 발행 시점 대상 결과, coverage, pending/unknown, 첫 원격 지연, 관측 중복 수. 과거 정의는 legacy 유지 |
+| `metrics.json` | 동일 이벤트 로그 경계에서 재계산한 세션 기간 도달률 범위, 발행 시점 대상 결과, coverage, pending/unknown, 첫 원격 지연, 관측 중복, control 내역과 수집된 대역폭 누적량·품질. 과거 정의는 legacy 유지 |
 | `export.json` | 내보내기 시각, 실험 상태, active/partial 여부와 원본 파일의 캡처된 크기 |
 
 Controller의 저장 잠금 안에서 파일 크기를 확보한 뒤 잠금을 해제하고 ZIP을 전송합니다. 이후 추가된 이벤트는 제외되며 느린 다운로드가 telemetry 파일 쓰기를 붙잡지 않습니다. 완료된 실험에도 지연된 telemetry가 도착할 수 있으므로 나중에 추가된 기록까지 필요하면 수집이 안정된 뒤 다시 다운로드하십시오. `partial: false`는 기록된 실험 상태가 종료 상태라는 의미이며 telemetry 무손실을 보장하지 않습니다. 메시지 본문, PCAP, Prometheus/Grafana 데이터베이스는 ZIP에 포함하지 않습니다.
@@ -83,6 +83,9 @@ curl --fail --output run-results.zip \
 |---|---|
 | `kpl_events_total` | Controller가 수신한 이벤트 누적 수. `run_id`, `agent_id`, `event_type`, `topic`으로 구분 |
 | `kpl_message_bytes_total` | 발행/수신 이벤트의 `fields.wireBytes` 합계. Envelope 사용 시 JSON/base64를 포함한 PubSub data이며 libp2p framing 및 TCP/IP 헤더 제외 |
+| `kpl_p2p_stream_bytes_total`, `kpl_p2p_protocol_stream_bytes_total` | 세션·방향별 실제 libp2p 스트림 누적 바이트. 전체 및 negotiated protocol별 값 |
+| `kpl_p2p_stream_bits_per_second`, `kpl_p2p_protocol_stream_bits_per_second` | 소스 수집 구간의 평균 bit/s gauge. `rate()` 없이 직접 조회 |
+| `kpl_p2p_bandwidth_sample_timestamp_seconds`, `kpl_p2p_bandwidth_session_final` | 최근 소스 표본 시각과 정상 host 종료 후 표본 수신 여부. [대역폭 품질과 한계](bandwidth.kr.md) 참고 |
 | `kpl_gossipsub_control_rpcs_total` | 각 GossipSub 제어 타입을 포함한 RPC envelope 수. `send`, `recv`, 로컬 송신 전 `drop`으로 구분 |
 | `kpl_gossipsub_control_entries_total` | 해당 RPC에 담긴 repeated protobuf control entry 수 |
 | `kpl_gossipsub_control_message_ids_total` | IHAVE, IWANT, IDONTWANT entry 안의 중복 제거하지 않은 메시지 ID 참조 출현 횟수 |
@@ -166,3 +169,5 @@ Dashboard는 몰려오는 telemetry를 초당 최대 4회 화면 갱신으로 �
 Swarm stack은 `GET /api/v1/prometheus/agent-targets`에서 등록된 target을 탐색합니다. `sh scripts/swarm.sh access`로 광고 주소를 확인하고, 설정한 포트가 선택된 모든 Agent 노드에서 비어 있으며 control 노드에서 TCP 접근이 허용되는지 확인하십시오. 운영자가 Agent metrics 링크를 직접 열 때에는 브라우저가 속한 신뢰 관리망에서도 접근을 허용하고 신뢰하지 않는 출발지는 차단하십시오. `up{job="kpl-agent"}`를 보면 등록되었지만 방화벽이나 잘못된 Swarm `NodeAddr` 때문에 접근할 수 없는 target을 성공한 scrape와 구분할 수 있습니다.
 
 현재 이미지 버전은 Prometheus `v3.13.2`와 Grafana `13.2.1`로 고정했습니다. 업데이트 시 공식 [Prometheus 다운로드](https://prometheus.io/download/)와 [Grafana Docker 설치 문서](https://grafana.com/docs/grafana/latest/setup-grafana/installation/docker/)를 참고하고 설정·대시보드를 재검증하십시오.
+
+[Bandwidth 측정](bandwidth.kr.md) · [v2 전체 분석 대조](v2-analysis-coverage.kr.md)

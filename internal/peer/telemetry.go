@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -76,6 +77,10 @@ func (t *telemetry) emitWithClock(event model.TraceEvent, reading controllerCloc
 // checkpoint. A checkpoint therefore never certifies a delivery whose earlier
 // receipt timestamp has been assigned but whose event is still awaiting enqueue.
 func (t *telemetry) emitObserved(build func(controllerClockReading) (model.TraceEvent, bool)) {
+	t.emitObservedPriority(build, false)
+}
+
+func (t *telemetry) emitObservedPriority(build func(controllerClockReading) (model.TraceEvent, bool), priority bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	reading := t.observationClockLocked()
@@ -83,7 +88,7 @@ func (t *telemetry) emitObserved(build func(controllerClockReading) (model.Trace
 		if !t.sealed {
 			t.reportDropsLocked(false)
 		}
-		t.enqueueLockedWithClock(event, false, reading)
+		t.enqueueLockedWithClock(event, priority, reading)
 	}
 }
 
@@ -183,12 +188,12 @@ func (t *telemetry) clockSyncLoopWithIntervals(ctx context.Context, controllerUR
 	}
 }
 
-// Leave two slots for the final drop notice and stop checkpoint when the
-// ordinary queue is saturated. Small queues used by embedders/tests still work.
+// Leave three slots for the final drop notice, stop checkpoint and bandwidth
+// counters when the ordinary queue is saturated.
 func (t *telemetry) queueLimit(priority bool) int {
 	limit := cap(t.events)
 	if !priority && limit >= 4 {
-		limit -= 2
+		limit -= 3
 	}
 	return limit
 }
@@ -223,6 +228,7 @@ func (t *telemetry) identifyLockedWithClock(event model.TraceEvent, reading cont
 	event.Sequence = t.sequence
 	event.RunID = t.node.RunID
 	event.NodeID = t.node.ID
+	event.AgentID = t.node.AgentID
 	if event.EventID == "" {
 		// Assigned at the source, so Agent queue retries retain the same ID.
 		event.EventID = rand.Text()
@@ -232,7 +238,7 @@ func (t *telemetry) identifyLockedWithClock(event model.TraceEvent, reading cont
 	}
 	if reading.synchronized &&
 		(event.Type == "measurement_start" || event.Type == "measurement_checkpoint" || event.Type == "measurement_stop" ||
-			event.Type == "publish" || event.Type == "deliver" || event.Type == "duplicate") {
+			event.Type == "publish" || event.Type == "deliver" || event.Type == "duplicate" || event.Type == "bandwidth") {
 		if event.Fields == nil {
 			event.Fields = make(map[string]any)
 		}
@@ -326,17 +332,13 @@ func (t *telemetry) run(ctx context.Context) error {
 		retry = 250 * time.Millisecond
 	}
 	var drainCtx context.Context
-	var drainCancel context.CancelFunc
-	defer func() {
-		if drainCancel != nil {
-			drainCancel()
-		}
-	}()
 	batch := make([]model.TraceEvent, 0, 250)
 	flush := false
 	for {
 		if ctx.Err() != nil && drainCtx == nil {
+			var drainCancel context.CancelFunc
 			drainCtx, drainCancel = context.WithTimeout(context.Background(), timeout)
+			defer drainCancel() // This transition happens once; keep cancellation with its context.
 			t.mu.Lock()
 			t.sealed = true
 			t.mu.Unlock()
@@ -349,21 +351,41 @@ func (t *telemetry) run(ctx context.Context) error {
 			}
 		}
 		if len(batch) > 0 && (flush || len(batch) == cap(batch) || drainCtx != nil) {
-			if err := t.flush(activeCtx, batch); err != nil {
-				if t.logger != nil {
-					t.logger.Warn("retry peer telemetry", "events", len(batch), "error", err)
+			count, err := t.flush(activeCtx, batch)
+			if err != nil {
+				var encodingErr *telemetryEncodingError
+				if errors.As(err, &encodingErr) {
+					// This source event cannot be sent in any request. Retain
+					// its sequence gap and report the loss instead of blocking
+					// every later event behind a permanent encoding failure.
+					count = 1
+					t.dropped.Add(1)
+					if t.logger != nil {
+						t.logger.Error("drop unencodable telemetry event", "eventId", batch[0].EventID, "error", err)
+					}
+				} else {
+					if t.logger != nil {
+						t.logger.Warn("retry peer telemetry", "events", len(batch), "error", err)
+					}
+					wait := time.NewTimer(retry)
+					select {
+					case <-activeCtx.Done():
+					case <-wait.C:
+					}
+					wait.Stop()
+					flush = true
+					continue // Keep this bounded batch, preserving source order and IDs.
 				}
-				wait := time.NewTimer(retry)
-				select {
-				case <-activeCtx.Done():
-				case <-wait.C:
-				}
-				wait.Stop()
-				flush = true
-				continue // Keep this bounded batch, preserving source order and IDs.
 			}
-			batch = batch[:0]
-			flush = false
+			// A byte-limited request can accept only part of this batch. Keep
+			// the suffix without replaying an already acknowledged prefix.
+			copy(batch, batch[count:])
+			clear(batch[len(batch)-count:])
+			batch = batch[:len(batch)-count]
+			flush = len(batch) > 0
+			if flush {
+				continue
+			}
 		}
 		t.mu.Lock()
 		t.reportDropsLocked(drainCtx != nil)
@@ -395,20 +417,24 @@ func (t *telemetry) run(ctx context.Context) error {
 	}
 }
 
-func (t *telemetry) flush(ctx context.Context, events []model.TraceEvent) error {
+type telemetryEncodingError struct{ err error }
+
+func (e *telemetryEncodingError) Error() string { return "encode telemetry: " + e.err.Error() }
+func (e *telemetryEncodingError) Unwrap() error { return e.err }
+
+func (t *telemetry) flush(ctx context.Context, events []model.TraceEvent) (int, error) {
 	if len(events) == 0 {
-		return nil
+		return 0, nil
 	}
-	batch := model.EventBatch{Events: events}
-	data, err := json.Marshal(batch)
+	data, count, err := model.MarshalEventBatchPrefix(t.node.AgentID, events)
 	if err != nil {
-		return fmt.Errorf("encode telemetry: %w", err)
+		return 0, &telemetryEncodingError{err: err}
 	}
 	flushCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(flushCtx, http.MethodPost, t.agentURL+"/api/v1/telemetry", bytes.NewReader(data))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if t.token != "" {
@@ -416,15 +442,15 @@ func (t *telemetry) flush(ctx context.Context, events []model.TraceEvent) error 
 	}
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		message, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return fmt.Errorf("agent returned %s: %s", resp.Status, strings.TrimSpace(string(message)))
+		return 0, fmt.Errorf("agent returned %s: %s", resp.Status, strings.TrimSpace(string(message)))
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 2048))
-	return nil
+	return count, nil
 }
 
 func (t *telemetry) reportNode(ctx context.Context, node model.Node) error {

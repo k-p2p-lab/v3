@@ -33,19 +33,21 @@ type analysisBin struct {
 }
 
 type resultAnalysis struct {
-	Version          int                   `json:"version"`
-	Result           savedResult           `json:"result"`
-	AsOf             time.Time             `json:"asOf"`
-	EventBytes       int64                 `json:"eventBytes"`
-	EventCount       int                   `json:"eventCount"`
-	UntimedEvents    int                   `json:"untimedEvents"`
-	Metrics          model.Metrics         `json:"metrics"`
-	LatencyCDF       []analysisPoint       `json:"latencyCDF"`
-	LatencyHistogram []analysisPoint       `json:"latencyHistogram"`
-	Timeline         []analysisBin         `json:"timeline"`
-	BinSeconds       int64                 `json:"binSeconds"`
-	Observations     []analysisObservation `json:"observations"`
-	ObservationCount int                   `json:"observationCount"`
+	BandwidthTimeline   []bandwidthBin        `json:"bandwidthTimeline"`
+	BandwidthBinSeconds int64                 `json:"bandwidthBinSeconds"`
+	Version             int                   `json:"version"`
+	Result              savedResult           `json:"result"`
+	AsOf                time.Time             `json:"asOf"`
+	EventBytes          int64                 `json:"eventBytes"`
+	EventCount          int                   `json:"eventCount"`
+	UntimedEvents       int                   `json:"untimedEvents"`
+	Metrics             model.Metrics         `json:"metrics"`
+	LatencyCDF          []analysisPoint       `json:"latencyCDF"`
+	LatencyHistogram    []analysisPoint       `json:"latencyHistogram"`
+	Timeline            []analysisBin         `json:"timeline"`
+	BinSeconds          int64                 `json:"binSeconds"`
+	Observations        []analysisObservation `json:"observations"`
+	ObservationCount    int                   `json:"observationCount"`
 }
 
 func (s *Server) handleResultAnalysis(w http.ResponseWriter, r *http.Request, id string) {
@@ -128,6 +130,8 @@ func analyzeResult(ctx context.Context, snapshot *resultSnapshot) (resultAnalysi
 	result := resultAnalysis{Version: 1, Result: snapshot.result, AsOf: snapshot.exportedAt,
 		LatencyCDF: []analysisPoint{}, LatencyHistogram: []analysisPoint{}, Timeline: []analysisBin{}, Observations: []analysisObservation{}}
 	accumulator := newRunMetricAccumulator()
+	var bandwidth bandwidthTimeline
+	accumulator.onBandwidth = bandwidth.add
 	bins := make(map[int64]analysisBin)
 	width := int64(1)
 	stride := 1
@@ -237,6 +241,7 @@ func analyzeResult(ctx context.Context, snapshot *resultSnapshot) (resultAnalysi
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
+	result.BandwidthTimeline, result.BandwidthBinSeconds = bandwidth.result()
 	// Preserve the latest sample even when older observations are downsampled.
 	if !latestObservation.At.IsZero() {
 		found := false

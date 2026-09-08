@@ -25,13 +25,13 @@ The Dashboard header links to Prometheus and Grafana in new tabs. It preserves t
 
 ## Built-in Dashboard visualization
 
-**Saved results → Analyze** opens latency CDFs, histograms, message/topology/score timelines and comparisons of up to four runs. This screen analyzes saved files independently of Prometheus. See [visualization](visualization.md).
+**Saved results → Analyze** opens latency CDFs, histograms, message/topology/score timelines, protocol-level bandwidth and comparisons of up to four runs. This screen analyzes saved files independently of Prometheus. See [visualization](visualization.md).
 
 ## Run and analyze an experiment
 
 1. Use **Run experiment** in the Dashboard to run [`examples/monitoring.yaml`](../examples/monitoring.yaml). This small experiment includes both envelope and raw publications.
    Set **Runs** beside **Run** to 1–100 for sequential iterations. Each gets a separate result; failure or **Stop batch** cancels the remainder. See [repetition and metric definitions](experiment-metrics.md).
-2. Select **Run** (`run_id`), **Agent**, and **Topic** in Grafana. Selecting multiple runs aggregates their traffic and latency samples; network configuration time series identify each run in their legends.
+2. Select **Run** (`run_id`), **Agent**, and **Topic** in Grafana. Selecting multiple runs aggregates their traffic and latency samples; network configuration and bandwidth time series identify each run in their legends. Session delivery panels apply only Run, and bandwidth/control panels apply Run and Agent without Topic.
 3. After an experiment finishes, set the time range to its execution window to view the recorded series. The default refresh interval is 5 seconds.
 
 Prometheus scrapes `/metrics` on the Controller and Agents every 5 seconds. The Controller returns the metrics URLs of registered Agents through HTTP service discovery; Prometheus then reaches each Agent's host-mode port directly instead of a service VIP. It does not scrape Peers directly or add exporters to individual Peer containers. The Controller aggregates the existing Peer telemetry stream, so telemetry loss under `scope: all` still affects Controller-derived Peer metrics. Monitoring services use a separate Docker network; Peers receive no additional networks or permissions.
@@ -48,7 +48,7 @@ Each ZIP contains:
 | `experiment.json` | Original saved experiment metadata, state, seed, and job counters |
 | `events.jsonl` | All event records saved at the export boundary; one JSON object per line, or an empty file when no events have been recorded |
 | `observations.jsonl` | Group state, degree, clustering and score observations recorded every 5 seconds for new runs; absent in older results |
-| `metrics.json` | Session-window delivery bounds, starting-cohort results, coverage, pending/unknown counts, first remote latency, and observed duplicates rebuilt from the same event-log prefix; historical definitions stay legacy |
+| `metrics.json` | Session-window delivery bounds, starting-cohort results, coverage, pending/unknown counts, first remote latency, observed duplicates, control breakdown and recorded bandwidth totals/quality rebuilt from the same event-log prefix; historical definitions stay legacy |
 | `export.json` | Export time, run state, active/partial flags, and the captured source file sizes |
 
 The export captures file sizes under the Controller's persistence lock and streams the ZIP after releasing that lock. Events appended later are excluded, so a slow download does not hold up telemetry writes. A completed run can still receive delayed telemetry: download again after collection has settled if you need those later records. `partial: false` indicates a terminal recorded run state, not a guarantee that no telemetry was lost. The archive does not contain message payloads, PCAP files, or the Prometheus/Grafana databases.
@@ -83,6 +83,9 @@ Exports contain collected telemetry, including subscription-session start/checkp
 |---|---|
 | `kpl_events_total` | Cumulative events received by the Controller, labeled by `run_id`, `agent_id`, `event_type`, and `topic` |
 | `kpl_message_bytes_total` | Sum of `fields.wireBytes` in publish/deliver events: PubSub data including envelope JSON/base64 when used, excluding libp2p framing and TCP/IP headers |
+| `kpl_p2p_stream_bytes_total`, `kpl_p2p_protocol_stream_bytes_total` | Measured cumulative libp2p stream bytes per session/direction, overall and by negotiated protocol |
+| `kpl_p2p_stream_bits_per_second`, `kpl_p2p_protocol_stream_bits_per_second` | Source interval-average bit/s gauges; query directly, without `rate()` |
+| `kpl_p2p_bandwidth_sample_timestamp_seconds`, `kpl_p2p_bandwidth_session_final` | Latest source sample time and whether a normal post-close sample was received; see [bandwidth quality and limits](bandwidth.md) |
 | `kpl_gossipsub_control_rpcs_total` | RPC envelopes containing each GossipSub control type, separated by `send`, `recv`, and local pre-send `drop` |
 | `kpl_gossipsub_control_entries_total` | Repeated protobuf control entries carried in those RPCs |
 | `kpl_gossipsub_control_message_ids_total` | Non-unique message-ID reference occurrences in IHAVE, IWANT, and IDONTWANT entries |
@@ -166,3 +169,5 @@ The Dashboard coalesces telemetry bursts into at most four renders per second an
 The Swarm stack discovers registered targets from `GET /api/v1/prometheus/agent-targets`. Use `sh scripts/swarm.sh access` to inspect the advertised URLs, ensure the configured port is free on every selected Agent node, and permit TCP traffic from the control node. If operators open an Agent metrics link directly, permit their browser's trusted management network as well; block untrusted sources. `up{job="kpl-agent"}` distinguishes successful scrapes from registered targets that are unreachable through a firewall or an incorrect Swarm `NodeAddr`.
 
 Image versions are pinned to Prometheus `v3.13.2` and Grafana `13.2.1`. When upgrading, consult the official [Prometheus downloads](https://prometheus.io/download/) and [Grafana Docker installation guide](https://grafana.com/docs/grafana/latest/setup-grafana/installation/docker/), then revalidate the configuration and dashboards.
+
+[Bandwidth measurement](bandwidth.md) · [v2 analysis coverage audit](v2-analysis-coverage.md)

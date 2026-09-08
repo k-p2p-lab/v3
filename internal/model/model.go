@@ -53,20 +53,21 @@ type Node struct {
 }
 
 type TraceEvent struct {
-	SessionID    string         `json:"sessionId,omitempty"`
-	Sequence     uint64         `json:"sequence,omitempty"`
-	EventID      string         `json:"eventId,omitempty"`
-	RunID        string         `json:"runId"`
-	AgentID      string         `json:"agentId,omitempty"`
-	NodeID       string         `json:"nodeId"`
-	PeerID       string         `json:"peerId,omitempty"`
-	Type         string         `json:"type"`
-	MessageID    string         `json:"messageId,omitempty"`
-	RemotePeerID string         `json:"remotePeerId,omitempty"`
-	Topic        string         `json:"topic,omitempty"`
-	Timestamp    time.Time      `json:"timestamp"`
-	LatencyMS    float64        `json:"latencyMs,omitempty"`
-	Fields       map[string]any `json:"fields,omitempty"`
+	Bandwidth    *BandwidthSample `json:"bandwidth,omitempty"`
+	SessionID    string           `json:"sessionId,omitempty"`
+	Sequence     uint64           `json:"sequence,omitempty"`
+	EventID      string           `json:"eventId,omitempty"`
+	RunID        string           `json:"runId"`
+	AgentID      string           `json:"agentId,omitempty"`
+	NodeID       string           `json:"nodeId"`
+	PeerID       string           `json:"peerId,omitempty"`
+	Type         string           `json:"type"`
+	MessageID    string           `json:"messageId,omitempty"`
+	RemotePeerID string           `json:"remotePeerId,omitempty"`
+	Topic        string           `json:"topic,omitempty"`
+	Timestamp    time.Time        `json:"timestamp"`
+	LatencyMS    float64          `json:"latencyMs,omitempty"`
+	Fields       map[string]any   `json:"fields,omitempty"`
 }
 
 type EventBatch struct {
@@ -179,6 +180,8 @@ type Metrics struct {
 	StableCoverageAvailable             bool     `json:"stableCoverageAvailable"`
 	LegacyPublications                  int      `json:"legacyPublications"`
 	MeasurementIncomplete               bool     `json:"measurementIncomplete"`
+
+	Bandwidth *BandwidthSummary `json:"bandwidth,omitempty"`
 
 	GossipSubControl []GossipSubControlMetric `json:"gossipsubControl,omitempty"`
 }

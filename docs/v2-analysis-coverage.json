@@ -1,0 +1,381 @@
+{
+  "version": 1,
+  "auditedAt": "2026-09-08",
+  "v2Revision": "74b71090410cac1315ae08f479a95c086feeaaf6",
+  "fullParity": false,
+  "note": "Inventory audit, not an assertion of v3 numerical equivalence. Hashes bind this report to the inspected working-tree sources.",
+  "parserFields": [
+    {
+      "name": "assortativity",
+      "status": "unavailable",
+      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+    },
+    {
+      "name": "average_degree",
+      "status": "different_definition",
+      "note": "Related v3 charts exist; population, time aggregation or normalization differs. See the coverage report."
+    },
+    {
+      "name": "average_degree_excluding_leaves",
+      "status": "unavailable",
+      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+    },
+    {
+      "name": "betweenness_centrality",
+      "status": "unavailable",
+      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+    },
+    {
+      "name": "closeness_centrality",
+      "status": "unavailable",
+      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+    },
+    {
+      "name": "clustering_coefficient",
+      "status": "different_definition",
+      "note": "Related v3 charts exist; population, time aggregation or normalization differs. See the coverage report."
+    },
+    {
+      "name": "degree_centrality",
+      "status": "unavailable",
+      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+    },
+    {
+      "name": "degree_distribution-*",
+      "status": "different_definition",
+      "note": "Related v3 charts exist; population, time aggregation or normalization differs. See the coverage report."
+    },
+    {
+      "name": "diameter",
+      "status": "unavailable",
+      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+    },
+    {
+      "name": "drc",
+      "status": "different_definition",
+      "note": "Related v3 charts exist; population, time aggregation or normalization differs. See the coverage report."
+    },
+    {
+      "name": "dup_map",
+      "status": "raw_events_only",
+      "note": "Related v3 event evidence exists; the v2 map format and its reducer are not exported."
+    },
+    {
+      "name": "eager_count",
+      "status": "unavailable",
+      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+    },
+    {
+      "name": "eager_frt",
+      "status": "unavailable",
+      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+    },
+    {
+      "name": "eager_propa_map",
+      "status": "unavailable",
+      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+    },
+    {
+      "name": "eager_reach_map",
+      "status": "unavailable",
+      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+    },
+    {
+      "name": "eager_reachability",
+      "status": "unavailable",
+      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+    },
+    {
+      "name": "eigenvector_centrality",
+      "status": "unavailable",
+      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+    },
+    {
+      "name": "frt",
+      "status": "different_definition",
+      "note": "Related v3 charts exist; population, time aggregation or normalization differs. See the coverage report."
+    },
+    {
+      "name": "lazy_count",
+      "status": "unavailable",
+      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+    },
+    {
+      "name": "logical_recv_ihave",
+      "status": "related_control_counts",
+      "note": "Control breakdown exposes RPC occurrences, entries and message ID references. v2 event meaning and per-message interval aggregation are not identical."
+    },
+    {
+      "name": "logical_recv_iwant",
+      "status": "related_control_counts",
+      "note": "Control breakdown exposes RPC occurrences, entries and message ID references. v2 event meaning and per-message interval aggregation are not identical."
+    },
+    {
+      "name": "logical_send_graft",
+      "status": "unavailable",
+      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+    },
+    {
+      "name": "logical_send_ihave",
+      "status": "related_control_counts",
+      "note": "Control breakdown exposes RPC occurrences, entries and message ID references. v2 event meaning and per-message interval aggregation are not identical."
+    },
+    {
+      "name": "logical_send_iwant",
+      "status": "related_control_counts",
+      "note": "Control breakdown exposes RPC occurrences, entries and message ID references. v2 event meaning and per-message interval aggregation are not identical."
+    },
+    {
+      "name": "logical_send_prune",
+      "status": "unavailable",
+      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+    },
+    {
+      "name": "modularity",
+      "status": "unavailable",
+      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+    },
+    {
+      "name": "node_count",
+      "status": "different_definition",
+      "note": "Related v3 charts exist; population, time aggregation or normalization differs. See the coverage report."
+    },
+    {
+      "name": "page_rank",
+      "status": "unavailable",
+      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+    },
+    {
+      "name": "propa_map",
+      "status": "raw_events_only",
+      "note": "Related v3 event evidence exists; the v2 map format and its reducer are not exported."
+    },
+    {
+      "name": "pub_map",
+      "status": "raw_events_only",
+      "note": "Related v3 event evidence exists; the v2 map format and its reducer are not exported."
+    },
+    {
+      "name": "reach_map",
+      "status": "raw_events_only",
+      "note": "Related v3 event evidence exists; the v2 map format and its reducer are not exported."
+    },
+    {
+      "name": "reachability",
+      "status": "different_definition",
+      "note": "Related v3 charts exist; population, time aggregation or normalization differs. See the coverage report."
+    },
+    {
+      "name": "recv_ihave",
+      "status": "related_control_counts",
+      "note": "Control breakdown exposes RPC occurrences, entries and message ID references. v2 event meaning and per-message interval aggregation are not identical."
+    },
+    {
+      "name": "recv_iwant",
+      "status": "related_control_counts",
+      "note": "Control breakdown exposes RPC occurrences, entries and message ID references. v2 event meaning and per-message interval aggregation are not identical."
+    },
+    {
+      "name": "send_graft",
+      "status": "related_control_counts",
+      "note": "Control breakdown exposes RPC occurrences, entries and message ID references. v2 event meaning and per-message interval aggregation are not identical."
+    },
+    {
+      "name": "send_ihave",
+      "status": "related_control_counts",
+      "note": "Control breakdown exposes RPC occurrences, entries and message ID references. v2 event meaning and per-message interval aggregation are not identical."
+    },
+    {
+      "name": "send_iwant",
+      "status": "related_control_counts",
+      "note": "Control breakdown exposes RPC occurrences, entries and message ID references. v2 event meaning and per-message interval aggregation are not identical."
+    },
+    {
+      "name": "send_prune",
+      "status": "related_control_counts",
+      "note": "Control breakdown exposes RPC occurrences, entries and message ID references. v2 event meaning and per-message interval aggregation are not identical."
+    },
+    {
+      "name": "shortest_path_length",
+      "status": "unavailable",
+      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+    },
+    {
+      "name": "time",
+      "status": "different_definition",
+      "note": "Related v3 charts exist; population, time aggregation or normalization differs. See the coverage report."
+    }
+  ],
+  "sources": [
+    {
+      "path": "kpl-parser/internal/analysis/clone.go",
+      "family": "parser",
+      "sha256": "f0a3bf189f7c4fa9f4595a39faee412e3f35fddf3fde10c2f4ba6ba5675047ea"
+    },
+    {
+      "path": "kpl-parser/internal/analysis/log.go",
+      "family": "parser",
+      "sha256": "8e56cc55c7c6e6125984c13295c1d62f700d07415938b09684208ae91c328eea"
+    },
+    {
+      "path": "kpl-parser/internal/analysis/metric.go",
+      "family": "parser",
+      "sha256": "d9554478d35bcf3f3383cf22273049d899dc5cae27a19d1bdfbcf64b9232bb19"
+    },
+    {
+      "path": "kpl-parser/internal/analysis/propa.go",
+      "family": "parser",
+      "sha256": "668dbd2af9ae26a7e3351290b56f1918cafab308adb096baa4621fd8a7e43faf"
+    },
+    {
+      "path": "kpl-parser/internal/analysis/value.go",
+      "family": "parser",
+      "sha256": "beed502da5cbebcfd7544158adad846db45e8a65499262631b187f60456af119"
+    },
+    {
+      "path": "kpl-parser/internal/data/log_entry.go",
+      "family": "parser",
+      "sha256": "5b2364d064f3ef03f5ed59a07846509e7ba11d1cf398fd4cb7caa191db1456a9"
+    },
+    {
+      "path": "kpl-viewer/basic_graph/file_helper.py",
+      "family": "basic_graph",
+      "sha256": "e1c0f5129947ba1e375d1ef4c8055ab8722d5ae696c29d7ad0b8898b6479fefa"
+    },
+    {
+      "path": "kpl-viewer/basic_graph/format_helper.py",
+      "family": "basic_graph",
+      "sha256": "b13199f3e017be988bf687e0e78b6ca1ee52c268d2b10961988a8ed826942c66"
+    },
+    {
+      "path": "kpl-viewer/basic_graph/main.py",
+      "family": "basic_graph",
+      "sha256": "d57302f6775b17ec423970ac21ea42c7bfda81a177df5da77b43ced057ce73e4"
+    },
+    {
+      "path": "kpl-viewer/basic_graph/math_helper.py",
+      "family": "basic_graph",
+      "sha256": "e55f138b66bf6182a1bb9bfce9736e9dbb7f3b3e81d0a30b9c704fe79d78c3cc"
+    },
+    {
+      "path": "kpl-viewer/basic_graph/output_helper.py",
+      "family": "basic_graph",
+      "sha256": "3091a474d86d05adff00a3716f07e25b9069593a793515c153764d3d50ed00d4"
+    },
+    {
+      "path": "kpl-viewer/basic_graph/process_helper.py",
+      "family": "basic_graph",
+      "sha256": "9a1ab23617793ea9c9371fd35fa6537fbac468db2bc438db217b2dac252f13ea"
+    },
+    {
+      "path": "kpl-viewer/basic_graph/run.sh",
+      "family": "basic_graph",
+      "sha256": "c281d1383e1dda98ee3e1e6806b41ca0d894cec3c14c6e53cd8dd6e1d1859020"
+    },
+    {
+      "path": "kpl-viewer/calc_lazy_metric.py",
+      "family": "calc_lazy_metric",
+      "sha256": "bbee99b04ba10e233ccc18fafdaac5371979eb92ed702a5a572112ee0c703eb8"
+    },
+    {
+      "path": "kpl-viewer/compare_graph/format_helper.py",
+      "family": "compare_graph",
+      "sha256": "b13199f3e017be988bf687e0e78b6ca1ee52c268d2b10961988a8ed826942c66"
+    },
+    {
+      "path": "kpl-viewer/compare_graph/main.py",
+      "family": "compare_graph",
+      "sha256": "a7200a2a2ec805491e5959f054d685b7fb5570aaa5d100f1904291585ceedfb0"
+    },
+    {
+      "path": "kpl-viewer/compare_graph/math_helper.py",
+      "family": "compare_graph",
+      "sha256": "306595957fe0b7277e243b8fbaa867a72c016f8965618135a5b4cbb9f799fbe4"
+    },
+    {
+      "path": "kpl-viewer/compare_graph/run.sh",
+      "family": "compare_graph",
+      "sha256": "955196ace7101f74f806c4e36126ac4a6dac3a1c0eac79530157267d7273913a"
+    },
+    {
+      "path": "kpl-viewer/compare_graph/run_more.sh",
+      "family": "compare_graph",
+      "sha256": "720114482d7a12b11bb5b57177773c3ed1853129fc11c26296406e9c73c9a05b"
+    },
+    {
+      "path": "kpl-viewer/dup_regression.py",
+      "family": "dup_regression",
+      "sha256": "7dec961846a39d63f8cd9d00ffdd0c60bb2d3d19f211da472134c3117a453ec1"
+    },
+    {
+      "path": "kpl-viewer/image_gen.sh",
+      "family": "batch_wrappers",
+      "sha256": "6126acf4a6902a1ddd826a21d78af08e06f31a159ffd731c0e4e36074d02aadb"
+    },
+    {
+      "path": "kpl-viewer/old/clustering_vs_eigenvector.py",
+      "family": "clustering_vs_eigenvector",
+      "sha256": "7fa75d599081e5f797561c09d72494e7603b7b44609a77423515a85548ca5877"
+    },
+    {
+      "path": "kpl-viewer/old/fitting.py",
+      "family": "fitting",
+      "sha256": "98b3a57480502d3ef00bfe8f3528ca2dd137a8ffa5d974b47e602acf6452868f"
+    },
+    {
+      "path": "kpl-viewer/old/frt_drc_graph.py",
+      "family": "frt_drc_graph",
+      "sha256": "481f8a3577c5061a37f53c8184dd1a2e1df06b46c636c12e99a439e201ab41a4"
+    },
+    {
+      "path": "kpl-viewer/old/graphic.py",
+      "family": "graphic",
+      "sha256": "ab3d5e89665724d1e7ad8ef5cfc3852960a8dc0331d0f8b818afa0ffb1e69dbd"
+    },
+    {
+      "path": "kpl-viewer/old/mean_degree_ratio.py",
+      "family": "mean_degree_ratio",
+      "sha256": "cd379b3cc6acfe77d064ffb7b410b2c6953ec49f2c1a3abaa3b964eb6c3d3377"
+    },
+    {
+      "path": "kpl-viewer/old/prop_plot.py",
+      "family": "prop_plot",
+      "sha256": "33d588a39435d359538b9314d6001213c0cdd4ffbfd23cbc0bfa543cad1bace5"
+    },
+    {
+      "path": "kpl-viewer/old/prop_plot_graph.py",
+      "family": "prop_plot_graph",
+      "sha256": "846e57cb7e33f125eb24fda4155d0aa1a4fb3345d0e618a7417f368f9ada9cc7"
+    },
+    {
+      "path": "kpl-viewer/old/propagation.py",
+      "family": "propagation",
+      "sha256": "e4ab10771eb0a1c1e0d11119dd7dd7e7e8b30f72322a13235023923085e69b77"
+    },
+    {
+      "path": "kpl-viewer/time_vs_metric_plot.py",
+      "family": "time_vs_metric_plot",
+      "sha256": "355a6d80c36ce604533844fb6bf8bbffba8f7399d7a665060cb97c42326d7a7a"
+    },
+    {
+      "path": "kpl-viewer/total_image_gen.sh",
+      "family": "batch_wrappers",
+      "sha256": "ae4f28544ba4a02ae9e36a35264a8b037e3f179e68756b60eec19bb0107f14ae"
+    },
+    {
+      "path": "kpl-viewer/trade-off_graph/main.py",
+      "family": "trade-off_graph",
+      "sha256": "66317002cb23c6303af2067f52db189e26fa6d219ed60157bbc978e31636f7fa"
+    },
+    {
+      "path": "kpl-viewer/trade-off_graph/plot.py",
+      "family": "trade-off_graph",
+      "sha256": "1b63950e8852b53a72fefeb0bfbbce4b870143dc87719ce1fdcd2108be4241b0"
+    },
+    {
+      "path": "kpl-viewer/trade-off_graph/run.sh",
+      "family": "trade-off_graph",
+      "sha256": "20342c578427766761b89e6a789a5a1f35949c45b468e637c83c4f52b333cc44"
+    }
+  ]
+}

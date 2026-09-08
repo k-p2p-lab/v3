@@ -440,11 +440,15 @@ func (s *Server) handleEventBatch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if len(batch.Events) > 5000 {
+	if len(batch.Events) > model.MaxEventBatchEvents {
 		writeError(w, http.StatusRequestEntityTooLarge, "event batch cannot exceed 5000 events")
 		return
 	}
 	normalizeControllerEventTimes(&batch, time.Now().UTC())
+	if err := batch.ValidateEventSizes(); err != nil {
+		writeError(w, http.StatusRequestEntityTooLarge, err.Error())
+		return
+	}
 	if err := s.state.appendEvents(batch); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -620,6 +624,12 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("invalid JSON: %w", err)
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("invalid JSON: expected a single value")
+		}
 		return fmt.Errorf("invalid JSON: %w", err)
 	}
 	return nil

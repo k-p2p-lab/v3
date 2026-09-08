@@ -66,7 +66,7 @@ overlay 보고가 없는 이전 Peer는 Transport 선만 제공합니다. 화면
 
 `protocol`은 `transport`, `kademlia`, `gossipsub` 중 하나입니다. API는 GossipSub edge를 topic별로 구분합니다. 중복 보고는 일관된 순서로 합치고 알 수 없는 endpoint, 같은 run 안의 모호한 중복 Peer ID, 다른 run 관계는 제외합니다. 그래프/API edge endpoint는 Node ID이고 Node 내부 이웃 목록은 libp2p Peer ID입니다.
 
-이 snapshot은 현재 상태이며 완전한 과거 토폴로지 DB는 아닙니다. `events.jsonl`에는 수집된 GRAFT/PRUNE가 남지만 telemetry 누락 가능성이 있으며 ZIP에 DHT 테이블·mesh snapshot 전체 이력을 추가한 것은 아닙니다. 레이어 표시와 배치는 [도달 지표의 정의](experiment-metrics.kr.md)를 변경하지 않습니다.
+이 snapshot은 현재 상태이며 완전한 과거 토폴로지 DB는 아닙니다. `events.jsonl`에는 수집된 GRAFT/PRUNE가 남지만 telemetry 누락 가능성이 있습니다. 새 실행은 [저장 결과 차트](visualization.kr.md)를 위한 그룹별 차수·clustering·점수 요약도 `observations.jsonl`에 포함합니다. 이 요약만으로 DHT 테이블·mesh edge·평가자별 개별 점수의 전체 이력을 복원할 수는 없습니다. 레이어 표시와 배치는 [도달 지표의 정의](experiment-metrics.kr.md)를 변경하지 않습니다.
 
 ## 개발 검증
 

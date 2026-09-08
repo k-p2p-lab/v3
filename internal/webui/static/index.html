@@ -215,6 +215,12 @@
           <label>Observation group<select id="analysisGroup"><option value="">All groups</option></select></label>
           <label>Relationship layer<select id="analysisProtocol"><option value="gossipsub">GossipSub mesh</option><option value="kademlia">Kademlia</option><option value="transport">Transport</option></select></label>
         </div>
+        <div class="analysis-toolbar"><label>Bandwidth protocol<select id="analysisBandwidthProtocol"><option value="*">All libp2p streams</option></select></label></div>
+        <p class="results-help" id="analysisBandwidthNote"></p>
+        <div class="analysis-charts" id="analysisBandwidthCharts"></div>
+        <h3>GossipSub control breakdown</h3>
+        <p class="results-help">Recorded control traffic across the selected run. RPC occurrences, entries and message ID references are distinct units; one RPC can contain several control types. These counts do not classify eager/lazy delivery or successful topology changes.</p>
+        <div class="table-wrap" id="analysisControlSummary"></div>
         <p class="results-help" id="analysisObservationNote"></p>
         <div class="analysis-toolbar"><label class="analysis-sample">Degree distribution sample<input id="analysisSample" type="range" min="0" max="0" value="0"><output id="analysisSampleTime">N/A</output></label></div>
         <div class="analysis-charts" id="analysisDetailCharts"></div>

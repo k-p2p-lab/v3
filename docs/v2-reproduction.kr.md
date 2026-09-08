@@ -79,16 +79,16 @@ Peer는 v2처럼 TCP/Noise/Yamux를 명시적으로 사용합니다. Worker는 b
 
 v2의 `size`는 PubSub에 전달되는 무작위 바이트 길이입니다. v3에서 `payloadEncoding: raw`를 사용하면 `payloadSize`가 정확히 그 길이입니다. libp2p framing, 서명, TCP/IP 헤더까지 포함한 패킷 크기를 뜻하지는 않습니다. 기본 `envelope`는 전파 지연 계측을 위한 JSON과 base64 때문에 더 큽니다. `topic: '*'`는 선택한 노드가 가진 모든 발행 가능한 topic에 각각 메시지를 발행합니다.
 
-raw 발행·수신·중복 이벤트는 `pubsub-` 뒤에 native PubSub 메시지 ID를 16진수로 붙여 연결합니다. 현재 기본 ID는 origin과 sequence를 결합하므로 raw 바이트가 같은 두 발행도 구분됩니다. 메시지에 애플리케이션 시각을 추가하지 않으므로 raw 수신에는 지연값을 제공하지 않으며 평균/P95 계산에서 제외합니다. raw 트래픽을 사용하는 run은 전용 topic과 네트워크로 분리하십시오. envelope의 run ID 필터를 raw 바이트에는 적용할 수 없습니다. [`internal/peer/publish.go`](../internal/peer/publish.go)를 참고하십시오.
+raw 발행·수신·중복 이벤트는 `pubsub-` 뒤에 native PubSub 메시지 ID를 16진수로 붙여 연결합니다. 현재 기본 ID는 origin과 sequence를 결합하므로 raw 바이트가 같은 두 발행도 구분됩니다. 내용 기반 메시지 ID를 명시하면 같은 내용이 합쳐질 수 있으므로 [메시지 ID 설정](protocol-options.kr.md#pubsub-활성화와-공통-설정)을 참고하십시오. 메시지에 애플리케이션 시각을 추가하지 않으므로 raw 수신에는 지연값을 제공하지 않으며 평균/P95 계산에서 제외합니다. raw 트래픽을 사용하는 run은 전용 topic과 네트워크로 분리하십시오. envelope의 run ID 필터를 raw 바이트에는 적용할 수 없습니다. [`internal/peer/publish.go`](../internal/peer/publish.go)를 참고하십시오.
 
 ## 관측과 남은 차이
 
 - `wait-ready`는 초기화/API 준비를 뜻하며 mesh 수렴을 보장하지 않습니다. 예제는 별도의 안정화 대기를 둡니다.
-- [dashboard 토폴로지](topology.kr.md)는 현재 Peer 상태를 바탕으로 transport, Kademlia 라우팅 테이블, topic별 GossipSub mesh를 별도로 표시합니다. `TopicPeers`는 `len(pubsub.ListPeers(topic))`이며 로컬에서 알고 있는 topic peer 수입니다. mesh 차수나 원격 애플리케이션 구독 세션의 증거가 아닙니다. 과거 분석에는 저장된 `graft`/`prune`, `add_peer`/`remove_peer`, `join`/`leave` 이벤트를 함께 사용하고 telemetry 누락을 고려해야 합니다. 결과에는 routing·mesh snapshot의 전체 이력이 포함되지 않습니다.
+- [dashboard 토폴로지](topology.kr.md)는 현재 Peer 상태를 바탕으로 transport, Kademlia 라우팅 테이블, topic별 GossipSub mesh를 별도로 표시합니다. `TopicPeers`는 `len(pubsub.ListPeers(topic))`이며 로컬에서 알고 있는 topic peer 수입니다. mesh 차수나 원격 애플리케이션 구독 세션의 증거가 아닙니다. 과거 분석에는 저장된 `graft`/`prune`, `add_peer`/`remove_peer`, `join`/`leave` 이벤트를 함께 사용하고 telemetry 누락을 고려해야 합니다. 새 결과에는 `observations.jsonl`의 그룹별 차수·clustering·점수 요약도 있지만 routing·mesh snapshot 전체 이력은 아닙니다.
 - v3의 타입별 RPC 수는 v2의 physical IHAVE/IWANT counter, 메시지 ID 참조 수는 logical counter에 대응합니다. v3는 protobuf entry 수, IDONTWANT, 로컬 송신 전 drop, PRUNE peer-exchange record, 혼합 RPC 안의 모든 타입도 보존합니다. v2는 이 경우들을 누락하고 IHAVE topic 정보도 버렸습니다. 기존 단순 `graft`/`prune` 이벤트는 로컬 mesh 전이이므로 wire traffic은 별도 `send_*`, `recv_*`, `drop_*` 제어 이벤트와 비교하십시오. [제어 트래픽 정의](experiment-metrics.kr.md#gossipsub-제어-트래픽)를 참고하십시오.
 - interval/lifetime/base delay 샘플은 seed로 재현할 수 있으나 run ID를 포함한 Peer ID, 네트워크 타이밍, 커널 패킷 난수는 동일하지 않습니다. 노드 metadata에 `seed`, `networkRequested`, 실제 `network`를 남기며 Agent의 Peer config 파일에도 실효 설정을 저장합니다.
 - 기본 연결 상한 55와 주요 worker DHT/GossipSub 파라미터는 일치합니다. 그러나 v2 custom PubSub fork 경로의 소스가 제공된 디렉터리에 없어 fork 내부까지 동등성을 검증할 수 없습니다. v3는 공식 라이브러리이며 HopWave는 지원 범위 밖입니다.
-- dashboard 메시지 지표는 최근 이벤트 버퍼와 독립적으로 누적되지만 Controller 재시작 시 초기화되며 telemetry 누락의 영향을 받습니다. 오프라인 분석에는 `runs/<run-id>/events.jsonl`을 사용하고, v2 지표와 직접 동일시하지 말고 [명시된 churn 대상 집합 정의](experiment-metrics.kr.md)를 적용하십시오.
+- dashboard 메시지 지표는 최근 이벤트 버퍼와 독립적으로 누적되지만 Controller 재시작 시 초기화되며 telemetry 누락의 영향을 받습니다. [저장 결과 분석](visualization.kr.md)과 ZIP 지표는 재시작 후에도 기록된 실행을 재계산합니다. [churn 대상 집합 정의](experiment-metrics.kr.md)와 [v2 전체 분석 대조표](v2-analysis-coverage.kr.md)를 함께 확인하십시오. 시나리오 설정이 대응하더라도 수치나 시각화 동등성을 보장하지 않습니다.
 
 검토한 핵심 v2 파일: `kpl-controller/internal/handler/event.go`, `internal/docker/docker.go`, `internal/distribution/distribution.go`, `cmd/main.go`, `kpl-peer-app/internal/host/{host,tc}.go`, `internal/dht/dht.go`, `internal/api/publish.go`.
 

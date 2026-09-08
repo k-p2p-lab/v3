@@ -45,10 +45,10 @@ Arrows show request or operation direction, with responses omitted; the libp2p l
 
 | Component | v3 deployment | Responsibility |
 |---|---|---|
-| **Dashboard** | Static web application embedded in and served by the Controller | Starts and stops runs, manages saved scenarios and results, and displays live Agent, Peer, topology, event, and summary data. |
+| **Dashboard** | Static web application embedded in and served by the Controller | Starts and stops runs, manages saved scenarios and results, displays live Agent/Peer/topology/event/summary data, and compares saved analyses with JSON/CSV/SVG export. |
 | **Controller** | One container; pinned to the configured control node in Swarm | Parses and schedules scenarios, reserves Agent capacity, issues Peer lifecycle and publish operations, maintains the bootstrap and topic-discovery registries, aggregates topology and telemetry, persists run records, serves the REST API and Dashboard, and exports Controller metrics. |
 | **Agent** | One global-service task per selected Swarm node | Registers with the Controller, reports heartbeats, enforces local admission capacity, creates and removes Peer containers through the node-local Docker socket, proxies publish requests, forwards Peer telemetry, and exports host-local Agent metrics. |
-| **Peer** | One standalone Docker container per experimental Peer | Runs the actual libp2p application, including Kademlia and GossipSub; joins topics, publishes and receives messages, reports protocol and delivery events, and applies its own Linux traffic-control rules when configured. |
+| **Peer** | One standalone Docker container per experimental Peer | Runs the actual libp2p application, including Kademlia and GossipSub; joins topics, publishes and receives messages, reports protocol/delivery events and cumulative libp2p stream bytes, and applies its own Linux traffic-control rules when configured. |
 | **Prometheus** | One container on the configured Swarm control node | Scrapes Controller metrics and the metrics endpoints advertised by eligible Agents, then retains time series independently of saved experiment result archives. |
 | **Grafana** | One container on the configured Swarm control node | Queries Prometheus through the provisioned data source and presents the bundled experiment-analysis dashboard. |
 
@@ -71,7 +71,7 @@ v3 uses two application networks. They are separate Docker networks, but they sh
 | Network or endpoint plane | Attached components | Traffic and exposure |
 |---|---|---|
 | **Peer network (`peers`)** | Controller, Agents, and every Peer | An external attachable Swarm overlay (`KPL_PEER_NETWORK`). It carries direct libp2p TCP traffic on container port 20000. It also carries Peer-to-Agent status/telemetry, Peer-to-Controller bootstrap/discovery/clock requests, and Controller-to-Agent operations because Peers need private reachability to those services. Peer P2P and control ports are not published on the host. |
-| **Monitoring network (`monitoring`)** | Controller, Agents, Prometheus, and Grafana; no Peers | A stack-scoped Swarm overlay. Prometheus reaches the Controller here. Each Agent advertises its node address and host-mode metrics port, and the Controller exposes those targets through HTTP service discovery so Prometheus does not depend on a Peer-overlay address. Grafana reaches Prometheus through this network. |
+| **Monitoring network (`monitoring`)** | Controller, Agents, Prometheus, and Grafana; no Peers | A stack-scoped Swarm overlay. Prometheus uses the Controller service DNS here for HTTP service discovery, then scrapes the returned published control-node and Agent-node metrics addresses. Scrapes therefore also require access to those host ports. Grafana reaches Prometheus through this overlay. |
 | **Operator endpoints** | Browser or API client to the control host | Controller/Dashboard 8080, Prometheus 9090, and Grafana 3000 are the intended operator endpoints. Swarm publishes them in host mode on the configured control node. Agent metrics use host port 9091 by default in Swarm; the Agent control API remains private. |
 
 Docker Swarm's own manager and node control plane is infrastructure used to deploy the services. v3 does not create each experimental Peer as a Swarm service: the Agent creates a standalone container on its own node. Consequently, Swarm does not migrate or automatically reschedule an active Peer to another host.
@@ -98,7 +98,7 @@ The Dashboard renders recent state and events from the Controller. The Controlle
 
 Metrics and topology are observations of received reports. A stale or unreachable Agent, telemetry queue loss, `scope: all` impairment, scrape timing, or forced shutdown can reduce what the control plane observes even while some P2P traffic occurred. Use [experiment metrics](experiment-metrics.md) for metric definitions, [monitoring and results](monitoring.md) for collection limits, and [topology](topology.md) for graph semantics.
 
-The Controller periodically saves topology and score observations in `observations.jsonl` during each run. The embedded Dashboard uses the [saved-result analysis API](visualization.md) to visualize distributions and timelines and compare runs from saved events and observations, independently of Prometheus retention.
+The Controller periodically saves group topology and score summaries in `observations.jsonl` during each run. These summaries do not retain the full relationship graph or every observer-to-peer score. Bandwidth samples are stored as events and reconstructed independently of delivery-window eligibility; see [bandwidth measurement](bandwidth.md). The embedded Dashboard uses the [saved-result analysis API](visualization.md) to visualize distributions and timelines and compare runs from saved events and observations, independently of Prometheus retention.
 
 ## Supported deployment boundary
 

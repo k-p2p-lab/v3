@@ -153,10 +153,10 @@ func TestTelemetryOverflowReservesFinalStopAndMakesSequenceGapVisible(t *testing
 	for len(tel.events) > 0 {
 		events = append(events, <-tel.events)
 	}
-	if len(events) != 6 || events[4].Type != "telemetry_drop" || events[4].Fields["count"] != uint64(7) || events[5].Type != "measurement_stop" {
+	if len(events) != 5 || events[3].Type != "telemetry_drop" || events[3].Fields["count"] != uint64(8) || events[4].Type != "measurement_stop" {
 		t.Fatalf("final control events missing: %+v", events)
 	}
-	if events[3].Sequence != 4 || events[4].Sequence != 12 || events[5].Sequence != 13 {
+	if events[2].Sequence != 3 || events[3].Sequence != 12 || events[4].Sequence != 13 {
 		t.Fatalf("lost events do not leave a source sequence gap: %+v", events)
 	}
 	for i := 0; i < 20; i++ {
@@ -201,7 +201,7 @@ func TestMeasurementCheckpointCannotPassPendingReceipt(t *testing.T) {
 }
 
 func TestTelemetryConcurrentEmissionsKeepSourceSequenceInQueueOrder(t *testing.T) {
-	tel := &telemetry{events: make(chan model.TraceEvent, 1002)}
+	tel := &telemetry{events: make(chan model.TraceEvent, 1003)}
 	var producers sync.WaitGroup
 	for i := 0; i < 10; i++ {
 		producers.Add(1)
@@ -213,6 +213,9 @@ func TestTelemetryConcurrentEmissionsKeepSourceSequenceInQueueOrder(t *testing.T
 		}()
 	}
 	producers.Wait()
+	if len(tel.events) != 1000 {
+		t.Fatalf("expected 1000 admitted events, got %d", len(tel.events))
+	}
 	for i := 0; i < 1000; i++ {
 		if event := <-tel.events; event.Sequence != uint64(i+1) {
 			t.Fatalf("source sequence reordered at %d: %+v", i, event)

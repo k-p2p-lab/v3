@@ -28,7 +28,7 @@ The Controller exposes the following public and operational endpoints. When `KPL
 | `GET` | `/api/v1/results` | Saved experiment results, including runs from previous Controller sessions |
 | `DELETE` | `/api/v1/results/{id}` | Delete an inactive saved result; active batches and downloads are protected |
 | `GET` | `/api/v1/experiments/{id}/analysis` | Chart distributions, timelines and metrics from saved events and observations |
-| `GET` | `/api/v1/experiments/{id}/download` | Download a ZIP of the saved scenario, metadata, and collected events |
+| `GET` / `HEAD` | `/api/v1/experiments/{id}/download` | Download the scenario, metadata, events, optional observations and derived metrics as ZIP, or measure its size without a response body |
 | `POST` | `/api/v1/experiments` | Run YAML once, or JSON `{scenario, repetitions}` for 1–100 sequential runs |
 | `POST` | `/api/v1/experiments/{id}/stop` | Cancel a running experiment, then perform bounded job shutdown and generation-fenced Peer cleanup |
 
@@ -59,7 +59,7 @@ curl -X POST http://control-node:8080/api/v1/experiments \
 
 The scenario library endpoints store reusable editor inputs independently of experiment results. The list omits YAML, while individual GET, POST, and PUT responses include it. See the [scenario library guide](scenario-library.md) for the UI workflow, payloads, validation limits, and storage location.
 
-Raw events are stored at `data/runs/<run-id>/events.jsonl`; the exact input is stored as `scenario.yaml` and experiment metadata as `experiment.json` in the same directory. In Swarm, the persistent `controller-data` volume is mounted at `/var/lib/kpl/data`, and each run's files are under `/var/lib/kpl/data/runs/<run-id>`.
+Raw events, including typed bandwidth samples, are stored at `<data-dir>/runs/<run-id>/events.jsonl`; the exact input is stored as `scenario.yaml`, experiment metadata as `experiment.json`, and collected topology/score summaries as optional `observations.jsonl` in the same directory. The local Controller data directory defaults to `data`. In Swarm, the persistent `controller-data` volume is mounted at `/var/lib/kpl/data`, and each run's files are under `/var/lib/kpl/data/runs/<run-id>`.
 
 Use **Download results** in the Dashboard to export a run as ZIP. **Saved results** also lists files retained from previous Controller sessions; **Refresh** reloads that list. Running experiments offer **Download snapshot**, which contains the records saved when the download starts. These exports include the full saved event log, independently of the 300-event recent buffer. See [result downloads](monitoring.md#download-experiment-results) for archive contents and collection limits.
 
@@ -82,13 +82,17 @@ These REST/JSON endpoints serve component communication. Registration, heartbeat
 | Peer → Agent | `POST` | `/api/v1/telemetry` | Submit a telemetry batch |
 | Agent → Peer | `GET` / `POST` | `/health` / `/publish` | Check readiness or publish through the Peer HTTP API |
 
+Telemetry requests are limited to 5000 events and a 10 MiB JSON body. Peer and Agent senders split batches by their encoded byte size, including escaping and the envelope; retries retain source order and event identities. A successful prefix is removed before sending the remaining events. Both receivers validate every event before admission: a single event that cannot fit in a 10 MiB encoded batch returns `413`, with none of that request admitted. The Agent checks after normalizing its identity. This also prevents direct Controller submissions from creating oversized event lines that archive analysis cannot read.
+
+JSON bodies must contain one value. Trailing whitespace is allowed within the body limit; a second JSON value, trailing garbage, or a body over the decoder limit returns `400`. Generic Controller/Agent JSON handlers use a 10 MiB limit; Peer `/publish` uses 1 MiB. Scenario request envelopes have the separate limits described above. A locally generated Peer event that cannot be JSON-encoded or fit in a batch is logged and counted in `telemetry_drop`, preserving its source sequence gap while later events continue. Network failures retain the pending batch for retry.
+
 The Agent additionally exposes this Controller-driven cleanup endpoint:
 
 | Method | Agent path | Description |
 |---|---|---|
 | `DELETE` | `/api/v1/runs/{runId}/nodes?generation=N` | Requires an unsigned `generation`; atomically raises the run fence through N, rejects later creates at generation N or below, stops existing nodes in those generations, and returns `202 Accepted` |
 
-Internal endpoints may change independently of the operator API. Request and snapshot field definitions are in [`internal/model/model.go`](../internal/model/model.go); handlers are in [`internal/controller/api.go`](../internal/controller/api.go) and [`internal/agent/api.go`](../internal/agent/api.go).
+Internal endpoints may change independently of the operator API. Request and snapshot field definitions are in [`internal/model/model.go`](../internal/model/model.go), with bandwidth types in [`internal/model/bandwidth.go`](../internal/model/bandwidth.go); handlers are in [`internal/controller/api.go`](../internal/controller/api.go) and [`internal/agent/api.go`](../internal/agent/api.go).
 
 ## Authentication
 
@@ -99,3 +103,5 @@ Enter the value in the dashboard's **Run experiment → API token** field. Runni
 The same four job counters are present in `/api/v1/snapshot` and SSE snapshots. The dashboard displays them on each run, so active, successful, failed, and canceled background work is visible without inspecting Controller logs.
 
 See [visualization](visualization.md) for analysis responses, charts and export formats.
+
+[Bandwidth measurement](bandwidth.md) · [v2 analysis coverage audit](v2-analysis-coverage.md)

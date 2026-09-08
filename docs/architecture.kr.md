@@ -45,10 +45,10 @@ flowchart TB
 
 | 컴포넌트 | v3 배치 | 역할 |
 |---|---|---|
-| **Dashboard** | Controller에 내장되어 Controller가 제공하는 정적 웹 애플리케이션 | 실행 시작과 중지, 저장 시나리오와 결과 관리, 실시간 Agent·Peer·토폴로지·이벤트·요약 데이터 표시를 담당합니다. |
+| **Dashboard** | Controller에 내장되어 Controller가 제공하는 정적 웹 애플리케이션 | 실행 시작과 중지, 저장 시나리오와 결과 관리, 실시간 Agent·Peer·토폴로지·이벤트·요약 표시, 저장 분석 비교 및 JSON/CSV/SVG 내보내기를 담당합니다. |
 | **Controller** | 컨테이너 하나. Swarm에서는 설정된 control 노드에 고정 | 시나리오 해석과 스케줄링, Agent 용량 예약, Peer 생명주기 및 publish 명령, bootstrap과 topic discovery registry, 토폴로지와 telemetry 집계, 실행 기록 보존, REST API와 Dashboard 제공, Controller metric 노출을 담당합니다. |
 | **Agent** | 선택한 Swarm 노드마다 global-service task 하나 | Controller 등록과 heartbeat, 로컬 수용 용량 적용, 노드 로컬 Docker socket을 통한 Peer 컨테이너 생성·삭제, publish 요청 중계, Peer telemetry 전달, 호스트 로컬 Agent metric 노출을 담당합니다. |
-| **Peer** | 실험 Peer마다 독립된 standalone Docker 컨테이너 하나 | Kademlia와 GossipSub을 포함한 실제 libp2p 애플리케이션을 실행하고, topic 참여와 메시지 송수신, 프로토콜 및 전달 이벤트 보고, 설정된 Linux traffic-control 규칙 적용을 담당합니다. |
+| **Peer** | 실험 Peer마다 독립된 standalone Docker 컨테이너 하나 | Kademlia와 GossipSub을 포함한 실제 libp2p 애플리케이션을 실행하고, topic 참여와 메시지 송수신, 프로토콜·전달 이벤트와 libp2p 스트림 누적 바이트 보고, 설정된 Linux traffic-control 규칙 적용을 담당합니다. |
 | **Prometheus** | 설정된 Swarm control 노드에 컨테이너 하나 | Controller metric과 조건에 맞는 Agent가 알린 metrics endpoint를 수집하며 저장된 실험 결과와 별도로 시계열을 보존합니다. |
 | **Grafana** | 설정된 Swarm control 노드에 컨테이너 하나 | 사전 구성된 data source로 Prometheus를 조회하고 기본 실험 분석 dashboard를 제공합니다. |
 
@@ -71,7 +71,7 @@ v3는 두 개의 애플리케이션 네트워크를 사용합니다. 서로 다�
 | 네트워크 또는 endpoint 영역 | 연결 컴포넌트 | 트래픽과 공개 범위 |
 |---|---|---|
 | **Peer 네트워크 (`peers`)** | Controller, Agent와 모든 Peer | 외부 attachable Swarm overlay(`KPL_PEER_NETWORK`)입니다. 컨테이너 포트 20000의 직접 libp2p TCP 트래픽을 전달합니다. Peer가 이 서비스들에 비공개로 접근해야 하므로 Peer-to-Agent 상태/telemetry, Peer-to-Controller bootstrap/discovery/clock 요청과 Controller-to-Agent 명령도 전달합니다. Peer P2P 및 제어 포트는 호스트에 publish하지 않습니다. |
-| **모니터링 네트워크 (`monitoring`)** | Controller, Agent, Prometheus와 Grafana. Peer는 연결하지 않음 | stack 범위의 Swarm overlay입니다. Prometheus는 이 네트워크에서 Controller에 접근합니다. 각 Agent가 node address와 host-mode metrics port를 알리고, Controller가 HTTP service discovery로 target을 제공하므로 Prometheus가 Peer overlay 주소에 의존하지 않습니다. Grafana도 이 네트워크를 통해 Prometheus에 접근합니다. |
+| **모니터링 네트워크 (`monitoring`)** | Controller, Agent, Prometheus와 Grafana. Peer는 연결하지 않음 | stack 범위의 Swarm overlay입니다. Prometheus는 여기서 Controller service DNS로 HTTP service discovery를 요청한 뒤, 응답으로 받은 control 노드와 Agent 노드의 공개 metrics 주소를 scrape합니다. 따라서 실제 수집에는 해당 호스트 포트 접근도 필요합니다. Grafana는 이 overlay를 통해 Prometheus에 접근합니다. |
 | **운영자 endpoint** | 브라우저 또는 API client에서 control 호스트로 연결 | Controller/Dashboard 8080, Prometheus 9090과 Grafana 3000이 운영자용 endpoint입니다. Swarm은 설정된 control 노드에 host mode로 publish합니다. Swarm에서 Agent metric은 기본적으로 host port 9091을 사용하며 Agent 제어 API는 비공개로 유지합니다. |
 
 Docker Swarm 자체의 manager 및 node 제어 영역은 서비스를 배포하는 인프라입니다. v3는 각 실험 Peer를 Swarm service로 생성하지 않으며, Agent가 자신의 노드에 standalone 컨테이너로 생성합니다. 따라서 Swarm은 실행 중인 Peer를 다른 호스트로 옮기거나 자동으로 재스케줄링하지 않습니다.
@@ -98,7 +98,7 @@ Dashboard는 Controller의 최신 상태와 이벤트를 표시합니다. Contro
 
 Metric과 토폴로지는 수신된 보고를 바탕으로 한 관측 결과입니다. 오래되거나 연결할 수 없는 Agent, telemetry queue 손실, `scope: all` impairment, scrape 시점 또는 강제 종료 때문에 P2P 트래픽이 일부 발생했더라도 control plane의 관측량이 줄어들 수 있습니다. Metric 정의는 [실험 지표](experiment-metrics.kr.md), 수집 한계는 [모니터링과 결과](monitoring.kr.md), 그래프 의미는 [토폴로지](topology.kr.md)를 참고하십시오.
 
-Controller는 실행 중에 토폴로지·점수 관측을 `observations.jsonl`로 주기적으로 저장합니다. 내장 Dashboard의 [저장 결과 시각화](visualization.kr.md)는 저장된 이벤트·관측치를 분석 API로 조회해 실행별 분포와 시계열을 표시하고 여러 실행을 비교합니다. Prometheus 보존 시계열과 독립적으로 동작합니다.
+Controller는 실행 중 그룹별 토폴로지·점수 요약을 `observations.jsonl`로 주기적으로 저장합니다. 전체 관계 그래프나 평가자별 개별 점수는 보존하지 않습니다. 대역폭 표본은 이벤트로 저장하며 수신 기간의 대상 선정과 독립적으로 재계산합니다. [Bandwidth 측정](bandwidth.kr.md)을 참고하십시오. 내장 Dashboard의 [저장 결과 시각화](visualization.kr.md)는 저장된 이벤트·관측치를 분석 API로 조회해 실행별 분포와 시계열을 표시하고 여러 실행을 비교합니다. Prometheus 보존 시계열과 독립적으로 동작합니다.
 
 ## 지원 배포 경계
 

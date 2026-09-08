@@ -112,7 +112,9 @@ func (w *sessionWindowAccumulator) observe(event model.TraceEvent) {
 	}
 	definition, _ := event.Fields["measurementDefinition"].(string)
 	isLifecycle := event.Type == "measurement_start" || event.Type == "measurement_checkpoint" || event.Type == "measurement_stop"
-	if event.SessionID != "" || definition == sessionWindowDefinition || isLifecycle {
+	// Stream-counter sessions do not opt legacy publication logs into a new
+	// delivery definition, but their sequence numbers still fill continuity.
+	if event.Type != "bandwidth" && (event.SessionID != "" || definition == sessionWindowDefinition || isLifecycle) {
 		w.enabled = true
 	}
 	sessionKey := measurementSessionKey{event.NodeID, event.SessionID}

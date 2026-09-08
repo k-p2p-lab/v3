@@ -81,13 +81,13 @@ sh scripts/swarm.sh scenario
 
 예제는 boot Peer 한 개와 worker 다섯 개를 만듭니다. worker에는 25ms 지연, 2ms jitter, 0.5% loss를 적용합니다. readiness 확인과 20초 대기 후 `payloadSize: 4096`으로 메시지 50개를 발행하고, 수집을 위해 1분 기다린 뒤 `stop-all`을 실행합니다. 용량이 같고 다른 부하가 없는 Agent들에서는 balanced 배치가 Peer를 분산합니다. 서로 다른 Agent에 Peer가 나타나고 publish/deliver 이벤트가 기록되는지 확인하십시오. readiness는 프로세스 초기화 완료 기준이며 GossipSub mesh 수렴을 보장하지 않습니다. 전달 수는 실제 조건에 따라 달라집니다.
 
-분석하려면 Grafana URL에서 로그인하고 **KP2PLab Experiment Analysis**의 **Run**에 해당 실험을 선택하십시오. **Agent**와 **Topic**으로 서버와 트래픽을 비교합니다. 대시보드 요약은 최근 이벤트를 사용하므로 Grafana 누적 counter 및 저장 이벤트 로그와 집계 범위가 다릅니다. [모니터링 가이드](monitoring.kr.md)를 참고하십시오.
+분석하려면 Grafana URL에서 로그인하고 **KP2PLab Experiment Analysis**의 **Run**에 해당 실험을 선택하십시오. **Agent**와 **Topic**으로 서버와 트래픽을 비교합니다. 대시보드 메시지 요약은 최근 이벤트 버퍼와 독립적으로 선택 실행 전체를 누적합니다. 실시간 counter는 Controller 재시작 시 초기화되지만 저장 분석과 ZIP 지표는 기록 파일에서 다시 계산합니다. Grafana는 각 패널의 필터·집계 규칙을 적용합니다. [모니터링 가이드](monitoring.kr.md)를 참고하십시오.
 
 ### 4. 결과 다운로드 후 철거
 
 실험이 끝나고 해당 Peer들이 종료되었는지 확인하십시오. 다른 실험이 없다면 Agent 점유량은 0으로 돌아와야 합니다. 실행 중인 실험을 취소하려면 해당 실험의 **Stop**을 누르고 정리가 완료될 때까지 기다립니다.
 
-실험 항목이나 **Saved results**에서 **Download results**를 선택합니다. ZIP에는 `scenario.yaml`, `experiment.json`, `events.jsonl`, `metrics.json`, `export.json`이 들어갑니다. 최근 300개 버퍼와 별개로 전체 저장 로그와 같은 경계에서 재계산한 지표를 포함하며 Prometheus/Grafana DB는 포함하지 않습니다. 실행 중 **Download snapshot**은 다운로드 경계까지의 기록입니다. **Delete**는 확인 후 비활성 결과를 삭제합니다. [다운로드 구성과 한계](monitoring.kr.md#실험-결과-다운로드)
+실험 항목이나 **Saved results**에서 **Download results**를 선택합니다. ZIP에는 `scenario.yaml`, `experiment.json`, `events.jsonl`, 선택적 `observations.jsonl`, `metrics.json`, `export.json`이 들어갑니다. 수집된 관측 요약과 대역폭 카운터도 포함합니다. 최근 300개 버퍼와 별개로 전체 저장 로그와 같은 경계에서 재계산한 지표를 포함하며 Prometheus/Grafana DB는 포함하지 않습니다. 실행 중 **Download snapshot**은 다운로드 경계까지의 기록입니다. **Delete**는 확인 후 비활성 결과를 삭제합니다. [다운로드 구성과 한계](monitoring.kr.md#실험-결과-다운로드)
 
 철거하면 웹 화면도 내려가므로 먼저 다운로드한 뒤 실행하십시오.
 
@@ -306,4 +306,4 @@ Swarm 사전 검사는 `sh scripts/swarm.sh check`를 사용하십시오. helper
 | task 교체 | 이미지 업데이트 후 Node 기반 Agent ID 유지, task IP 변경 및 Prometheus 대상 갱신 확인 |
 | 정상 종료 | `run-20260904T040249Z-34d32bbb9559adbba6519a558c6cc107` completed, 양쪽 activeNodes 0, 실제 잔존 Peer 컨테이너 각각 0개 |
 
-발행·수신 수는 Controller의 누적 `kpl_events_total` 기준이며, 300개 최근 이벤트만 사용하는 snapshot 요약 수치와 구분합니다. 첫 부하 실행에서 생성·시작 전체의 공유 45초 제한이 Peer를 종료시키는 문제를 발견해 단계별 예산으로 수정한 뒤 위 결과를 확인했습니다.
+위 과거 발행·수신 수는 누적 `kpl_events_total` 기준이며 당시 snapshot 요약은 최근 이벤트 버퍼를 사용했습니다. 현재 v3 실행 요약은 이 버퍼와 독립적으로 누적하며 [실험 지표](experiment-metrics.kr.md)의 정의를 따릅니다. 첫 부하 실행에서 생성·시작 전체의 공유 45초 제한이 Peer를 종료시키는 문제를 발견해 단계별 예산으로 수정한 뒤 위 결과를 확인했습니다.

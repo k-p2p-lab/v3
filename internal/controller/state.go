@@ -250,7 +250,8 @@ func (s *state) appendEvents(batch model.EventBatch) error {
 		if batch.Events[i].AgentID == "" {
 			batch.Events[i].AgentID = batch.AgentID
 		}
-		if batch.Events[i].Timestamp.IsZero() {
+		// Bandwidth requires its source timestamp; receipt time cannot repair it.
+		if batch.Events[i].Timestamp.IsZero() && batch.Events[i].Type != "bandwidth" {
 			batch.Events[i].Timestamp = now
 		}
 	}

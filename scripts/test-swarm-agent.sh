@@ -65,7 +65,11 @@ if printf '%s\n' "$agent_stack" | grep -Eq 'target: (8090|18000|20000)'; then
     echo 'Agent control or Peer ports were published' >&2
     exit 1
 fi
-grep -Fq 'source: prometheus-agent-http-sd-v2' "$root/stack.swarm.yaml"
+# Follow the config wired to Prometheus instead of pinning an obsolete version.
+prometheus_config=$(sed -n '/^  prometheus:/,/^  grafana:/p' "$root/stack.swarm.yaml" | sed -n 's/^[[:space:]]*- source: \(prometheus-[^[:space:]]*\)$/\1/p')
+[ -n "$prometheus_config" ]
+grep -Fqx "  $prometheus_config:" "$root/stack.swarm.yaml"
+awk -v key="  $prometheus_config:" '$0 == key { getline; print }' "$root/stack.swarm.yaml" | grep -Fq 'file: ./monitoring/prometheus/swarm.yml'
 grep -Fq 'http_sd_configs:' "$root/monitoring/prometheus/swarm.yml"
 grep -Fq 'honor_labels: true' "$root/monitoring/prometheus/swarm.yml"
 if grep -Fq 'tasks.agent' "$root/monitoring/prometheus/swarm.yml"; then

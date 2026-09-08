@@ -100,7 +100,7 @@ The nested node configuration exposes scalar parameters and named callback/inter
 
 GossipSub-only controls (`params`, active score/inspection, `floodPublish`, `peerExchange`, `directPeers`, and `peerGater`) apply only to the `gossipsub` router. FloodSub and RandomSub reject active scoring but can retain an inactive tuning block.
 
-The base mesh defaults are `D=6`, `DLow=5`, `DHigh=12`, `DScore=4`, `DOut=2`, `DLazy=6`, history `5/3`, gossip factor `0.25`, and a `1s` heartbeat. When PubSub is enabled on `boot`, that preset uses `DScore=3`. `full`/`worker` and the role-focused GossipSub worker presets inherit the v2-derived `DLow=5`, `DScore=3`, `maxIHaveLength=5500`, and `1s` initial heartbeat. Most worker presets also use the v2 hard connection limit of `55`; `light` uses `32`. Kademlia defaults to bucket size `20` and protocol prefix `/k-p2p-lab/v3`. See [`internal/model/config.go`](../internal/model/config.go) for resolved defaults and the [protocol reference source map](protocol-options.md#source-boundaries-and-dependency-patch) for the split typed schema.
+The base mesh defaults are `D=6`, `DLow=5`, `DHigh=12`, `DScore=4`, `DOut=2`, `DLazy=6`, history `5/3`, gossip factor `0.25`, and a `1s` heartbeat. When PubSub is enabled on `boot`, that preset uses `DScore=3`. `full`/`worker` and the role-focused GossipSub worker presets inherit the v2-derived `DLow=5`, `DScore=3`, `maxIHaveLength=5500`, and `1s` initial heartbeat. Most worker presets also use the v2 hard connection limit of `55`; `light` uses `32`. Kademlia defaults to bucket size `20` and protocol prefix `/k-p2p-lab/v3`. See [`internal/model/config.go`](../internal/model/config.go) for resolved defaults and the [protocol reference source map](protocol-options.md#source-boundaries) for the split typed schema.
 
 `libp2p.connectionLimit` is only a resource-manager hard cap on total connections; it does not implicitly create a soft connection manager. The soft low-water/high-water trimming behavior is installed only when `libp2p.connectionManager` is explicitly present, using its `lowWater`, `highWater`, and `gracePeriod`. This lets a profile choose the hard cap, the soft manager, or both independently.
 
@@ -114,7 +114,7 @@ Scoring is **disabled by default**. Only `gossipsub.score.enabled: true` enables
 
 ### Per-node network conditions
 
-Add `network` to a profile or a join phase's `node` block. The default `scope: p2p` shapes outgoing P2P TCP on port `20000` inside each Peer container. Select `scope: all` to reproduce v2's shaping of all egress, including control HTTP and telemetry. A configured delay is a one-way egress delay, not a round-trip latency target.
+Add `network` to a profile or a join phase's `node` block. The default `scope: p2p` shapes outgoing P2P TCP on port `20000` inside each Peer container. Select `scope: all` to reproduce v2's shaping of all egress, including control HTTP and telemetry. A configured delay is a one-way egress delay, not a round-trip latency target. `rateMbps` and `tbf.rateMbps` configure egress limits; [bandwidth measurement](bandwidth.md) separately records actual libp2p stream usage.
 
 ```yaml
 node:

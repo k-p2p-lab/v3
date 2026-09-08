@@ -125,6 +125,9 @@ func TestServerRunWaitsForFinalMeasurementDrain(t *testing.T) {
 	_ = port.Close()
 	config := model.PeerProcessConfig{Node: model.Node{ID: "node", RunID: "run", Role: "boot"}, AgentURL: endpoint.URL, ControllerURL: endpoint.URL, APListen: apiAddress, NodeConfig: model.NodeConfig{Kademlia: model.KademliaConfig{Enabled: &disabled}, GossipSub: model.GossipSubConfig{TopicMode: "subscribe", Topics: []string{"topic-a"}}}}
 	server := newRunTestServer(t, config)
+	server.bandwidth = newBandwidthReporter()
+	server.bandwidth.LogSentMessage(123)
+	server.bandwidth.LogSentMessageStream(123, "/test", "remote")
 	defer server.Close()
 	server.telemetry.shutdownTimeout = 2 * time.Second
 	done := make(chan error, 1)
@@ -192,10 +195,13 @@ func TestServerRunWaitsForFinalMeasurementDrain(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	var start, stop model.TraceEvent
-	var publish, deliver, checkpoint model.TraceEvent
+	var publish, deliver, checkpoint, finalBandwidth model.TraceEvent
 	for i, event := range received {
 		if event.Sequence != uint64(i+1) {
 			t.Fatalf("source sequence not continuous at %d: %+v", i, event)
+		}
+		if event.Type == "bandwidth" && event.Bandwidth != nil && event.Bandwidth.Final {
+			finalBandwidth = event
 		}
 		if event.Type == "measurement_start" {
 			start = event
@@ -212,6 +218,9 @@ func TestServerRunWaitsForFinalMeasurementDrain(t *testing.T) {
 		if event.Type == "measurement_checkpoint" {
 			checkpoint = event
 		}
+	}
+	if finalBandwidth.SessionID != stop.SessionID || finalBandwidth.Sequence <= stop.Sequence || finalBandwidth.Bandwidth == nil || finalBandwidth.Bandwidth.SentBytes != 123 {
+		t.Fatalf("final bandwidth not drained after stop: %+v", received)
 	}
 	if start.SessionID == "" || stop.SessionID != start.SessionID || stop.Sequence <= start.Sequence {
 		t.Fatalf("missing final session records: %+v", received)

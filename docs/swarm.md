@@ -81,13 +81,13 @@ In the Dashboard, choose **Run experiment**, replace the entire **YAML scenario*
 
 The example creates one boot Peer and five workers. Workers use 25ms delay, 2ms jitter, and 0.5% loss. After readiness and a 20-second settling period, it publishes fifty messages with `payloadSize: 4096`, waits one minute for collection, and runs `stop-all`. With equally sized, otherwise idle Agents, balanced placement spreads the Peers across them. Confirm Peers appear on different Agents and publish/deliver events are present. Readiness confirms process initialization, not GossipSub mesh convergence, and message delivery counts depend on actual conditions.
 
-For analysis, open the Grafana URL, sign in, and select this experiment in **Run** on **KP2PLab Experiment Analysis**. Use **Agent** and **Topic** to compare servers and traffic. Dashboard summary figures use recent events; Grafana counters and saved event logs cover a different scope. See the [monitoring guide](monitoring.md).
+For analysis, open the Grafana URL, sign in, and select this experiment in **Run** on **KP2PLab Experiment Analysis**. Use **Agent** and **Topic** to compare servers and traffic. Dashboard message summaries accumulate the whole selected run independently of the recent-event buffer. Live counters reset on Controller restart; saved analysis and ZIP metrics are rebuilt from recorded files. Grafana applies each panel's filters and aggregation rules. See the [monitoring guide](monitoring.md).
 
 ### 4. Download results, then remove services
 
 Wait for the run to finish and check that its Peers are stopped. With no other experiments running, Agent occupancy should return to zero. To cancel an active run, use its **Stop** button and wait for cleanup.
 
-Choose **Download results** on the run or in **Saved results**. The ZIP contains `scenario.yaml`, `experiment.json`, `events.jsonl`, `metrics.json`, and `export.json`. It includes the full saved event log and metrics rebuilt from that prefix, independently of the 300-event recent buffer, but not the Prometheus/Grafana time-series database. **Download snapshot** on a running experiment contains only records saved at the download boundary. **Delete** removes an inactive saved result after confirmation. [Download contents and limits](monitoring.md#download-experiment-results)
+Choose **Download results** on the run or in **Saved results**. The ZIP contains `scenario.yaml`, `experiment.json`, `events.jsonl`, optional `observations.jsonl`, `metrics.json`, and `export.json`. Observation summaries and bandwidth counters are included when collected. It includes the full saved event log and metrics rebuilt from that prefix, independently of the 300-event recent buffer, but not the Prometheus/Grafana time-series database. **Download snapshot** on a running experiment contains only records saved at the download boundary. **Delete** removes an inactive saved result after confirmation. [Download contents and limits](monitoring.md#download-experiment-results)
 
 Download before removing the services, since removal also takes the web pages offline:
 
@@ -306,4 +306,4 @@ The environment consisted of **two isolated Docker daemons on the same WSL2 Linu
 | Task replacement | After an image update, node-based Agent IDs were preserved while task IPs changed and Prometheus targets were refreshed |
 | Clean shutdown | Run `run-20260904T040249Z-34d32bbb9559adbba6519a558c6cc107` completed; both Agents reported activeNodes 0, and each daemon had zero remaining Peer containers |
 
-Publish and delivery counts come from the Controller's cumulative `kpl_events_total`, rather than snapshot summaries based on only the 300 most recent events. The first load run exposed a shared 45-second creation-and-startup timeout that terminated a Peer. The results above were obtained after separating those stage budgets.
+The historical publication and delivery counts above came from cumulative `kpl_events_total`; the snapshot summaries at that time used the recent-event buffer. Current v3 run summaries accumulate independently of that buffer, as defined in [experiment metrics](experiment-metrics.md). The first load run exposed a shared 45-second creation-and-startup timeout that terminated a Peer. The results above were obtained after separating those stage budgets.
