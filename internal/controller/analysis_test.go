@@ -271,3 +271,43 @@ func TestAnalysisObservationsPersistExportAndStopAfterDeletion(t *testing.T) {
 		t.Fatalf("deleted analysis: %d", got)
 	}
 }
+
+func TestResultAnalysisKeepsFiniteLatencyMeansAcrossDefinitions(t *testing.T) {
+	for _, definition := range []string{"dispatch-cohort-v1", sessionWindowDefinition} {
+		t.Run(definition, func(t *testing.T) {
+			id := "run"
+			events := []model.TraceEvent{cohortPublish("message", "topic", []string{"a", "b"}), cohortDelivery("message", "topic", "a", math.MaxFloat64), cohortDelivery("message", "topic", "b", math.MaxFloat64)}
+			if definition == sessionWindowDefinition {
+				id = "window-run"
+				events = windowEvents()
+				for _, receiver := range []string{"a", "b"} {
+					delivery := windowDeliveredEvent(receiver, "session-"+receiver, 2, 12)
+					delivery.LatencyMS = math.MaxFloat64
+					events = append(events, windowStart(receiver, "session-"+receiver, 0, "topic"), delivery, windowEvent(receiver, "session-"+receiver, 3, "measurement_checkpoint", 22))
+				}
+			}
+			server := New(ServerConfig{DataDir: t.TempDir()}, nil)
+			resultFixture(t, server, id, "completed", windowTestEpoch)
+			analysisWriteLines(t, server, id, "events.jsonl", events)
+			result := analysisRequest(t, server, id)
+			if result.Metrics.Definition != definition || result.Metrics.LatencySamples != 2 || result.Metrics.AverageLatencyMS != math.MaxFloat64 || result.Metrics.P95LatencyMS != math.MaxFloat64 {
+				t.Fatalf("finite latency samples lost or summary overflowed: %+v", result.Metrics)
+			}
+			if len(result.LatencyCDF) != 1 || result.LatencyCDF[0].Y != 1 || math.Abs(result.LatencyCDF[0].X/math.MaxFloat64-1) > 1e-15 {
+				t.Fatalf("invalid finite distribution: %+v", result.LatencyCDF)
+			}
+			response := resultRequest(server, http.MethodGet, "/api/v1/experiments/"+id+"/download")
+			if response.Code != http.StatusOK {
+				t.Fatalf("archive failed: status=%d body=%s", response.Code, response.Body)
+			}
+			archive := decodeResultZIP(t, response.Body.Bytes())
+			var metrics model.Metrics
+			if err := json.Unmarshal(archive["metrics.json"], &metrics); err != nil {
+				t.Fatal(err)
+			}
+			if metrics.AverageLatencyMS != result.Metrics.AverageLatencyMS {
+				t.Fatal("analysis and archive latency means diverged")
+			}
+		})
+	}
+}

@@ -308,10 +308,11 @@ func (a *runMetricAccumulator) summarizeLegacy(runID string) (model.Metrics, []p
 	result.LatencySamples = len(latencies)
 	if len(latencies) > 0 {
 		sort.Float64s(latencies)
-		for _, latency := range latencies {
-			result.AverageLatencyMS += latency
+		// Samples are finite and nonnegative. Update the mean directly so
+		// their sum cannot overflow an otherwise JSON-encodable result.
+		for i, latency := range latencies {
+			result.AverageLatencyMS += (latency - result.AverageLatencyMS) / float64(i+1)
 		}
-		result.AverageLatencyMS /= float64(len(latencies))
 		result.P95LatencyMS = latencies[int(math.Ceil(0.95*float64(len(latencies))))-1]
 	}
 	return result, samples
