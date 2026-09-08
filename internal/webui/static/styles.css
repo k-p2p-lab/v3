@@ -396,29 +396,22 @@ dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
 }
 
-/* Saved-run analysis stays independent of the live topology render loop. */
-.analysis-panel { margin-top: 1rem; scroll-margin-top: 6rem; }
-.analysis-toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: .75rem; padding: .8rem 1.2rem; }
-.analysis-toolbar label { display: flex; flex-direction: column; gap: .4rem; color: var(--muted); font-size: .8rem; min-width: 0; }
-.analysis-toolbar select { max-width: 30rem; min-height: 2.6rem; padding: .5rem; border: 1px solid var(--line); border-radius: .4rem; color: var(--text); background: var(--bg); font: inherit; }
-.analysis-toolbar select:focus-visible { outline: 2px solid var(--cyan); }
-.analyze-button, .analysis-runs button, .analysis-chart button { min-height: 2rem; padding: .3rem .6rem; border: 1px solid var(--line); border-radius: .4rem; color: var(--cyan); background: var(--surface-raised); font-size: .8rem; }
-.analysis-runs { display: flex; flex-wrap: wrap; gap: .5rem; padding: 0 1.2rem; list-style: none; }
-.analysis-runs li { display: flex; align-items: center; gap: .5rem; padding: .5rem; border: 1px solid var(--line); border-radius: .5rem; font-size: .8rem; overflow-wrap: anywhere; }
-.analysis-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; padding: 1rem 1.2rem; }
-.analysis-chart { min-width: 0; margin: 0; border: 1px solid var(--line); border-radius: .6rem; overflow: hidden; background: var(--bg-soft); }
-.analysis-chart header { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .7rem .8rem; }
-.analysis-chart h3 { margin: 0; font-size: .9rem; }
-.analysis-chart svg { display: block; width: 100%; height: auto; }
-.analysis-chart figcaption { padding: .5rem .8rem; color: var(--muted); font-size: .75rem; line-height: 1.5; }
-.analysis-chart circle:focus { outline: none; stroke: white; stroke-width: 3; }
-.analysis-sample { flex: 1; }
-.analysis-sample input { width: 100%; accent-color: var(--cyan); }
-#analysisSummary td { white-space: nowrap; font-variant-numeric: tabular-nums; }
-#analysisSummary small { display: block; color: var(--muted); margin-top: .25rem; }
-@media (max-width: 900px) { .analysis-charts { grid-template-columns: 1fr; } }
-@media (max-width: 600px) { .analysis-toolbar label, .analysis-toolbar select { width: 100%; max-width: 100%; } }
 
-.analysis-runs button { flex: 0 0 auto; white-space: nowrap; }
-@media (max-width: 860px) { .analysis-panel { scroll-margin-top: 10rem; } }
-@media (max-width: 620px) { .analysis-panel { scroll-margin-top: 14rem; } }
+
+.result-images-button { min-height: 2rem; padding: .3rem .65rem; border: 1px solid var(--line); border-radius: .4rem; color: var(--cyan); background: var(--surface-raised); font-size: .8rem; }
+.result-images-dialog { width: min(76rem, calc(100% - 2rem)); }
+.result-images-shell { padding: 1.4rem; }
+.result-images-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: start; justify-content: space-between; gap: 1rem; padding: .5rem 0; background: var(--surface-raised); }
+.result-images-header h2 { margin: .25rem 0 .55rem; font-size: 1.4rem; }
+.result-images-header p { overflow-wrap: anywhere; }
+#resultImagesName { font-size: .9rem; }
+#resultImagesDate { margin-top: .3rem; color: var(--muted); font-size: .75rem; }
+.result-images-feedback { display: flex; align-items: center; gap: 1rem; margin: 1.1rem 0; color: var(--muted); font-size: .82rem; line-height: 1.5; }
+#resultImagesStatus.error { color: var(--red); }
+.result-images-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 1rem; }
+.result-image { margin: 0; overflow: hidden; border: 1px solid var(--line); border-radius: .65rem; background: white; }
+.result-image img { display: block; width: 100%; height: auto; }
+.result-image figcaption { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .7rem .85rem; color: var(--text); background: var(--surface); font-size: .82rem; }
+.result-image figcaption a { padding: .3rem; color: var(--cyan); white-space: nowrap; text-decoration: none; }
+.result-image a:focus-visible { outline: 3px solid var(--cyan); outline-offset: -3px; }
+@media (max-width: 760px) { .result-images-grid { grid-template-columns: 1fr; } .result-images-shell { padding: 1rem; } }

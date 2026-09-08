@@ -25,7 +25,7 @@ The Dashboard header links to Prometheus and Grafana in new tabs. It preserves t
 
 ## Built-in Dashboard visualization
 
-**Saved results → Analyze** opens latency CDFs, histograms, message/topology/score timelines, protocol-level bandwidth and comparisons of up to four runs. This screen analyzes saved files independently of Prometheus. See [visualization](visualization.md).
+**Saved results → Images** opens graph images for one result, with PNG downloads. The images use saved records independently of Prometheus. See [result images](visualization.md).
 
 ## Run and analyze an experiment
 

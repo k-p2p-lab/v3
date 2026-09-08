@@ -31,11 +31,11 @@ Latest cumulative values are indexed by `(nodeId, sessionId)`. Retries are dedup
 
 `metrics.bandwidth` adds `scope: "libp2p-stream-v1"`, total and per-protocol bytes, `sessions`, `finalizedSessions`, `samples`, `rejectedSamples`, `supersededSamples`, and `latestAt`. No sample means N/A; measured zero stays zero. Finalization counts only sessions that reported at least once: even all reporting sessions finalized does not prove every Peer reported. The normal telemetry queue reserves slots for the final drop notice, stop checkpoint and bandwidth sample. Force termination or transport failure can still lose a final sample and leave an unknown tail. Send and receive can count opposite endpoints of the same transfer; their sum is not unique network traffic.
 
-Original events and `metrics.json` are included in result ZIPs. Saved-result analysis reconstructs full recorded counters after Controller restart. Analysis JSON and summary CSV also include bandwidth.
+Original events and `metrics.json` are included in result ZIPs. Saved-result analysis reconstructs full recorded counters after Controller restart. Analysis API responses also include bandwidth.
 
 ## Dashboard and API
 
-Use **Saved results → Analyze → Inspect run → Bandwidth protocol**. The throughput chart shows send/receive kbit/s; the cumulative chart shows KiB. Both support SVG download. Run comparison rows show transferred bytes and finalization quality. Group/layer selectors affect topology observations, not bandwidth.
+Use **Saved results → Images** for a PNG of total P2P stream throughput (send/receive kbit/s). Per-protocol cumulative counters remain available in the result API/ZIP and Grafana.
 
 The analysis API adds `bandwidthTimeline` and `bandwidthBinSeconds`. Bins contain `at`, fractional send/receive byte allocations, per-protocol allocations, and `peerSeconds` (sum of allocated source observation durations, not unique nodes or completeness). Five-second bins adaptively merge to at most 360. An interval's bytes are distributed uniformly across overlapping bins; dividing by the full bin width gives the displayed average, including partial edge bins. Integrating the chart preserves bytes to floating-point precision. Missing intervals remain gaps. Missing Peer reports make the aggregate partial; peaks inside a reporting interval cannot be recovered.
 

@@ -18,7 +18,6 @@
     </div>
     <nav class="service-nav" aria-label="Primary navigation">
       <a href="/" aria-current="page">Dashboard</a>
-      <a href="#analysisPanel">Analysis</a>
       <a id="prometheusLink" href="http://localhost:9090/" target="_blank" rel="noopener noreferrer">Prometheus<span class="visually-hidden"> (opens in a new tab)</span></a>
       <a id="grafanaLink" href="http://localhost:3000/d/kpl-experiments" target="_blank" rel="noopener noreferrer">Grafana<span class="visually-hidden"> (opens in a new tab)</span></a>
     </nav>
@@ -192,41 +191,19 @@
         </table>
       </div>
     </section>
-    <section class="panel analysis-panel" id="analysisPanel" aria-labelledby="analysisHeading">
-      <header class="panel-header">
-        <div><p class="eyebrow">EXPERIMENT ANALYSIS</p><h2 id="analysisHeading">Visualize &amp; compare</h2></div>
-        <button class="secondary-button" id="refreshAnalysis" type="button" disabled>Refresh analysis</button>
-      </header>
-      <p class="results-help">Select up to four saved runs to compare distributions and latency / duplicate trade-offs. The first run is the baseline. Running experiments are analyzed as snapshots.</p>
-      <div class="analysis-toolbar">
-        <label>Saved run<select id="analysisRun"><option value="">Select a saved run</option></select></label>
-        <button class="secondary-button" id="addAnalysis" type="button" disabled>Add run</button>
-        <button class="secondary-button" id="exportAnalysis" type="button" disabled>Download analysis JSON</button>
-        <button class="secondary-button" id="exportAnalysisCSV" type="button" disabled>Download summary CSV</button>
-      </div>
-      <p class="results-status" id="analysisStatus" role="status" aria-live="polite">Choose Analyze in Saved results, or add a run above.</p>
-      <ul class="analysis-runs" id="analysisRuns" aria-label="Selected analysis runs"></ul>
-      <div id="analysisContent" hidden>
-        <div class="table-wrap" id="analysisSummary"></div>
-        <p class="results-help">CDF: fraction of eligible latency samples, not network reachability. Delivery bounds use the run's measurement definition and delivery windows; compare runs with matching settings. Differences are relative to the first run; no confidence intervals are inferred.</p>
-        <div class="analysis-charts" id="analysisComparisonCharts"></div>
-        <div class="analysis-toolbar">
-          <label>Inspect run<select id="analysisDetailRun"></select></label>
-          <label>Observation group<select id="analysisGroup"><option value="">All groups</option></select></label>
-          <label>Relationship layer<select id="analysisProtocol"><option value="gossipsub">GossipSub mesh</option><option value="kademlia">Kademlia</option><option value="transport">Transport</option></select></label>
-        </div>
-        <div class="analysis-toolbar"><label>Bandwidth protocol<select id="analysisBandwidthProtocol"><option value="*">All libp2p streams</option></select></label></div>
-        <p class="results-help" id="analysisBandwidthNote"></p>
-        <div class="analysis-charts" id="analysisBandwidthCharts"></div>
-        <h3>GossipSub control breakdown</h3>
-        <p class="results-help">Recorded control traffic across the selected run. RPC occurrences, entries and message ID references are distinct units; one RPC can contain several control types. These counts do not classify eager/lazy delivery or successful topology changes.</p>
-        <div class="table-wrap" id="analysisControlSummary"></div>
-        <p class="results-help" id="analysisObservationNote"></p>
-        <div class="analysis-toolbar"><label class="analysis-sample">Degree distribution sample<input id="analysisSample" type="range" min="0" max="0" value="0"><output id="analysisSampleTime">N/A</output></label></div>
-        <div class="analysis-charts" id="analysisDetailCharts"></div>
-      </div>
-    </section>
+
   </main>
+
+  <dialog class="result-images-dialog" id="resultImagesDialog" aria-labelledby="resultImagesHeading" aria-describedby="resultImagesName">
+    <div class="result-images-shell">
+      <header class="result-images-header">
+        <div><p class="eyebrow">SAVED RESULT</p><h2 id="resultImagesHeading">Graph images</h2><p id="resultImagesName"></p><p id="resultImagesDate"></p></div>
+        <button class="icon-button" id="closeResultImages" type="button" aria-label="Close graph images" autofocus>×</button>
+      </header>
+      <div class="result-images-feedback"><p id="resultImagesStatus" role="status" aria-live="polite"></p><button class="secondary-button" id="retryResultImages" type="button" hidden>Retry</button></div>
+      <div class="result-images-grid" id="resultImagesGrid"></div>
+    </div>
+  </dialog>
 
   <dialog id="scenarioDialog" aria-labelledby="scenarioDialogHeading">
     <form class="dialog-shell" id="scenarioForm">
@@ -308,7 +285,7 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="/navigation.js" defer></script>
   <script src="/topology-layout.js" defer></script>
-  <script src="/analysis.js" defer></script>
+  <script src="/result-images.js" defer></script>
   <script src="/app.js" defer></script>
 </body>
 </html>

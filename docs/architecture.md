@@ -45,7 +45,7 @@ Arrows show request or operation direction, with responses omitted; the libp2p l
 
 | Component | v3 deployment | Responsibility |
 |---|---|---|
-| **Dashboard** | Static web application embedded in and served by the Controller | Starts and stops runs, manages saved scenarios and results, displays live Agent/Peer/topology/event/summary data, and compares saved analyses with JSON/CSV/SVG export. |
+| **Dashboard** | Static web application embedded in and served by the Controller | Starts and stops runs, manages saved scenarios and results, displays live Agent/Peer/topology/event/summary data, and provides per-result graph images with PNG downloads. |
 | **Controller** | One container; pinned to the configured control node in Swarm | Parses and schedules scenarios, reserves Agent capacity, issues Peer lifecycle and publish operations, maintains the bootstrap and topic-discovery registries, aggregates topology and telemetry, persists run records, serves the REST API and Dashboard, and exports Controller metrics. |
 | **Agent** | One global-service task per selected Swarm node | Registers with the Controller, reports heartbeats, enforces local admission capacity, creates and removes Peer containers through the node-local Docker socket, proxies publish requests, forwards Peer telemetry, and exports host-local Agent metrics. |
 | **Peer** | One standalone Docker container per experimental Peer | Runs the actual libp2p application, including Kademlia and GossipSub; joins topics, publishes and receives messages, reports protocol/delivery events and cumulative libp2p stream bytes, and applies its own Linux traffic-control rules when configured. |

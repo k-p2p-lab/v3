@@ -39,18 +39,15 @@ received bit/s = 8 × (receivedBytes_now - receivedBytes_previous) / elapsed_sec
 - `finalizedSessions / sessions`는 **한 번이라도 보고한 세션** 중 종료 샘플까지 받은 비율입니다. 일반 telemetry 큐에는 마지막 유실 알림·종료 체크포인트·대역폭 표본을 위한 자리를 예약합니다. 강제 종료나 통신 장애로 마지막 샘플이 유실될 수는 있습니다. 종료 샘플이 없는 꼬리 구간은 미지수입니다. 전혀 보고하지 않은 Peer는 이 비율의 분모에도 없으므로 100%가 전체 실험의 완전성을 증명하지 않습니다.
 - 수집된 0은 0으로, 표본이 없는 이전 결과는 N/A로 표시합니다. 송신과 수신은 같은 전송의 양 끝을 셀 수 있으므로 합계를 고유 네트워크 트래픽으로 해석하지 않습니다. 설정한 payload 바이트를 세는 기존 `kpl_message_bytes_total`은 별개의 지표입니다.
 
-`metrics.bandwidth`에는 `scope: "libp2p-stream-v1"`, 전체 및 프로토콜별 송수신 누적 바이트, sessions/finalizedSessions/samples/rejectedSamples/supersededSamples/latestAt가 있습니다. 과거 결과에는 필드가 없으며, 유효 표본이 없으면 수치를 사용하지 않습니다. 결과 ZIP의 원본 이벤트와 `metrics.json`, 분석 JSON 및 요약 CSV에 포함됩니다. 저장 결과 분석과 ZIP은 Controller 재시작 후에도 전체 파일을 재생하여 복원합니다.
+`metrics.bandwidth`에는 `scope: "libp2p-stream-v1"`, 전체 및 프로토콜별 송수신 누적 바이트, sessions/finalizedSessions/samples/rejectedSamples/supersededSamples/latestAt가 있습니다. 과거 결과에는 필드가 없으며, 유효 표본이 없으면 수치를 사용하지 않습니다. 결과 ZIP의 원본 이벤트와 `metrics.json`, 분석 API에 포함됩니다. 저장 결과 분석과 ZIP은 Controller 재시작 후에도 전체 파일을 재생하여 복원합니다.
 
 ## 내장 Dashboard
 
-**Saved results → Analyze → Inspect run → Bandwidth protocol**에서 두 그래프를 봅니다.
-
-- **P2P stream throughput**: 송신/수신 kbit/s. 각 수집 간격의 증가량을 균일하게 배분하고 표시 구간의 전체 길이로 나눈 평균입니다. 부분 구간의 값은 순간 피크가 아닙니다.
-- **Cumulative P2P stream transfer**: 송신/수신 KiB. 프로토콜별 선택 가능, 그래프 SVG 내보내기 지원.
+**Saved results → Images**에서 전체 P2P 스트림의 송신·수신 kbit/s 그래프를 PNG로 봅니다. 각 수집 간격의 증가량을 균일하게 배분한 평균이며, 프로토콜별 누적 수치는 결과 API·ZIP과 Grafana에서 확인할 수 있습니다.
 
 API는 기존 분석 응답에 `bandwidthTimeline`, `bandwidthBinSeconds`를 추가합니다. 각 구간은 `at`, 송수신 바이트, 프로토콜별 바이트, `peerSeconds`(그 구간에 배분된 수집 기간의 Peer·초 합계)를 가집니다. `peerSeconds`는 중복 없는 노드 수나 측정 완전성 비율이 아닙니다. 기본 5초, 최대 360구간으로 병합합니다. 각 구간 바이트는 시간 겹침 비율 때문에 소수일 수 있으나 전체 합계는 정수 누적 카운터와 일치합니다(부동소수점 반올림 제외). 기록이 없는 구간에는 선을 잇지 않습니다. 일부 Peer만 보고한 구간의 값은 보고된 Peer들의 사용량입니다.
 
-Bandwidth protocol은 이 두 차트에만 적용합니다. Observation group/Relationship layer는 대역폭 필터가 아닙니다. 실행 비교 표는 전체 송수신량과 종료 표본 품질을 함께 표시합니다.
+
 
 ## Prometheus / Grafana
 

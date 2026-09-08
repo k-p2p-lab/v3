@@ -430,7 +430,7 @@ function renderRuns(runs) {
       <div class="run-meta"><span>Jobs: ${formatNumber(run.activeJobs || 0)} active · ${formatNumber(run.completedJobs || 0)} completed · ${formatNumber(run.failedJobs || 0)} failed · ${formatNumber(run.canceledJobs || 0)} canceled</span></div>
       <div class="progress-track" aria-label="${progress}% complete"><i style="width:${Math.min(100, progress)}%"></i></div>
       ${run.error ? `<div class="run-meta"><span>${escapeHTML(run.error)}</span></div>` : ""}
-      <div class="run-actions">${resultAnalysisButton(run)}${resultDownloadLink(run)}${downloadSize}</div>
+      <div class="run-actions">${resultDownloadLink(run)}${downloadSize}</div>
     </article>`;
   }).join(""));
 }
@@ -444,8 +444,8 @@ function resultLocked(run) {
   return Boolean(run.batchId && [...(state.savedResults || []), ...(state.snapshot?.experiments || [])].some((other) => other.batchId === run.batchId && isPendingRun(other)));
 }
 
-function resultAnalysisButton(run) {
-  return `<button class="analyze-button" type="button" data-analyze-result="${escapeHTML(run.id)}" aria-label="${escapeHTML(`Analyze saved result: ${run.name || run.id}`)}" ${run.state === "unreadable" || run.state === "queued" ? "disabled" : ""}>Analyze</button>`;
+function resultImagesButton(run) {
+  return `<button class="result-images-button" type="button" data-result-images="${escapeHTML(run.id)}" aria-label="${escapeHTML(`View graph images: ${run.name || run.id}`)}" ${run.state === "unreadable" || run.state === "queued" ? "disabled" : ""}>Images</button>`;
 }
 
 function resultDownloadLink(run) {
@@ -982,7 +982,6 @@ async function refreshSavedResults() {
     const results = await api("/api/v1/results", { cache: "no-store", signal: controller.signal });
     if (!Array.isArray(results)) throw new Error("Unexpected saved results response.");
     state.savedResults = results.filter((run) => !state.deletedResultIDs.has(run.id));
-    globalThis.KPLAnalysis?.setResults(state.savedResults);
     refreshed = true;
   } catch (error) {
     state.resultsError = error.name === "AbortError" ? "Request timed out." : error.message;
@@ -1020,7 +1019,7 @@ function renderSavedResults() {
       <td><span class="status-pill ${escapeHTML(run.state)}" title="${escapeHTML(stateHint)}">${escapeHTML(run.state)}</span></td>
       <td>${escapeHTML(formatResultTime(run.startedAt))}</td>
       <td>${escapeHTML(formatResultTime(run.finishedAt))}</td>
-      <td><div class="result-actions">${resultAnalysisButton(run)}${resultDownloadLink(run)}${resultDownloadSize(run)}<button class="delete-result-button" type="button" data-delete-result="${escapeHTML(run.id)}" aria-label="${escapeHTML(`Delete saved result: ${run.name || run.id}`)}" title="${resultLocked(run) ? "Available after this run and its batch have stopped." : "Delete this run's saved result."}" ${resultLocked(run) || state.deletingResultId ? "disabled" : ""}>${state.deletingResultId === run.id ? "Deleting…" : "Delete"}</button></div></td>
+      <td><div class="result-actions">${resultImagesButton(run)}${resultDownloadLink(run)}${resultDownloadSize(run)}<button class="delete-result-button" type="button" data-delete-result="${escapeHTML(run.id)}" aria-label="${escapeHTML(`Delete saved result: ${run.name || run.id}`)}" title="${resultLocked(run) ? "Available after this run and its batch have stopped." : "Delete this run's saved result."}" ${resultLocked(run) || state.deletingResultId ? "disabled" : ""}>${state.deletingResultId === run.id ? "Deleting…" : "Delete"}</button></div></td>
     </tr>`;
   }).join("");
 }
@@ -1066,7 +1065,7 @@ async function confirmResultDeletion() {
       if (error.status !== 404) throw error;
     }
     state.deletedResultIDs.add(run.id);
-    globalThis.KPLAnalysis?.remove(run.id);
+    globalThis.KPLResultImages?.remove(run.id);
     state.savedResults = (state.savedResults || []).filter((result) => result.id !== run.id);
     state.pendingDelete = null;
     $("#deleteResultDialog").close();
@@ -1597,9 +1596,9 @@ document.addEventListener("click", async (event) => {
     if (!confirmScenarioDeleteButton.disabled) confirmScenarioDeletion(confirmScenarioDeleteButton.dataset.confirmScenarioDelete);
     return;
   }
-  const analyzeButton = event.target.closest("[data-analyze-result]");
-  if (analyzeButton) {
-    if (!analyzeButton.disabled) globalThis.KPLAnalysis?.add(analyzeButton.dataset.analyzeResult);
+  const imagesButton = event.target.closest("[data-result-images]");
+  if (imagesButton) {
+    if (!imagesButton.disabled) void globalThis.KPLResultImages?.open(imagesButton.dataset.resultImages);
     return;
   }
   const deleteButton = event.target.closest("[data-delete-result]");
@@ -1644,7 +1643,7 @@ $("#deleteResultDialog").addEventListener("close", () => {
   }
 });
 
-globalThis.KPLAnalysis?.init({ api });
+globalThis.KPLResultImages?.init({ api });
 setupTopologyControls();
 setupDetailPanelSizing();
 renderSavedScenarios();

@@ -25,7 +25,7 @@ Swarm은 Prometheus/Grafana 포트를 control 노드에 게시합니다. 각 Age
 
 ## Dashboard 내장 시각화
 
-**Saved results → Analyze**에서 전파 CDF, 지연 분포, 메시지·토폴로지·점수 시계열, 프로토콜별 대역폭과 최대 4개 실행 비교를 확인할 수 있습니다. 이 화면은 저장 파일을 직접 분석하며 Prometheus와 독립적으로 동작합니다. [시각화 사용법](visualization.kr.md)을 참고하십시오.
+**Saved results → Images**에서 해당 결과의 그래프 이미지를 보고 PNG로 다운로드할 수 있습니다. 저장 기록을 사용하며 Prometheus와 독립적으로 동작합니다. [결과 이미지 사용법](visualization.kr.md)을 참고하십시오.
 
 ## 실행과 분석
 

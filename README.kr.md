@@ -17,7 +17,7 @@ K-P2PLab v3는 하나 이상의 Linux 호스트에 구성된 Docker Swarm에서 
 - Agent 영역과 topic 필터를 제공하는 실시간 Kademlia, GossipSub GRAFT 및 transport 토폴로지
 - churn을 고려한 도달률, 지연, 중복, coverage와 관측 품질 지표
 - 재사용 가능한 시나리오 라이브러리, 반복 실행, 결과 보존, ZIP 내보내기와 삭제
-- 저장 결과의 분포·시계열·최대 4개 실행 비교 및 JSON/CSV/SVG 내보내기
+- 실험 결과별 그래프 이미지 미리보기와 PNG 다운로드
 - 프로토콜별 libp2p 스트림 전송률·누적 바이트 실측과 수집 품질 표시
 
 ## 사전 요구사항
@@ -63,7 +63,7 @@ manager에도 Agent를 실행해야 한다면 `--workers` 대신 `--all`을 사�
 | [개발](docs/development.kr.md) | Go 빌드, 시나리오 검증, 테스트와 Swarm 개발 배포 |
 | [실험 지표](docs/experiment-metrics.kr.md) | churn 상황의 도달률 분모, 지연, 중복과 한계 |
 | [모니터링과 결과](docs/monitoring.kr.md) | Prometheus, Grafana, ZIP 내용, 보존 데이터와 삭제 |
-| [저장 결과 시각화](docs/visualization.kr.md) | 분포·시계열·실행 비교, JSON/CSV/SVG 내보내기 |
+| [저장 결과 시각화](docs/visualization.kr.md) | 결과별 그래프 이미지와 PNG 다운로드 |
 | [토폴로지](docs/topology.kr.md) | Agent 영역, 그래프 레이어, topic 필터와 조작 방법 |
 | [Swarm churn 및 publish](docs/swarm-churn-publish.kr.md) | 다중 서버 연속 churn 실험 절차 |
 | [Prysm 블록 스코어와 churn](docs/swarm-churn-prysm-block.kr.md) | 세 지연 그룹의 동시 churn과 스코어 관측 |

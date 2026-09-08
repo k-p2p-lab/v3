@@ -2,6 +2,8 @@
 
 English | [Korean](v2-analysis-coverage.kr.md)
 
+> This is the 2026-09-08 audit record. On 2026-09-09 the multi-run comparison, filters and CSV/SVG export workspace was replaced with **per-result PNG images**. See [result images](visualization.md) for the current UI; UI descriptions below document the earlier implementation.
+
 **v3 does not reproduce every v2 analysis or visualization with identical definitions and plots.** A related chart does not establish numerical, statistical or input-format parity. Current v3 adds actual P2P bandwidth collection and visualization and displays the collected control details. Unsupported items below remain unfinished.
 
 On 2026-09-08, the audit inspected the sibling `v2` checkout at revision `74b71090410cac1315ae08f479a95c086feeaaf6`: **40 parser output fields/families, 22 Python modules and 34 source files**, including parser inputs and batch wrappers. The [audit manifest](v2-analysis-coverage.json) records these files and their hashes. `degree_distribution-*` counts as one dynamic key family; the field count is not a feature-support percentage.

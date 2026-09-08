@@ -45,7 +45,7 @@ flowchart TB
 
 | 컴포넌트 | v3 배치 | 역할 |
 |---|---|---|
-| **Dashboard** | Controller에 내장되어 Controller가 제공하는 정적 웹 애플리케이션 | 실행 시작과 중지, 저장 시나리오와 결과 관리, 실시간 Agent·Peer·토폴로지·이벤트·요약 표시, 저장 분석 비교 및 JSON/CSV/SVG 내보내기를 담당합니다. |
+| **Dashboard** | Controller에 내장되어 Controller가 제공하는 정적 웹 애플리케이션 | 실행 시작과 중지, 저장 시나리오와 결과 관리, 실시간 Agent·Peer·토폴로지·이벤트·요약 표시, 결과별 그래프 이미지와 PNG 다운로드를 담당합니다. |
 | **Controller** | 컨테이너 하나. Swarm에서는 설정된 control 노드에 고정 | 시나리오 해석과 스케줄링, Agent 용량 예약, Peer 생명주기 및 publish 명령, bootstrap과 topic discovery registry, 토폴로지와 telemetry 집계, 실행 기록 보존, REST API와 Dashboard 제공, Controller metric 노출을 담당합니다. |
 | **Agent** | 선택한 Swarm 노드마다 global-service task 하나 | Controller 등록과 heartbeat, 로컬 수용 용량 적용, 노드 로컬 Docker socket을 통한 Peer 컨테이너 생성·삭제, publish 요청 중계, Peer telemetry 전달, 호스트 로컬 Agent metric 노출을 담당합니다. |
 | **Peer** | 실험 Peer마다 독립된 standalone Docker 컨테이너 하나 | Kademlia와 GossipSub을 포함한 실제 libp2p 애플리케이션을 실행하고, topic 참여와 메시지 송수신, 프로토콜·전달 이벤트와 libp2p 스트림 누적 바이트 보고, 설정된 Linux traffic-control 규칙 적용을 담당합니다. |

@@ -61,7 +61,7 @@ sh scripts/swarm.sh scenario examples/swarm-churn-prysm-block.yaml
 
 토폴로지에서 노드를 선택하면 관측한 점수 개수와 평균을 볼 수 있습니다. `peerScores[remotePeerId]`는 **관측 노드가 상대 Peer에 부여한 점수**이며 관측 노드 자신의 평판이 아닙니다. 평가자 그룹 × 평가 대상 그룹의 점수와 mesh 포함 여부, 노드 나이, ready 모집단을 함께 비교합니다.
 
-Controller는 그룹별 점수·토폴로지 요약을 약 5초마다 `observations.jsonl`에 자동 저장하며 결과 ZIP과 [Saved results → Analyze](visualization.kr.md)에서 제공합니다. 평가자 그룹별 요약이므로 개별 점수 쌍, 평가 대상 그룹별 내역, 전체 mesh 이력은 남기지 않으며 Prometheus에도 점수 시계열은 없습니다. 평가자 그룹 × 평가 대상 그룹 분석에는 저장소에서 다음 Bash 수집기를 warm-up 중 시작하고 마지막 수집 구간 뒤 Ctrl-C로 종료하십시오. Controller URL과 실제 run ID를 교체합니다. `curl`, `jq`가 필요하며 공개 읽기 전용 snapshot API를 사용합니다. 요청·처리 시간에 더해 5초마다 기록합니다.
+Controller는 그룹별 점수·토폴로지 요약을 약 5초마다 `observations.jsonl`에 자동 저장하며 결과 ZIP과 [Saved results → Images](visualization.kr.md)에서 제공합니다. 평가자 그룹별 요약이므로 개별 점수 쌍, 평가 대상 그룹별 내역, 전체 mesh 이력은 남기지 않으며 Prometheus에도 점수 시계열은 없습니다. 평가자 그룹 × 평가 대상 그룹 분석에는 저장소에서 다음 Bash 수집기를 warm-up 중 시작하고 마지막 수집 구간 뒤 Ctrl-C로 종료하십시오. Controller URL과 실제 run ID를 교체합니다. `curl`, `jq`가 필요하며 공개 읽기 전용 snapshot API를 사용합니다. 요청·처리 시간에 더해 5초마다 기록합니다.
 
 ```bash
 KPL_CONTROLLER_URL=http://control-node:8080
