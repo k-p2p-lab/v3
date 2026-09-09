@@ -30,6 +30,7 @@ Controller는 아래 공개 및 운영 엔드포인트를 제공합니다. `KPL_
 | `GET` | `/api/v1/experiments/{id}/analysis` | 저장 이벤트·관측치를 분석한 그래프 데이터와 집계 JSON |
 | `GET` / `POST` | `/api/v1/analysis-jobs/{id}` | 백그라운드 분석 상태 조회 / 접수. 중복 요청 재사용, `?refresh=1`로 새 snapshot 분석 |
 | `GET` / `HEAD` | `/api/v1/analysis-jobs/{id}/result?jobId={jobId}` | 서버에 보관된 완료 분석 JSON 다운로드. 작업 미완료·다른 attempt는 `409` |
+| `GET` / `HEAD` | `/api/v1/analysis-jobs/{id}/summary?jobId={jobId}` | 비교용 경량 분석 JSON. 메시지별 경로와 원본 시계열을 제외하고 집계·분포·적합 결과를 반환 |
 | `GET` / `HEAD` | `/api/v1/experiments/{id}/download` | 시나리오·메타데이터·이벤트·선택적 관측 파일·파생 지표를 ZIP으로 다운로드하거나 응답 본문 없이 크기 계산 |
 | `POST` | `/api/v1/experiments` | YAML 1회 실행 또는 JSON `{scenario, repetitions}`로 1~100회 순차 실행 |
 | `POST` | `/api/v1/experiments/{id}/stop` | 실행을 취소한 뒤 제한 시간 내 job 종료와 generation-fenced Peer cleanup 수행 |
@@ -95,6 +96,29 @@ Agent는 Controller가 cleanup에 사용하는 다음 endpoint도 제공합니�
 | `DELETE` | `/api/v1/runs/{runId}/nodes?generation=N` | unsigned `generation`이 필수이며, run fence를 N까지 원자적으로 높이고 이후 generation N 이하의 create를 거부하며 해당 generation의 기존 노드를 종료한 뒤 `202 Accepted`를 반환합니다. |
 
 내부 endpoint는 운영자 API와 별개로 변경될 수 있습니다. 요청과 snapshot의 필드 정의는 [`internal/model/model.go`](../internal/model/model.go), 대역폭 타입은 [`internal/model/bandwidth.go`](../internal/model/bandwidth.go), handler는 [`internal/controller/api.go`](../internal/controller/api.go)와 [`internal/agent/api.go`](../internal/agent/api.go)에 있습니다.
+
+
+## 상세 Peer 로그
+
+새 Peer는 `events.jsonl`에 upstream libp2p에서 실제 제공하는 메타정보를 추가합니다. 기존 `publish`/`deliver`/`duplicate`와 메인 Metrics 집계는 유지됩니다. `messageId`는 애플리케이션 ID이며, `fields.pubsubMessageId` 및 아래 상세 ID 목록은 pubsub wire ID의 hex 표현입니다.
+
+| 이벤트 / 필드 | 의미 |
+|---|---|
+| `send_*`, `recv_*`, `drop_*`의 `rpcMetadataVersion`, `rpcObservationId` | 메타정보 형식 버전 `1`, 한 로컬 RPC 콜백의 연결 ID. 각 이벤트의 `eventId`는 별도로 유지 |
+| `rpcMessageCount`, `rpcSubscriptionCount` | 같은 RPC에 포함된 데이터 메시지·구독 항목의 전체 개수 |
+| IHAVE의 `topicMessageIds` | 토픽별 광고 메시지 ID 목록 |
+| IWANT/IDONTWANT의 `messageIds` | 요청·비요청 메시지 ID 목록. 해당 프로토콜 항목에는 원래 토픽이 없음 |
+| `messageIdsComplete`, `omittedMessageIds` | ID 목록 완전성 및 제한으로 생략한 개수. `messageIdCount`는 전체 개수 |
+| PRUNE의 `peerExchangeIdsByTopic`, `peerExchangeIdsComplete`, `omittedPeerExchangeIds` | 실제 trace가 제공한 토픽별 교환 Peer ID 및 목록 완전성 |
+| `rpc_metadata`의 `direction`, `messages`, `subscriptions` | send/recv/drop 구분, `{topic,pubsubMessageId}` 목록, `{topic,subscribe}` 목록. 데이터·구독 메타정보가 있을 때만 별도 이벤트 생성 |
+| `subscriptionsComplete`, `omittedSubscriptions` | 구독 목록 완전성 및 생략 개수 |
+| `pubsub_reject`의 `reason`, `pubsubMessageId` | libp2p가 보고한 메시지 거부 사유와 ID |
+| `timestampSource`, `sourceTimestamp` | trace 시각의 출처와 보정 전 원본 시각. upstream 시각이 없으면 `peer-clock`으로 표시하고 원본 시각을 만들지 않음 |
+| `clockBasis`, `clockOffsetMs`, `clockUncertaintyMs` | 유효한 Controller 동기화 근거가 있을 때 추가하는 시각 보정 정보 |
+
+ID 상세는 종류별 최대 8,192개 및 hex 합계 512KiB, 구독 목록은 최대 8,192개입니다. 기존 RPC·entry·ID 집계는 전체 개수를 유지합니다. 이벤트 유실은 기존 `telemetry_drop`과 소스 sequence로 추적합니다. 원본 payload, IWANT 발신 원인, wire에 없는 RPC 전역 ID는 만들지 않습니다. Eager/Lazy는 [시각화 문서](visualization.kr.md)의 메타정보 추정 규칙을 적용합니다.
+
+완료 분석의 현재 `analysisVersion`은 `3`입니다. 전체 결과의 `research`에는 지표 정의·메시지별 경로·모집단·`linkEstimate`·`evidence`가 포함됩니다. 비교용 `/summary`는 `messageCount`와 집계·분포·적합 정보를 유지합니다. 이전 버전의 완료 캐시는 새 분석 요청 시 재생성되지만, 원본에 없는 상세 필드는 복원되지 않습니다.
 
 ## 인증
 

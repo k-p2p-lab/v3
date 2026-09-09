@@ -98,7 +98,7 @@ The Dashboard renders recent state and events from the Controller. The Controlle
 
 Metrics and topology are observations of received reports. A stale or unreachable Agent, telemetry queue loss, `scope: all` impairment, scrape timing, or forced shutdown can reduce what the control plane observes even while some P2P traffic occurred. Use [experiment metrics](experiment-metrics.md) for metric definitions, [monitoring and results](monitoring.md) for collection limits, and [topology](topology.md) for graph semantics.
 
-The Controller periodically saves group topology and score summaries in `observations.jsonl` during each run. These summaries do not retain the full relationship graph or every observer-to-peer score. Bandwidth samples are stored as events and reconstructed independently of delivery-window eligibility; see [bandwidth measurement](bandwidth.md). The embedded Dashboard uses the [saved-result analysis API](visualization.md) to visualize distributions and timelines and compare runs from saved events and observations, independently of Prometheus retention.
+The Controller periodically saves group topology and score summaries in `observations.jsonl` during each run. It also saves nodes and transport/Kademlia/GossipSub edges available from fresh Peer reports for background graph analysis. Individual observer-to-peer scores are not retained. Bandwidth samples are stored as events and reconstructed independently of delivery-window eligibility; see [bandwidth measurement](bandwidth.md). The embedded Dashboard uses the [saved-result analysis API](visualization.md) to visualize distributions and timelines and compare runs from saved events and observations, independently of Prometheus retention.
 
 ## Supported deployment boundary
 

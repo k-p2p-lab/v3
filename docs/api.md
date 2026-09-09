@@ -30,6 +30,7 @@ The Controller exposes the following public and operational endpoints. When `KPL
 | `GET` | `/api/v1/experiments/{id}/analysis` | Chart distributions, timelines and metrics from saved events and observations |
 | `GET` / `POST` | `/api/v1/analysis-jobs/{id}` | Inspect / submit background analysis. Duplicate requests reuse work; `?refresh=1` requests a new snapshot |
 | `GET` / `HEAD` | `/api/v1/analysis-jobs/{id}/result?jobId={jobId}` | Download persisted analysis JSON. Unfinished or mismatched attempts return `409` |
+| `GET` / `HEAD` | `/api/v1/analysis-jobs/{id}/summary?jobId={jobId}` | Compact comparison artifact with aggregates, distributions and fits; omits per-message paths and source timelines |
 | `GET` / `HEAD` | `/api/v1/experiments/{id}/download` | Download the scenario, metadata, events, optional observations and derived metrics as ZIP, or measure its size without a response body |
 | `POST` | `/api/v1/experiments` | Run YAML once, or JSON `{scenario, repetitions}` for 1–100 sequential runs |
 | `POST` | `/api/v1/experiments/{id}/stop` | Cancel a running experiment, then perform bounded job shutdown and generation-fenced Peer cleanup |
@@ -95,6 +96,29 @@ The Agent additionally exposes this Controller-driven cleanup endpoint:
 | `DELETE` | `/api/v1/runs/{runId}/nodes?generation=N` | Requires an unsigned `generation`; atomically raises the run fence through N, rejects later creates at generation N or below, stops existing nodes in those generations, and returns `202 Accepted` |
 
 Internal endpoints may change independently of the operator API. Request and snapshot field definitions are in [`internal/model/model.go`](../internal/model/model.go), with bandwidth types in [`internal/model/bandwidth.go`](../internal/model/bandwidth.go); handlers are in [`internal/controller/api.go`](../internal/controller/api.go) and [`internal/agent/api.go`](../internal/agent/api.go).
+
+
+## Detailed Peer logs
+
+Updated Peers add metadata actually exposed by upstream libp2p to `events.jsonl`. Existing publish/deliver/duplicate events and main Metrics aggregation remain in use. `messageId` is an application identity; `fields.pubsubMessageId` and detailed ID lists encode pubsub wire IDs as hex.
+
+| Event / field | Meaning |
+|---|---|
+| `rpcMetadataVersion`, `rpcObservationId` on `send_*`, `recv_*`, `drop_*` | Format version `1` and identity of one local RPC callback. Each event retains its own `eventId` |
+| `rpcMessageCount`, `rpcSubscriptionCount` | Complete data-message and subscription counts for that RPC |
+| IHAVE `topicMessageIds` | Advertised IDs grouped by topic |
+| IWANT/IDONTWANT `messageIds` | Requested/unwanted IDs; these protocol entries carry no topic |
+| `messageIdsComplete`, `omittedMessageIds` | Completeness and omitted count; `messageIdCount` keeps the full total |
+| PRUNE `peerExchangeIdsByTopic`, `peerExchangeIdsComplete`, `omittedPeerExchangeIds` | Actual trace peer-exchange IDs by topic and completeness |
+| `rpc_metadata`: `direction`, `messages`, `subscriptions` | send/recv/drop, `{topic,pubsubMessageId}` records, `{topic,subscribe}` records. A separate event is emitted only when data/subscription metadata exists |
+| `subscriptionsComplete`, `omittedSubscriptions` | Subscription-list completeness and omissions |
+| `pubsub_reject`: `reason`, `pubsubMessageId` | Rejection reason and wire ID reported by libp2p |
+| `timestampSource`, `sourceTimestamp` | Trace time provenance and original unadjusted time. Missing upstream time uses `peer-clock` without fabricating a source timestamp |
+| `clockBasis`, `clockOffsetMs`, `clockUncertaintyMs` | Added when a valid Controller clock synchronization estimate exists |
+
+Detailed IDs are limited to 8,192 entries and 512KiB of hex per category; subscription lists are capped at 8,192. RPC/entry/ID totals remain complete. Existing `telemetry_drop` and source sequences expose event loss. Payload bodies, IWANT sender-queue causes and nonexistent global RPC IDs are not collected. Eager/Lazy follows the metadata estimation rules in [visualization](visualization.md).
+
+The current completed `analysisVersion` is `3`. Full artifacts include `research` definitions, per-message paths/populations, `linkEstimate` and `evidence`. `/summary` preserves `messageCount`, aggregates, distributions and fits. Requests regenerate outdated caches; regeneration cannot recreate missing source metadata.
 
 ## Authentication
 

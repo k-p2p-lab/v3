@@ -1,6 +1,8 @@
 package peer
 
 import (
+	"encoding/hex"
+	"maps"
 	"sort"
 	"time"
 
@@ -21,9 +23,11 @@ func (t *gossipTracer) Trace(event *pubsubpb.TraceEvent) {
 	if event == nil || event.Type == nil {
 		return
 	}
-	trace := model.TraceEvent{PeerID: t.peerID, Timestamp: t.telemetry.now()}
+	trace := model.TraceEvent{PeerID: t.peerID, Timestamp: t.telemetry.now(), Fields: map[string]any{"timestampSource": "peer-clock"}}
 	if event.GetTimestamp() > 0 {
+		trace.Fields["timestampSource"] = "libp2p-trace"
 		trace.Timestamp = t.telemetry.adjustTimestamp(time.Unix(0, event.GetTimestamp()).UTC())
+		trace.Fields["sourceTimestamp"] = time.Unix(0, event.GetTimestamp()).UTC().Format(time.RFC3339Nano)
 	}
 	switch event.GetType() {
 	case pubsubpb.TraceEvent_PUBLISH_MESSAGE:
@@ -37,7 +41,7 @@ func (t *gossipTracer) Trace(event *pubsubpb.TraceEvent) {
 		}
 		trace.Type = "add_peer"
 		trace.RemotePeerID = peerID(event.AddPeer.PeerID)
-		trace.Fields = map[string]any{"protocol": event.AddPeer.GetProto()}
+		trace.Fields["protocol"] = event.AddPeer.GetProto()
 	case pubsubpb.TraceEvent_REMOVE_PEER:
 		if event.RemovePeer == nil {
 			return
@@ -56,6 +60,15 @@ func (t *gossipTracer) Trace(event *pubsubpb.TraceEvent) {
 		}
 		trace.Type = "leave"
 		trace.Topic = event.Leave.GetTopic()
+	case pubsubpb.TraceEvent_REJECT_MESSAGE:
+		if event.RejectMessage == nil {
+			return
+		}
+		trace.Type = "pubsub_reject"
+		trace.Topic = event.RejectMessage.GetTopic()
+		trace.RemotePeerID = peerID(event.RejectMessage.GetReceivedFrom())
+		trace.Fields["pubsubMessageId"] = hex.EncodeToString(event.RejectMessage.GetMessageID())
+		trace.Fields["reason"] = event.RejectMessage.GetReason()
 	case pubsubpb.TraceEvent_DUPLICATE_MESSAGE:
 		// RawTracer has the original bytes needed to correlate the duplicate
 		// with the application's publication. Counting both would double it.
@@ -100,13 +113,18 @@ func (t *gossipTracer) Trace(event *pubsubpb.TraceEvent) {
 // Unlike the v2 parser, each type in a mixed RPC is emitted independently and
 // IDONTWANT is included. One event represents one RPC/control-type pair.
 func (t *gossipTracer) traceControlRPC(trace model.TraceEvent, direction string, remote []byte, meta *pubsubpb.TraceEvent_RPCMeta) {
-	if meta == nil || meta.GetControl() == nil {
+	if meta == nil {
 		return
 	}
 	trace.RemotePeerID = peerID(remote)
+	t.prepareRPCTrace(&trace, direction, meta)
 	control := meta.GetControl()
+	if control == nil {
+		return
+	}
 
 	ihaveEntries, ihaveIDs := 0, 0
+	ihaveDetail := map[string][][]byte{}
 	ihaveTopicEntries, ihaveTopicIDs := make(map[string]int), make(map[string]int)
 	for _, entry := range control.GetIhave() {
 		if entry == nil {
@@ -114,29 +132,34 @@ func (t *gossipTracer) traceControlRPC(trace model.TraceEvent, direction string,
 		}
 		ihaveEntries++
 		ihaveIDs += len(entry.GetMessageIDs())
+		ihaveDetail[entry.GetTopic()] = append(ihaveDetail[entry.GetTopic()], entry.GetMessageIDs()...)
 		addControlTopicCounts(ihaveTopicEntries, ihaveTopicIDs, entry.GetTopic(), len(entry.GetMessageIDs()))
 	}
-	t.emitControlRPC(trace, direction, "ihave", ihaveEntries, ihaveIDs, ihaveTopicEntries, ihaveTopicIDs, 0)
+	t.emitControlRPC(trace, direction, "ihave", ihaveEntries, ihaveIDs, ihaveTopicEntries, ihaveTopicIDs, 0, controlIDDetails(ihaveDetail))
 
 	iwantEntries, iwantIDs := 0, 0
+	iwantDetail := [][]byte{}
 	for _, entry := range control.GetIwant() {
 		if entry == nil {
 			continue
 		}
 		iwantEntries++
 		iwantIDs += len(entry.GetMessageIDs())
+		iwantDetail = append(iwantDetail, entry.GetMessageIDs()...)
 	}
-	t.emitControlRPC(trace, direction, "iwant", iwantEntries, iwantIDs, nil, nil, 0)
+	t.emitControlRPC(trace, direction, "iwant", iwantEntries, iwantIDs, nil, nil, 0, controlIDDetails(map[string][][]byte{"": iwantDetail}))
 
 	idontwantEntries, idontwantIDs := 0, 0
+	idontwantDetail := [][]byte{}
 	for _, entry := range control.GetIdontwant() {
 		if entry == nil {
 			continue
 		}
 		idontwantEntries++
 		idontwantIDs += len(entry.GetMessageIDs())
+		idontwantDetail = append(idontwantDetail, entry.GetMessageIDs()...)
 	}
-	t.emitControlRPC(trace, direction, "idontwant", idontwantEntries, idontwantIDs, nil, nil, 0)
+	t.emitControlRPC(trace, direction, "idontwant", idontwantEntries, idontwantIDs, nil, nil, 0, controlIDDetails(map[string][][]byte{"": idontwantDetail}))
 
 	graftEntries := 0
 	graftTopicEntries := make(map[string]int)
@@ -147,9 +170,10 @@ func (t *gossipTracer) traceControlRPC(trace model.TraceEvent, direction string,
 		graftEntries++
 		addControlTopicCounts(graftTopicEntries, nil, entry.GetTopic(), 0)
 	}
-	t.emitControlRPC(trace, direction, "graft", graftEntries, 0, graftTopicEntries, nil, 0)
+	t.emitControlRPC(trace, direction, "graft", graftEntries, 0, graftTopicEntries, nil, 0, nil)
 
 	pruneEntries, peerExchangeEntries := 0, 0
+	prunePeers := map[string][][]byte{}
 	pruneTopicEntries := make(map[string]int)
 	for _, entry := range control.GetPrune() {
 		if entry == nil {
@@ -157,23 +181,31 @@ func (t *gossipTracer) traceControlRPC(trace model.TraceEvent, direction string,
 		}
 		pruneEntries++
 		peerExchangeEntries += len(entry.GetPeers())
+		prunePeers[entry.GetTopic()] = append(prunePeers[entry.GetTopic()], entry.GetPeers()...)
 		addControlTopicCounts(pruneTopicEntries, nil, entry.GetTopic(), 0)
 	}
-	t.emitControlRPC(trace, direction, "prune", pruneEntries, 0, pruneTopicEntries, nil, peerExchangeEntries)
+	t.emitControlRPC(trace, direction, "prune", pruneEntries, 0, pruneTopicEntries, nil, peerExchangeEntries, peerExchangeDetails(prunePeers))
 }
 
-func (t *gossipTracer) emitControlRPC(trace model.TraceEvent, direction, controlType string, entries, messageIDs int, topicEntries, topicMessageIDs map[string]int, peerExchangeEntries int) {
+func (t *gossipTracer) emitControlRPC(trace model.TraceEvent, direction, controlType string, entries, messageIDs int, topicEntries, topicMessageIDs map[string]int, peerExchangeEntries int, details map[string]any) {
 	if entries == 0 {
 		return
 	}
 	trace.Type = direction + "_" + controlType
 	trace.Topic = ""
+	base := maps.Clone(trace.Fields)
 	trace.Fields = map[string]any{
 		"direction":      direction,
 		"controlType":    controlType,
 		"rpcCount":       1,
 		"controlEntries": entries,
 		"messageIdCount": messageIDs,
+	}
+	for key, value := range base {
+		trace.Fields[key] = value
+	}
+	for key, value := range details {
+		trace.Fields[key] = value
 	}
 	if peerExchangeEntries > 0 {
 		trace.Fields["peerExchangeCount"] = peerExchangeEntries

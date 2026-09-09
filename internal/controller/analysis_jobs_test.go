@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/k-p2p-lab/v3/internal/model"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -260,5 +261,44 @@ func TestAnalysisJobQueueIsBoundedAndShutdownClosesAdmission(t *testing.T) {
 	cancel()
 	if _, err := s.startAnalysisJob(ctx, "queued-0", false); err == nil {
 		t.Fatal("shutdown admitted new work")
+	}
+}
+
+func TestAnalysisJobSummaryPreservesModelsWithoutMessagePayloads(t *testing.T) {
+	server := New(ServerConfig{DataDir: t.TempDir()}, nil)
+	resultFixture(t, server, "compact", "completed", time.Unix(1, 0))
+	events := []model.TraceEvent{cohortPublish("m", "topic", []string{"a"}), cohortDelivery("m", "topic", "a", 20)}
+	for i := range events {
+		events[i].RunID = "compact"
+	}
+	analysisWriteLines(t, server, "compact", "events.jsonl", events)
+	_, err := server.startAnalysisJob(context.Background(), "compact", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := awaitAnalysisJob(t, server, "compact")
+	if job.AnalysisVersion != currentAnalysisVersion {
+		t.Fatal("unversioned new artifact")
+	}
+	for _, kind := range []string{"result", "summary"} {
+		response := resultRequest(server, http.MethodGet, "/api/v1/analysis-jobs/compact/"+kind+"?jobId="+job.ID)
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", kind, response.Code, response.Body)
+		}
+		var data resultAnalysis
+		if err := json.Unmarshal(response.Body.Bytes(), &data); err != nil {
+			t.Fatal(err)
+		}
+		if data.Research == nil || data.Research.MessageCount != 1 {
+			t.Fatal("lost message count")
+		}
+		want := 1
+		if kind == "summary" {
+			want = 0
+		}
+		if len(data.Research.Messages) != want {
+			t.Fatalf("%s message rows=%d", kind, len(data.Research.Messages))
+		}
+		researchClose(t, data.Research.Summary["frt"].Average, .02)
 	}
 }

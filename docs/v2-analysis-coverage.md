@@ -1,83 +1,57 @@
-# Complete v2 analysis coverage audit
+# v2 analysis and visualization coverage
 
-English | [Korean](v2-analysis-coverage.kr.md)
+English | [한국어](v2-analysis-coverage.kr.md)
 
-> This is the 2026-09-08 audit record. On 2026-09-09 the multi-run comparison, filters and CSV/SVG export workspace was replaced with **per-result PNG images**. See [result images](visualization.md) for the current UI; UI descriptions below document the earlier implementation.
+This inventory covers 40 parser fields/families and 34 Go, Python and shell sources from the supplied v2 revision `74b71090410cac1315ae08f479a95c086feeaaf6`. [The manifest](v2-analysis-coverage.json) records hashes. Run `python3 scripts/audit-v2-analysis.py --v2 ../v2` to detect changes or omissions; this is not a numerical equivalence test.
 
-**v3 does not reproduce every v2 analysis or visualization with identical definitions and plots.** A related chart does not establish numerical, statistical or input-format parity. Current v3 adds actual P2P bandwidth collection and visualization and displays the collected control details. Unsupported items below remain unfinished.
+The following visualization families are available through **Saved results → Images** and its comparison tools. Main Metrics keep their session/delivery-window definitions; additional analysis uses `research.definition = v2-corrected-observations-v1`. **Different source observations and statistical definitions can produce different values from v2.** Missing measurements remain N/A, and unresolved propagation origins remain unknown.
 
-On 2026-09-08, the audit inspected the sibling `v2` checkout at revision `74b71090410cac1315ae08f479a95c086feeaaf6`: **40 parser output fields/families, 22 Python modules and 34 source files**, including parser inputs and batch wrappers. The [audit manifest](v2-analysis-coverage.json) records these files and their hashes. `degree_distribution-*` counts as one dynamic key family; the field count is not a feature-support percentage.
+## Parser outputs
 
-Run from the v3 repository root with the v2 checkout available as `../v2`, or supply its path:
+| v2 family | v3 representation and conditions |
+|---|---|
+| `node_count`, `average_degree`, `average_degree_excluding_leaves` | Protocol/group timelines and summaries. The non-leaf denominator statistic is ALL degrees divided by the number of nodes with degree > 1 |
+| `diameter`, `shortest_path_length` | Computed from saved edges. Excludes self/unreachable pairs and reports connected-pair coverage |
+| `clustering_coefficient`, `assortativity`, `modularity` | Mean local clustering, degree correlation and seeded Louvain modularity; undefined statistics remain N/A |
+| Five centralities: betweenness, PageRank, degree, closeness, eigenvector | Normalized global/group means for saved graph observations |
+| `degree_distribution-*` | Mean per-snapshot degree probability, PDF/CDF and weighted Student-t fit |
+| `frt`, `reachability`, `drc` | Per-message first-reception latency, reach and duplicate counts; summaries over message means. DRC/graph-node and DRC/target are separate |
+| `eager_count`, `lazy_count`, `eager_frt`, `eager_reachability` | Estimates from GRAFT/IHAVE/IWANT and message IDs. Unclassified counts remain visible; eager FRT requires classified receipts with timing evidence |
+| `pub_map`, `propa_map`, `reach_map`, `eager_propa_map`, `eager_reach_map` | `research.messages`: publication, receipt, parent, hop, population and evidence; propagation/estimated-eager curves; JSON/CSV export |
+| `dup_map`, `time` | Per-message duplicate cumulative curves and time axes; raw duplicate events remain in events.jsonl |
+| `send_ihave`, `recv_ihave`, `send_iwant`, `recv_iwant` | Separates RPC occurrences containing a control type, entries and referenced IDs |
+| Logical IHAVE/IWANT send/receive fields | Advertised/requested ID counts, distinct from unique IDs or delivered bytes |
+| `send_graft`, `send_prune`, `logical_send_graft`, `logical_send_prune` | Mesh transitions and reciprocal logical-edge creation/removal. Wire RPC counts have separate `_rpc` names |
+| v3 additions | IDONTWANT, control drops, unknown paths, lifecycle/score summaries, measured total/per-protocol libp2p stream bandwidth |
 
-```sh
-python3 scripts/audit-v2-analysis.py
-# If v2 is elsewhere:
-python3 scripts/audit-v2-analysis.py --v2 /path/to/v2
-```
+## Python and batch visualization
 
-This command checks the source keys, file set and hashes against the reviewed inventory. New or changed source requires another audit. **It does not automatically prove equivalent v3 calculations.** The UI and statistical definitions were compared separately below. Source links point to the audited v2 revision so they also work without a sibling checkout.
+| v2 source | v3 tool |
+|---|---|
+| `basic_graph/*` | Series/Case repeat means and sample-SD bars, arbitrary metrics and D conditions, degree probabilities |
+| `compare_graph/*` | Matched-case difference, target/(target+baseline), target/baseline and error propagation |
+| `trade-off_graph/*` | FRT–DRC scatter, reach color, reference arrows, two/three-objective Pareto, weighted score, i/f groups and p filter |
+| `time_vs_metric_plot.py` | Propagation/duplicate cumulative curves, linear/log time and combined panels |
+| `calc_lazy_metric.py` | Eight observational contribution/overlap/efficiency estimates against a matched lazy-off baseline |
+| `dup_regression.py` | All four duplicate regression designs, coefficients/rank/in-sample R², observed/fitted comparison |
+| `old/graphic.py` | Metric JSONL and x/y imports; arbitrary metric, axis and color scatter |
+| `old/propagation.py`, `old/prop_plot.py` | Per-message first-reception paths, latency/hop distributions, mean cumulative receiver counts and increments over time/hops |
+| `old/prop_plot_graph.py` | CSV/JSON curve overlays at raw or peak-normalized scale |
+| `old/mean_degree_ratio.py` | Total/Count imports and mean snapshot degree probabilities |
+| `old/clustering_vs_eigenvector.py` | Two-metric scatter and reference-case arrows |
+| `old/frt_drc_graph.py` | Three fixed historical/ER reference charts from v2 constants, accessed separately from selected experiments |
+| `old/fitting.py` | Weighted Student-t MLE; df/location/scale trends; univariate/multivariate quadratic models and predictions for supplied D values |
+| `image_gen.sh`, `total_image_gen.sh`, `run*.sh` | Submit selected server analyses and export all PNG/CSV/chart definitions as ZIP. Does not execute the old Python CLI/path layout |
 
-## All original parser outputs
+Imports support up to 32MiB/file: metric JSONL, propagation tree JSON/JSONL, duplicate-time maps, x_case/y/yerr or x/y JSON, numeric CSV, and v3 analysis JSON. Arbitrary v2 internal data shapes and original directory/file naming are not automatically reproduced. See [visualization](visualization.md) for operation.
 
-Sources: [log.go](https://github.com/kmu-comnet/kpl-v2/blob/74b71090410cac1315ae08f479a95c086feeaaf6/kpl-parser/internal/analysis/log.go), [metric.go](https://github.com/kmu-comnet/kpl-v2/blob/74b71090410cac1315ae08f479a95c086feeaaf6/kpl-parser/internal/analysis/metric.go), [value.go](https://github.com/kmu-comnet/kpl-v2/blob/74b71090410cac1315ae08f479a95c086feeaaf6/kpl-parser/internal/analysis/value.go), [propa.go](https://github.com/kmu-comnet/kpl-v2/blob/74b71090410cac1315ae08f479a95c086feeaaf6/kpl-parser/internal/analysis/propa.go).
+## Definitions and source evidence
 
-| v2 output | Current v3 | Equivalence / remaining work |
-|---|---|---|
-| `time` | Event/observation timestamps and relative-second axes | v2 uses log interval boundaries; v3 uses event bins and five-second observations. Sampling times differ |
-| `node_count` | Peer lifecycle and eligible topology nodes | v2 JOIN/LEAVE graph nodes and v3 ready/fresh-report populations differ |
-| `average_degree` | Mean unique neighbors per relationship layer | v2 uses `EdgeCount()/Nodes` on its reciprocal GRAFT/PRUNE graph. v3 combines fresh neighbor reports; graph and denominator differ |
-| `average_degree_excluding_leaves` | Unsupported | v2 divides the original edge count by the number of degree > 1 nodes, or 1 if none. An induced leaf-free graph average is not equivalent |
-| `diameter`, `shortest_path_length` | Unsupported | Requires graph history and v2 netkit's directionality, disconnected-graph and path-averaging conventions |
-| `clustering_coefficient` | Mean local clustering | v3 uses a different graph/sample and returns N/A above its work limit. Numerical parity is not established |
-| `degree_distribution-*` | Degree distribution at the selected observation | v2 viewers combine and normalize message/run average frequencies; v3 shows a selected-time distribution |
-| `betweenness_centrality`, `page_rank`, `degree_centrality`, `closeness_centrality`, `eigenvector_centrality` | Unsupported | Requires source graphs and matching normalization/algorithms |
-| `assortativity`, `modularity` | Unsupported | Requires matching disconnected/edgeless behavior and community rules |
-| `send_ihave`, `send_iwant`, `recv_ihave`, `recv_iwant` | Control rate and control breakdown table | RPC occurrences and entry counts are separate units. v2 callback locations, time intervals and per-message aggregation differ |
-| `send_graft`, `send_prune` | Control breakdown table | v2 graph-transition events and v3 wire-control observations differ |
-| `logical_send_ihave`, `logical_send_iwant`, `logical_recv_ihave`, `logical_recv_iwant` | Message ID references in the table and Grafana | The reference-count unit corresponds; v2 per-message interval statistics and case plots are not implemented |
-| `logical_send_graft`, `logical_send_prune` | Unsupported | Counts v2 reciprocal GRAFT processing/successful edge removal; wire-entry counts cannot replace these |
-| `eager_count`, `lazy_count` | Unsupported | v3 delivery events lack `EAGER_PUSH`/`LAZY_PULL` attribution. IHAVE/IWANT alone does not establish first-receipt cause |
-| `frt` | Mean/P95 latency and latency histogram/CDF | v2 uses per-message DELIVER latency statistics; v3 uses valid first receipts at stable receivers within the window. Population, seconds/ms and reducer order differ |
-| `reachability` | Stable delivery bounds, starting delivery and coverage | v2 divides observed receipts by the union of graph nodes at that message's receipt times. v3 uses session/window cohorts |
-| `drc` | Raw duplicate count and duplicates per eligible delivery | v2 per-message duplicate totals and the viewer's `drc / node_count` use different denominators from v3's duplicate mean |
-| `eager_frt`, `eager_reachability` | Unsupported | Requires eager/lazy delivery-cause instrumentation |
-| `pub_map`, `propa_map`, `dup_map`, `reach_map` | Related raw publish/deliver/duplicate/session events | No v2 map import/export or compatibility reducers; propagation and reach maps use different receipt definitions |
-| `eager_propa_map`, `eager_reach_map` | Unsupported | Eager propagation source evidence is absent |
+- Research FRT uses non-publisher first receptions in seconds. Within-sample deviation is population SD; even medians average the two middle values. Repeat error bars use sample SD, unavailable for one repeat.
+- Research reachability uses the union of subscribed non-publisher nodes at receipt times, or publication time when no receipts exist. Dispatch targets are a fallback only when subscription history is absent. Propagation and duplicate ratios use the same message–node cohort.
+- v2 reciprocal GRAFT graphs and v3 fresh undirected neighbor observations differ. Saved snapshots have equal weight. Group centralities average the group's nodes using full-graph paths. Historical summary-only archives cannot recover missing edges.
+- Eager/Lazy is estimated, not direct sender-cause measurement. New logs match delivered IDs to IHAVE→IWANT; old logs use a maximum five-second same-peer/topic association. Conflicts, missing evidence and cyclic paths stay unclassified. Disconnection, leaving and measurement termination invalidate prior evidence. JSON/CSV preserve link estimates and their evidence.
+- Student-t uses observed probability weights directly. Plots distinguish discrete degree probabilities from continuous density and expose convergence failures/parameter bounds. No synthetic 60,000-sample reconstruction or arbitrary fallback parameters are used. Unidentifiable regressions remain N/A.
+- New detailed IDs and graph edges require updated Controller/Peer images and subsequent experiments. There is no third_party fork, payload-body collection or unavailable sender-queue instrumentation. [Bandwidth](bandwidth.md) measures actual stream use, not physical link capacity.
 
-v2 computes diameter even without `--graphmetrics`; the option adds shortest-path, clustering, centralities, assortativity and modularity. Its `average/deviation/median/count` reducers apply to a message's receipt samples or the time samples contributing to that message. Deviation is population standard deviation; median is sorted `values[len/2]`. The sample unit differs from v3's whole-run mean/P95.
-
-The audit also covers **per-message propagation trees** (`id/time/children`) and **duplicate-count maps by time since publication**. v2 attaches a child only after its `FromNodeID` parent has entered the tree, omitting receipts whose parents remain unresolved. v3 logs have PeerID/RemotePeerID and message correlation, but tree reconstruction, hop distributions and per-message duplicate-time curves are not implemented. Raw payloads, missing parents and relay paths need explicit handling. A live topology drawing is not a message propagation tree.
-
-## All Python visualization and derived analyses
-
-The `file_helper/process_helper/math_helper/format_helper/output_helper` helpers belong to their main-module rows. The `old/` directory is included.
-
-| v2 module | Actual analysis | Current v3 comparison |
-|---|---|---|
-| [basic_graph](https://github.com/kmu-comnet/kpl-v2/blob/74b71090410cac1315ae08f479a95c086feeaaf6/kpl-viewer/basic_graph/main.py) | Arbitrary x/y metrics, case/d/d_value selection, case-group mean/std error bars, degree distributions, JSON/images | Related fixed charts exist. No arbitrary axes, case groups, repeated-run statistics or error bars. The default reachability ≤ 0.1 exclusion rule is not ported |
-| [compare_graph](https://github.com/kmu-comnet/kpl-v2/blob/74b71090410cac1315ae08f479a95c086feeaaf6/kpl-viewer/compare_graph/main.py) | Common-case alignment, `t-b`, `t/(t+b)`, `t/b`, independent error propagation | Only mean/P95 latency and mean duplicate differences from the first run. No ratio/division, error propagation or case alignment |
-| [trade-off_graph](https://github.com/kmu-comnet/kpl-v2/blob/74b71090410cac1315ae08f479a95c086feeaaf6/kpl-viewer/trade-off_graph/main.py) + plot.py | FRT–DRC, reachability coloring, baseline deltas, 2D/three-objective Pareto, normalized weighted scores, i/f grouping | Basic latency–duplicate scatter only. Requires explicit original `i-f-p` inputs, baseline `i1-f1.0-p100` and weights 0.25/0.25/0.5; the models, coloring and grouping are absent |
-| [time_vs_metric_plot.py](https://github.com/kmu-comnet/kpl-v2/blob/74b71090410cac1315ae08f479a95c086feeaaf6/kpl-viewer/time_vs_metric_plot.py) | Cumulative propagation, time-dependent duplicates/node, combined plots, log-x/origin controls and numeric sample output | Related latency CDF and event rates only. v2 divides by message count × mean node_count; v3 CDF divides by latency samples. Duplicate/combined/log-x plots are absent. Exponential-fit calls are commented out in v2 and are not counted as default output |
-| [calc_lazy_metric.py](https://github.com/kmu-comnet/kpl-v2/blob/74b71090410cac1315ae08f479a95c086feeaaf6/kpl-viewer/calc_lazy_metric.py) | On/off ΔR, net_cov_nodes, overlap_est, net_eff, overlap_ratio, lazy_first_ratio, net_cov_ratio, lazy_first_per_iwant table | Unsupported. Requires aligned case-level node_count/IWANT/lazy-first/on-off reachability and matching denominators. These calculations alone do not establish causality |
-| [dup_regression.py](https://github.com/kmu-comnet/kpl-v2/blob/74b71090410cac1315ae08f479a95c086feeaaf6/kpl-viewer/dup_regression.py) | Four i/f/p-based LinearRegression models, coefficients, intercepts and R² | Unsupported. Requires metadata and explicit training samples/model rules |
-| [old/graphic.py](https://github.com/kmu-comnet/kpl-v2/blob/74b71090410cac1315ae08f479a95c086feeaaf6/kpl-viewer/old/graphic.py) | Legacy arbitrary-axis/color scatter and extraction | Fixed metrics only |
-| [old/propagation.py](https://github.com/kmu-comnet/kpl-v2/blob/74b71090410cac1315ae08f479a95c086feeaaf6/kpl-viewer/old/propagation.py) | Tree-based per-message/mean hop distributions | Unsupported |
-| [old/prop_plot.py](https://github.com/kmu-comnet/kpl-v2/blob/74b71090410cac1315ae08f479a95c086feeaaf6/kpl-viewer/old/prop_plot.py) | Propagation time/hop PDF/CDF, per-message/combined mean curves, CSV/PNG | Unsupported. v3 latency histogram/CDF use different source data and denominators |
-| [old/prop_plot_graph.py](https://github.com/kmu-comnet/kpl-v2/blob/74b71090410cac1315ae08f479a95c086feeaaf6/kpl-viewer/old/prop_plot_graph.py) | Folder/global CSV curve overlays, peak=1 normalization, long-form CSV | Unsupported. Run CDF comparison does not import or peak-normalize CSV curves |
-| [old/mean_degree_ratio.py](https://github.com/kmu-comnet/kpl-v2/blob/74b71090410cac1315ae08f479a95c086feeaaf6/kpl-viewer/old/mean_degree_ratio.py) | Legacy degree Total/Count per-entry means followed by line/file means | Unsupported; its input schema also differs from the current parser's `average_degree` |
-| [old/clustering_vs_eigenvector.py](https://github.com/kmu-comnet/kpl-v2/blob/74b71090410cac1315ae08f479a95c086feeaaf6/kpl-viewer/old/clustering_vs_eigenvector.py) | Combined metric scatter and arrows from a reference case | Unsupported |
-| [old/frt_drc_graph.py](https://github.com/kmu-comnet/kpl-v2/blob/74b71090410cac1315ae08f479a95c086feeaaf6/kpl-viewer/old/frt_drc_graph.py) | Hard-coded empirical/ER comparisons, propagated errors and two plots | Unsupported; requires fixed reference data not derived from the current run |
-| [old/fitting.py](https://github.com/kmu-comnet/kpl-v2/blob/74b71090410cac1315ae08f479a95c086feeaaf6/kpl-viewer/old/fitting.py) | Reconstruct samples from degree probabilities, fit Student-t, regress inverse degrees of freedom quadratically, predict grids | Unsupported |
-| image_gen.sh / total_image_gen.sh and run.sh / run_more.sh wrappers | Batch the analyzers with specific paths and cases | v3 supports up to four selected runs and JSON/CSV/SVG export. No legacy batch/path/PNG compatibility |
-
-## Prerequisites for the remaining port
-
-1. **Compatibility definitions:** version the v2-compatible reducers and fix graph directionality, GRAFT/PRUNE handling, intervals, message weights, normalization, missing values and zero-denominator behavior. Reusing a similar v3 metric name can change research results.
-2. **Source graphs:** `observations.jsonl` retains degree histograms/means/clustering summaries. These cannot recover historical diameter, centrality or modularity. Store relationship snapshots or replay sufficient original traces.
-3. **Propagation instrumentation:** record eager/lazy first-delivery evidence and forwarding paths at the Peer. Missing historical causes cannot be filled with guesses.
-4. **Repeated experiments and models:** v3 has batches/iterations, but the current screen compares individual runs. Specify case parameters, sample units, error-bar definitions, common-case alignment and model inputs before porting the derived analyses.
-
-[Bandwidth](bandwidth.md) measures newly collected libp2p stream usage. It does not supply the missing source evidence for the unsupported analyses above.
-
-[Current visualization](visualization.md) · [Experiment metric definitions](experiment-metrics.md)
+Validation is in `internal/controller/analysis_*_test.go`, `internal/peer/tracer_test.go`, `internal/webui/research_test.cjs` and `result_images_test.cjs`. It checks small reference graphs, probability/statistical models and UI behavior; it does not assert identical results across all v2 datasets.

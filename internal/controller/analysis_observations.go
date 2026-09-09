@@ -14,11 +14,12 @@ import (
 )
 
 type analysisLayer struct {
-	Protocol      string          `json:"protocol"`
-	Nodes         int             `json:"nodes"`
-	AverageDegree *float64        `json:"averageDegree"`
-	Clustering    *float64        `json:"clustering"`
-	Degrees       []analysisPoint `json:"degrees"`
+	Metrics       map[string]*float64 `json:"metrics,omitempty"`
+	Protocol      string              `json:"protocol"`
+	Nodes         int                 `json:"nodes"`
+	AverageDegree *float64            `json:"averageDegree"`
+	Clustering    *float64            `json:"clustering"`
+	Degrees       []analysisPoint     `json:"degrees"`
 }
 
 type analysisGroup struct {
@@ -37,7 +38,15 @@ type analysisGroup struct {
 	Layers             []analysisLayer `json:"layers"`
 }
 
+type analysisGraph struct {
+	Protocol string   `json:"protocol"`
+	Nodes    []string `json:"nodes"`
+	Groups   []string `json:"groups"`
+	Edges    [][2]int `json:"edges"`
+}
+
 type analysisObservation struct {
+	Graphs []analysisGraph `json:"graphs,omitempty"`
 	RunID  string          `json:"runId"`
 	At     time.Time       `json:"at"`
 	Groups []analysisGroup `json:"groups"`
@@ -157,6 +166,34 @@ func makeAnalysisObservation(runID string, now time.Time, nodes []model.Node, ag
 			adj[edge.Source][edge.Target] = struct{}{}
 			adj[edge.Target][edge.Source] = struct{}{}
 		}
+		graph := analysisGraph{Protocol: protocol, Nodes: []string{}, Groups: []string{}, Edges: [][2]int{}}
+		nodeGroups := make(map[string]string)
+		for _, node := range nodes {
+			nodeGroups[node.ID] = node.Group
+		}
+		for id := range adj {
+			graph.Nodes = append(graph.Nodes, id)
+		}
+		sort.Strings(graph.Nodes)
+		index := make(map[string]int)
+		for i, id := range graph.Nodes {
+			index[id] = i
+			graph.Groups = append(graph.Groups, nodeGroups[id])
+		}
+		for i, id := range graph.Nodes {
+			for other := range adj[id] {
+				if i < index[other] {
+					graph.Edges = append(graph.Edges, [2]int{i, index[other]})
+				}
+			}
+		}
+		sort.Slice(graph.Edges, func(i, j int) bool {
+			if graph.Edges[i][0] != graph.Edges[j][0] {
+				return graph.Edges[i][0] < graph.Edges[j][0]
+			}
+			return graph.Edges[i][1] < graph.Edges[j][1]
+		})
+		result.Graphs = append(result.Graphs, graph)
 		graphs[protocol] = adj
 		coefficients[protocol] = analysisClustering(adj)
 	}

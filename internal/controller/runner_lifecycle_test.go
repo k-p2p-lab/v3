@@ -690,7 +690,19 @@ func (a *lifecycleTestAgent) nodeCount() int {
 func newLifecycleTestController(t *testing.T) *Server {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(ServerConfig{DataDir: t.TempDir()}, logger)
+	server := New(ServerConfig{DataDir: t.TempDir()}, logger)
+	t.Cleanup(func() {
+		server.cancelMu.Lock()
+		server.shuttingDown = true
+		for _, cancel := range server.cancels {
+			cancel()
+		}
+		server.cancelMu.Unlock()
+		// Terminal state becomes visible before the scheduler finishes its last
+		// writes. Join it before TempDir cleanup or the mock Agent is closed.
+		waitRepetitions(t, server)
+	})
+	return server
 }
 
 func newLifecycleTestControllerWithAgent(t *testing.T) (*Server, *lifecycleTestAgent) {

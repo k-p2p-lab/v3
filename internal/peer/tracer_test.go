@@ -232,3 +232,113 @@ func TestApplicationDeliverySeparatesRemoteLatencyFromLocalCopies(t *testing.T) 
 		t.Fatalf("negative one-way latency was hidden: %+v", event)
 	}
 }
+
+func TestDetailedRPCMetadataLinksControlIDsDataAndSubscriptions(t *testing.T) {
+	nodes := bootstrapTestNodes(t, 1)
+	remote, err := corepeer.Decode(nodes[0].PeerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	topic, other, subscribe := "topic", "other", true
+	stamp := time.Now().UnixNano()
+	telemetry := &telemetry{node: model.Node{ID: "node", RunID: "run"}, events: make(chan model.TraceEvent, 10)}
+	meta := &pubsubpb.TraceEvent_RPCMeta{Messages: []*pubsubpb.TraceEvent_MessageMeta{{MessageID: []byte{0, 255, 42}, Topic: &topic}}, Subscription: []*pubsubpb.TraceEvent_SubMeta{{Topic: &other, Subscribe: &subscribe}}, Control: &pubsubpb.TraceEvent_ControlMeta{Ihave: []*pubsubpb.TraceEvent_ControlIHaveMeta{{Topic: &topic, MessageIDs: [][]byte{{0, 255, 42}, []byte("second")}}}, Iwant: []*pubsubpb.TraceEvent_ControlIWantMeta{{MessageIDs: [][]byte{{0, 255, 42}}}}}}
+	(&gossipTracer{telemetry: telemetry, peerID: "local"}).Trace(&pubsubpb.TraceEvent{Type: pubsubpb.TraceEvent_SEND_RPC.Enum(), Timestamp: &stamp, SendRPC: &pubsubpb.TraceEvent_SendRPC{SendTo: []byte(remote), Meta: meta}})
+	if len(telemetry.events) != 3 {
+		t.Fatalf("expected data and two control events, got %d", len(telemetry.events))
+	}
+	records := map[string]model.TraceEvent{}
+	rpcID := ""
+	eventIDs := map[string]bool{}
+	for len(telemetry.events) > 0 {
+		event := <-telemetry.events
+		records[event.Type] = event
+		id, _ := event.Fields["rpcObservationId"].(string)
+		if id == "" {
+			t.Fatal("missing RPC observation ID")
+		}
+		if rpcID != "" && id != rpcID {
+			t.Fatal("mixed RPC records are not linked")
+		}
+		rpcID = id
+		eventIDs[event.EventID] = true
+		if event.Fields["sourceTimestamp"] != time.Unix(0, stamp).UTC().Format(time.RFC3339Nano) {
+			t.Fatal("source time lost")
+		}
+	}
+	if len(eventIDs) != 3 {
+		t.Fatal("RPC linkage reused transport event identities")
+	}
+	ihave := records["send_ihave"]
+	if !reflect.DeepEqual(ihave.Fields["topicMessageIds"], map[string][]string{topic: {"00ff2a", hex.EncodeToString([]byte("second"))}}) || ihave.Fields["messageIdCount"] != 2 || ihave.Fields["messageIdsComplete"] != true {
+		t.Fatalf("IHAVE details=%+v", ihave)
+	}
+	iwant := records["send_iwant"]
+	if !reflect.DeepEqual(iwant.Fields["messageIds"], []string{"00ff2a"}) {
+		t.Fatal("IWANT binary ID not preserved")
+	}
+	data := records["rpc_metadata"]
+	messages := data.Fields["messages"].([]map[string]any)
+	if messages[0]["pubsubMessageId"] != "00ff2a" || data.Fields["rpcSubscriptionCount"] != 1 {
+		t.Fatal("data/subscription metadata lost")
+	}
+	if meta.Messages[0].MessageID[1] != 255 {
+		t.Fatal("logging mutated upstream metadata")
+	}
+}
+func TestDetailedRPCMetadataBoundsIDsWithoutChangingCounters(t *testing.T) {
+	topic := "topic"
+	ids := make([][]byte, rpcDetailIDLimit+3)
+	for i := range ids {
+		ids[i] = []byte{1, 2, 3}
+	}
+	telemetry := &telemetry{events: make(chan model.TraceEvent, 2)}
+	(&gossipTracer{telemetry: telemetry}).traceControlRPC(model.TraceEvent{}, "send", nil, &pubsubpb.TraceEvent_RPCMeta{Control: &pubsubpb.TraceEvent_ControlMeta{Ihave: []*pubsubpb.TraceEvent_ControlIHaveMeta{{Topic: &topic, MessageIDs: ids}}}})
+	event := <-telemetry.events
+	if event.Fields["messageIdCount"] != len(ids) || event.Fields["messageIdsComplete"] != false || event.Fields["omittedMessageIds"] != 3 {
+		t.Fatal("truncation changed total or hid omitted IDs")
+	}
+	if len(event.Fields["topicMessageIds"].(map[string][]string)[topic]) != rpcDetailIDLimit {
+		t.Fatal("metadata ID limit not applied")
+	}
+	encoded, err := json.Marshal(event)
+	if err != nil || len(encoded) > 1<<20 {
+		t.Fatal("metadata exceeds expected bounded size")
+	}
+}
+
+func TestRejectedMessagesKeepReasonAndTimestampProvenance(t *testing.T) {
+	topic, reason := "topic", "validation failed"
+	for _, stamped := range []bool{false, true} {
+		tm := &telemetry{node: model.Node{ID: "node"}, events: make(chan model.TraceEvent, 8)}
+		tm.acceptClockEstimate(controllerClockEstimate{offset: time.Second, uncertainty: time.Millisecond}, time.Now())
+		event := &pubsubpb.TraceEvent{Type: pubsubpb.TraceEvent_REJECT_MESSAGE.Enum(), RejectMessage: &pubsubpb.TraceEvent_RejectMessage{Topic: &topic, Reason: &reason, MessageID: []byte{0, 255}}}
+		if stamped {
+			stamp := time.Now().UnixNano()
+			event.Timestamp = &stamp
+		}
+		(&gossipTracer{telemetry: tm}).Trace(event)
+		got := <-tm.events
+		if got.Type != "pubsub_reject" || got.Fields["pubsubMessageId"] != "00ff" || got.Fields["reason"] != reason || got.Fields["clockBasis"] != controllerClockBasis {
+			t.Fatalf("rejection evidence lost: %+v", got)
+		}
+		if got.MessageID != "" {
+			t.Fatal("wire ID was mislabeled as an application publication ID")
+		}
+		if stamped {
+			if got.Fields["timestampSource"] != "libp2p-trace" || !got.Timestamp.Equal(time.Unix(0, event.GetTimestamp()).Add(time.Second)) {
+				t.Fatal("original trace timestamp was not adjusted once")
+			}
+		} else if got.Fields["timestampSource"] != "peer-clock" || got.Fields["sourceTimestamp"] != nil {
+			t.Fatal("fallback time was presented as an upstream timestamp")
+		}
+	}
+}
+
+func TestRPCIDByteBudgetRetainsShorterIDsAndReportsOmissions(t *testing.T) {
+	large := make([]byte, rpcDetailByteLimit/2+1)
+	details := controlIDDetails(map[string][][]byte{"topic": {large, {0, 255}}})
+	if details["omittedMessageIds"] != 1 || details["messageIdsComplete"] != false || !reflect.DeepEqual(details["topicMessageIds"], map[string][]string{"topic": {"00ff"}}) {
+		t.Fatalf("byte budget concealed or corrupted detail: %+v", details)
+	}
+}

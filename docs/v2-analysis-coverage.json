@@ -1,209 +1,209 @@
 {
-  "version": 1,
-  "auditedAt": "2026-09-08",
+  "version": 2,
+  "auditedAt": "2026-09-09",
   "v2Revision": "74b71090410cac1315ae08f479a95c086feeaaf6",
   "fullParity": false,
-  "note": "Inventory audit, not an assertion of v3 numerical equivalence. Hashes bind this report to the inspected working-tree sources.",
+  "note": "Source inventory and implemented visualization families; not an assertion of v2 numerical equivalence. Research definitions differ where source observations or corrected reducers differ. Eager/lazy is a metadata estimate. Missing evidence remains unavailable.",
   "parserFields": [
     {
       "name": "assortativity",
-      "status": "unavailable",
-      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+      "status": "visualized_observed_graph",
+      "note": "Research graph summaries/timelines and distributions from available fresh undirected observations; edge-dependent statistics are unavailable for historical summary-only logs. Snapshot weighting differs from v2."
     },
     {
       "name": "average_degree",
-      "status": "different_definition",
-      "note": "Related v3 charts exist; population, time aggregation or normalization differs. See the coverage report."
+      "status": "visualized_observed_graph",
+      "note": "Research graph summaries/timelines and distributions from available fresh undirected observations; edge-dependent statistics are unavailable for historical summary-only logs. Snapshot weighting differs from v2."
     },
     {
       "name": "average_degree_excluding_leaves",
-      "status": "unavailable",
-      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+      "status": "visualized_observed_graph",
+      "note": "Research graph summaries/timelines and distributions from available fresh undirected observations; edge-dependent statistics are unavailable for historical summary-only logs. Snapshot weighting differs from v2."
     },
     {
       "name": "betweenness_centrality",
-      "status": "unavailable",
-      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+      "status": "visualized_observed_graph",
+      "note": "Research graph summaries/timelines and distributions from available fresh undirected observations; edge-dependent statistics are unavailable for historical summary-only logs. Snapshot weighting differs from v2."
     },
     {
       "name": "closeness_centrality",
-      "status": "unavailable",
-      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+      "status": "visualized_observed_graph",
+      "note": "Research graph summaries/timelines and distributions from available fresh undirected observations; edge-dependent statistics are unavailable for historical summary-only logs. Snapshot weighting differs from v2."
     },
     {
       "name": "clustering_coefficient",
-      "status": "different_definition",
-      "note": "Related v3 charts exist; population, time aggregation or normalization differs. See the coverage report."
+      "status": "visualized_observed_graph",
+      "note": "Research graph summaries/timelines and distributions from available fresh undirected observations; edge-dependent statistics are unavailable for historical summary-only logs. Snapshot weighting differs from v2."
     },
     {
       "name": "degree_centrality",
-      "status": "unavailable",
-      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+      "status": "visualized_observed_graph",
+      "note": "Research graph summaries/timelines and distributions from available fresh undirected observations; edge-dependent statistics are unavailable for historical summary-only logs. Snapshot weighting differs from v2."
     },
     {
       "name": "degree_distribution-*",
-      "status": "different_definition",
-      "note": "Related v3 charts exist; population, time aggregation or normalization differs. See the coverage report."
+      "status": "visualized_observed_graph",
+      "note": "Research graph summaries/timelines and distributions from available fresh undirected observations; edge-dependent statistics are unavailable for historical summary-only logs. Snapshot weighting differs from v2."
     },
     {
       "name": "diameter",
-      "status": "unavailable",
-      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+      "status": "visualized_observed_graph",
+      "note": "Research graph summaries/timelines and distributions from available fresh undirected observations; edge-dependent statistics are unavailable for historical summary-only logs. Snapshot weighting differs from v2."
     },
     {
       "name": "drc",
-      "status": "different_definition",
-      "note": "Related v3 charts exist; population, time aggregation or normalization differs. See the coverage report."
+      "status": "visualized_corrected_reducer",
+      "note": "Separate per-message research reducer; membership union, timing evidence, population SD and conventional median. Main v3 Metrics unchanged."
     },
     {
       "name": "dup_map",
-      "status": "raw_events_only",
-      "note": "Related v3 event evidence exists; the v2 map format and its reducer are not exported."
+      "status": "visualized_research_representation",
+      "note": "Research message records, paths, populations and cumulative curves with JSON/CSV export. Original v2 internal map serialization is not reproduced."
     },
     {
       "name": "eager_count",
-      "status": "unavailable",
-      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+      "status": "visualized_estimate",
+      "note": "Metadata-based estimate: message-ID-preferred GRAFT/IHAVE/IWANT inference, legacy time-window fallback, unknown receipts retained. Not direct sender-cause measurement."
     },
     {
       "name": "eager_frt",
-      "status": "unavailable",
-      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+      "status": "visualized_estimate",
+      "note": "Metadata-based estimate: message-ID-preferred GRAFT/IHAVE/IWANT inference, legacy time-window fallback, unknown receipts retained. Not direct sender-cause measurement."
     },
     {
       "name": "eager_propa_map",
-      "status": "unavailable",
-      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+      "status": "visualized_estimate",
+      "note": "Metadata-based estimate: message-ID-preferred GRAFT/IHAVE/IWANT inference, legacy time-window fallback, unknown receipts retained. Not direct sender-cause measurement."
     },
     {
       "name": "eager_reach_map",
-      "status": "unavailable",
-      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+      "status": "visualized_estimate",
+      "note": "Metadata-based estimate: message-ID-preferred GRAFT/IHAVE/IWANT inference, legacy time-window fallback, unknown receipts retained. Not direct sender-cause measurement."
     },
     {
       "name": "eager_reachability",
-      "status": "unavailable",
-      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+      "status": "visualized_estimate",
+      "note": "Metadata-based estimate: message-ID-preferred GRAFT/IHAVE/IWANT inference, legacy time-window fallback, unknown receipts retained. Not direct sender-cause measurement."
     },
     {
       "name": "eigenvector_centrality",
-      "status": "unavailable",
-      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+      "status": "visualized_observed_graph",
+      "note": "Research graph summaries/timelines and distributions from available fresh undirected observations; edge-dependent statistics are unavailable for historical summary-only logs. Snapshot weighting differs from v2."
     },
     {
       "name": "frt",
-      "status": "different_definition",
-      "note": "Related v3 charts exist; population, time aggregation or normalization differs. See the coverage report."
+      "status": "visualized_corrected_reducer",
+      "note": "Separate per-message research reducer; membership union, timing evidence, population SD and conventional median. Main v3 Metrics unchanged."
     },
     {
       "name": "lazy_count",
-      "status": "unavailable",
-      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+      "status": "visualized_estimate",
+      "note": "Metadata-based estimate: message-ID-preferred GRAFT/IHAVE/IWANT inference, legacy time-window fallback, unknown receipts retained. Not direct sender-cause measurement."
     },
     {
       "name": "logical_recv_ihave",
-      "status": "related_control_counts",
-      "note": "Control breakdown exposes RPC occurrences, entries and message ID references. v2 event meaning and per-message interval aggregation are not identical."
+      "status": "visualized_control_metadata",
+      "note": "RPC, entry, ID-reference, mesh-transition and reciprocal logical-edge counts are separate. Aggregation intervals differ from v2."
     },
     {
       "name": "logical_recv_iwant",
-      "status": "related_control_counts",
-      "note": "Control breakdown exposes RPC occurrences, entries and message ID references. v2 event meaning and per-message interval aggregation are not identical."
+      "status": "visualized_control_metadata",
+      "note": "RPC, entry, ID-reference, mesh-transition and reciprocal logical-edge counts are separate. Aggregation intervals differ from v2."
     },
     {
       "name": "logical_send_graft",
-      "status": "unavailable",
-      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+      "status": "visualized_control_metadata",
+      "note": "RPC, entry, ID-reference, mesh-transition and reciprocal logical-edge counts are separate. Aggregation intervals differ from v2."
     },
     {
       "name": "logical_send_ihave",
-      "status": "related_control_counts",
-      "note": "Control breakdown exposes RPC occurrences, entries and message ID references. v2 event meaning and per-message interval aggregation are not identical."
+      "status": "visualized_control_metadata",
+      "note": "RPC, entry, ID-reference, mesh-transition and reciprocal logical-edge counts are separate. Aggregation intervals differ from v2."
     },
     {
       "name": "logical_send_iwant",
-      "status": "related_control_counts",
-      "note": "Control breakdown exposes RPC occurrences, entries and message ID references. v2 event meaning and per-message interval aggregation are not identical."
+      "status": "visualized_control_metadata",
+      "note": "RPC, entry, ID-reference, mesh-transition and reciprocal logical-edge counts are separate. Aggregation intervals differ from v2."
     },
     {
       "name": "logical_send_prune",
-      "status": "unavailable",
-      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+      "status": "visualized_control_metadata",
+      "note": "RPC, entry, ID-reference, mesh-transition and reciprocal logical-edge counts are separate. Aggregation intervals differ from v2."
     },
     {
       "name": "modularity",
-      "status": "unavailable",
-      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+      "status": "visualized_observed_graph",
+      "note": "Research graph summaries/timelines and distributions from available fresh undirected observations; edge-dependent statistics are unavailable for historical summary-only logs. Snapshot weighting differs from v2."
     },
     {
       "name": "node_count",
-      "status": "different_definition",
-      "note": "Related v3 charts exist; population, time aggregation or normalization differs. See the coverage report."
+      "status": "visualized_observed_graph",
+      "note": "Research graph summaries/timelines and distributions from available fresh undirected observations; edge-dependent statistics are unavailable for historical summary-only logs. Snapshot weighting differs from v2."
     },
     {
       "name": "page_rank",
-      "status": "unavailable",
-      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+      "status": "visualized_observed_graph",
+      "note": "Research graph summaries/timelines and distributions from available fresh undirected observations; edge-dependent statistics are unavailable for historical summary-only logs. Snapshot weighting differs from v2."
     },
     {
       "name": "propa_map",
-      "status": "raw_events_only",
-      "note": "Related v3 event evidence exists; the v2 map format and its reducer are not exported."
+      "status": "visualized_research_representation",
+      "note": "Research message records, paths, populations and cumulative curves with JSON/CSV export. Original v2 internal map serialization is not reproduced."
     },
     {
       "name": "pub_map",
-      "status": "raw_events_only",
-      "note": "Related v3 event evidence exists; the v2 map format and its reducer are not exported."
+      "status": "visualized_research_representation",
+      "note": "Research message records, paths, populations and cumulative curves with JSON/CSV export. Original v2 internal map serialization is not reproduced."
     },
     {
       "name": "reach_map",
-      "status": "raw_events_only",
-      "note": "Related v3 event evidence exists; the v2 map format and its reducer are not exported."
+      "status": "visualized_research_representation",
+      "note": "Research message records, paths, populations and cumulative curves with JSON/CSV export. Original v2 internal map serialization is not reproduced."
     },
     {
       "name": "reachability",
-      "status": "different_definition",
-      "note": "Related v3 charts exist; population, time aggregation or normalization differs. See the coverage report."
+      "status": "visualized_corrected_reducer",
+      "note": "Separate per-message research reducer; membership union, timing evidence, population SD and conventional median. Main v3 Metrics unchanged."
     },
     {
       "name": "recv_ihave",
-      "status": "related_control_counts",
-      "note": "Control breakdown exposes RPC occurrences, entries and message ID references. v2 event meaning and per-message interval aggregation are not identical."
+      "status": "visualized_control_metadata",
+      "note": "RPC, entry, ID-reference, mesh-transition and reciprocal logical-edge counts are separate. Aggregation intervals differ from v2."
     },
     {
       "name": "recv_iwant",
-      "status": "related_control_counts",
-      "note": "Control breakdown exposes RPC occurrences, entries and message ID references. v2 event meaning and per-message interval aggregation are not identical."
+      "status": "visualized_control_metadata",
+      "note": "RPC, entry, ID-reference, mesh-transition and reciprocal logical-edge counts are separate. Aggregation intervals differ from v2."
     },
     {
       "name": "send_graft",
-      "status": "related_control_counts",
-      "note": "Control breakdown exposes RPC occurrences, entries and message ID references. v2 event meaning and per-message interval aggregation are not identical."
+      "status": "visualized_control_metadata",
+      "note": "RPC, entry, ID-reference, mesh-transition and reciprocal logical-edge counts are separate. Aggregation intervals differ from v2."
     },
     {
       "name": "send_ihave",
-      "status": "related_control_counts",
-      "note": "Control breakdown exposes RPC occurrences, entries and message ID references. v2 event meaning and per-message interval aggregation are not identical."
+      "status": "visualized_control_metadata",
+      "note": "RPC, entry, ID-reference, mesh-transition and reciprocal logical-edge counts are separate. Aggregation intervals differ from v2."
     },
     {
       "name": "send_iwant",
-      "status": "related_control_counts",
-      "note": "Control breakdown exposes RPC occurrences, entries and message ID references. v2 event meaning and per-message interval aggregation are not identical."
+      "status": "visualized_control_metadata",
+      "note": "RPC, entry, ID-reference, mesh-transition and reciprocal logical-edge counts are separate. Aggregation intervals differ from v2."
     },
     {
       "name": "send_prune",
-      "status": "related_control_counts",
-      "note": "Control breakdown exposes RPC occurrences, entries and message ID references. v2 event meaning and per-message interval aggregation are not identical."
+      "status": "visualized_control_metadata",
+      "note": "RPC, entry, ID-reference, mesh-transition and reciprocal logical-edge counts are separate. Aggregation intervals differ from v2."
     },
     {
       "name": "shortest_path_length",
-      "status": "unavailable",
-      "note": "No equivalent built-in visualization/reducer; see required data and semantics in the coverage report."
+      "status": "visualized_observed_graph",
+      "note": "Research graph summaries/timelines and distributions from available fresh undirected observations; edge-dependent statistics are unavailable for historical summary-only logs. Snapshot weighting differs from v2."
     },
     {
       "name": "time",
-      "status": "different_definition",
-      "note": "Related v3 charts exist; population, time aggregation or normalization differs. See the coverage report."
+      "status": "visualized_research_representation",
+      "note": "Research message records, paths, populations and cumulative curves with JSON/CSV export. Original v2 internal map serialization is not reproduced."
     }
   ],
   "sources": [
@@ -376,6 +376,78 @@
       "path": "kpl-viewer/trade-off_graph/run.sh",
       "family": "trade-off_graph",
       "sha256": "20342c578427766761b89e6a789a5a1f35949c45b468e637c83c4f52b333cc44"
+    }
+  ],
+  "visualizationFamilies": [
+    {
+      "source": "basic_graph",
+      "status": "implemented",
+      "capability": "Repeat means/sample-SD, metric/case/degree plots"
+    },
+    {
+      "source": "compare_graph",
+      "status": "implemented",
+      "capability": "Matched-case difference, ratio and division with error propagation"
+    },
+    {
+      "source": "trade-off_graph",
+      "status": "implemented",
+      "capability": "Metric scatter, arrows, Pareto, scores and parameter groups"
+    },
+    {
+      "source": "time_vs_metric_plot.py",
+      "status": "implemented",
+      "capability": "Propagation and duplicate cumulative curves with log axes/panels"
+    },
+    {
+      "source": "calc_lazy_metric.py",
+      "status": "implemented",
+      "capability": "Eight observational lazy contribution estimates"
+    },
+    {
+      "source": "dup_regression.py",
+      "status": "implemented",
+      "capability": "All four regression designs with coefficients, rank and in-sample R-squared"
+    },
+    {
+      "source": "old/graphic.py",
+      "status": "implemented",
+      "capability": "Metric imports and arbitrary metric scatter"
+    },
+    {
+      "source": "old/propagation.py, old/prop_plot.py",
+      "status": "implemented",
+      "capability": "Per-message trees, time/hop distributions, mean cumulative counts and increments"
+    },
+    {
+      "source": "old/prop_plot_graph.py",
+      "status": "implemented",
+      "capability": "Raw and peak-normalized imported overlays"
+    },
+    {
+      "source": "old/mean_degree_ratio.py",
+      "status": "implemented",
+      "capability": "Total/Count imports and mean degree probabilities"
+    },
+    {
+      "source": "old/clustering_vs_eigenvector.py",
+      "status": "implemented",
+      "capability": "Metric scatter with reference arrows"
+    },
+    {
+      "source": "old/frt_drc_graph.py",
+      "status": "implemented",
+      "capability": "Fixed historical/ER reference charts from supplied constants"
+    },
+    {
+      "source": "old/fitting.py",
+      "status": "implemented",
+      "capability": "Weighted Student-t fit, quadratic parameter models and predictions"
+    },
+    {
+      "source": "image_gen.sh, total_image_gen.sh, run*.sh",
+      "status": "implemented",
+      "capability": "Background batch analysis and PNG/CSV/chart-definition ZIP exports"
     }
   ]
 }

@@ -14,28 +14,31 @@ import (
 	"time"
 )
 
+const currentAnalysisVersion = 3
 const analysisJobLimit = 32
 const analysisJobFile = "analysis-job.json"
 const analysisResultFile = "analysis-result.json"
+const analysisSummaryFile = "analysis-summary.json"
 
 var errAnalysisQueueFull = errors.New("analysis queue is full; try again after a job finishes")
 
 type analysisJobStatus struct {
-	Version        int       `json:"version"`
-	ID             string    `json:"id,omitempty"`
-	RunID          string    `json:"runId"`
-	State          string    `json:"state"`
-	Phase          string    `json:"phase,omitempty"`
-	ProcessedBytes int64     `json:"processedBytes"`
-	TotalBytes     int64     `json:"totalBytes"`
-	Progress       float64   `json:"progress"`
-	CreatedAt      time.Time `json:"createdAt"`
-	StartedAt      time.Time `json:"startedAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
-	FinishedAt     time.Time `json:"finishedAt"`
-	SnapshotAt     time.Time `json:"snapshotAt"`
-	Error          string    `json:"error,omitempty"`
-	ResultURL      string    `json:"resultUrl,omitempty"`
+	Version         int       `json:"version"`
+	AnalysisVersion int       `json:"analysisVersion"`
+	ID              string    `json:"id,omitempty"`
+	RunID           string    `json:"runId"`
+	State           string    `json:"state"`
+	Phase           string    `json:"phase,omitempty"`
+	ProcessedBytes  int64     `json:"processedBytes"`
+	TotalBytes      int64     `json:"totalBytes"`
+	Progress        float64   `json:"progress"`
+	CreatedAt       time.Time `json:"createdAt"`
+	StartedAt       time.Time `json:"startedAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+	FinishedAt      time.Time `json:"finishedAt"`
+	SnapshotAt      time.Time `json:"snapshotAt"`
+	Error           string    `json:"error,omitempty"`
+	ResultURL       string    `json:"resultUrl,omitempty"`
 }
 
 type analysisJob struct {
@@ -169,7 +172,7 @@ func (s *Server) startAnalysisJob(ctx context.Context, id string, refresh bool) 
 	if err != nil {
 		return analysisJobStatus{}, err
 	}
-	if existing.status.State == "queued" || existing.status.State == "running" || existing.status.State == "completed" && !refresh {
+	if existing.status.State == "queued" || existing.status.State == "running" || existing.status.State == "completed" && !refresh && existing.status.AnalysisVersion == currentAnalysisVersion {
 		return existing.status, nil
 	}
 	count := 0
@@ -197,7 +200,7 @@ func (s *Server) startAnalysisJob(ctx context.Context, id string, refresh bool) 
 		return analysisJobStatus{}, err
 	}
 	now := time.Now().UTC()
-	job := &analysisJob{status: analysisJobStatus{Version: 1, ID: hex.EncodeToString(nonce[:]), RunID: id, State: "queued", Phase: "queued", CreatedAt: now, UpdatedAt: now}}
+	job := &analysisJob{status: analysisJobStatus{Version: 1, AnalysisVersion: currentAnalysisVersion, ID: hex.EncodeToString(nonce[:]), RunID: id, State: "queued", Phase: "queued", CreatedAt: now, UpdatedAt: now}}
 	if err := s.persistAnalysisJob(job.status); err != nil {
 		return analysisJobStatus{}, err
 	}
@@ -247,7 +250,7 @@ func (s *Server) runAnalysisJob(ctx context.Context, job *analysisJob) {
 		report := analysisProgress(func(phase string, bytes int64) {
 			processed += bytes
 			now := time.Now().UTC()
-			if phase == lastPhase && now.Sub(lastUpdate) < time.Second {
+			if strings.SplitN(phase, " ", 2)[0] == strings.SplitN(lastPhase, " ", 2)[0] && now.Sub(lastUpdate) < time.Second {
 				return
 			}
 			s.analysisJobMu.Lock()
@@ -284,6 +287,19 @@ func (s *Server) runAnalysisJob(ctx context.Context, job *analysisJob) {
 		}
 		defer root.Close()
 		if err := writeAnalysisJSON(root, analysisResultFile, analysis); err != nil {
+			return err
+		}
+		compact := analysis
+		compact.Observations = []analysisObservation{}
+		compact.Timeline = []analysisBin{}
+		compact.BandwidthTimeline = []bandwidthBin{}
+		if analysis.Research != nil {
+			research := *analysis.Research
+			research.MessageCount = len(research.Messages)
+			research.Messages = []researchMessage{}
+			compact.Research = &research
+		}
+		if err := writeAnalysisJSON(root, analysisSummaryFile, compact); err != nil {
 			return err
 		}
 		completed := job.status
@@ -324,7 +340,7 @@ func (s *Server) handleAnalysisJob(ctx context.Context) http.HandlerFunc {
 		}
 		id := parts[0]
 		if len(parts) == 2 {
-			if parts[1] != "result" {
+			if parts[1] != "result" && parts[1] != "summary" {
 				http.NotFound(w, r)
 				return
 			}
@@ -386,7 +402,11 @@ func (s *Server) handleAnalysisArtifact(w http.ResponseWriter, r *http.Request, 
 			return resultFile{}, err
 		}
 		defer root.Close()
-		return openResultFile(root, analysisResultFile)
+		name := analysisResultFile
+		if strings.HasSuffix(r.URL.Path, "/summary") {
+			name = analysisSummaryFile
+		}
+		return openResultFile(root, name)
 	}()
 	if err != nil {
 		code := http.StatusUnprocessableEntity

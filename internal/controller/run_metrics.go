@@ -15,6 +15,7 @@ import (
 
 type messageMetricKey struct{ topic, id string }
 type deliveryMetric struct {
+	research             *deliveryResearch
 	timestamp            time.Time
 	agentID              string
 	latencyMS            float64
@@ -23,16 +24,18 @@ type deliveryMetric struct {
 	latencyUncertaintyMS float64
 }
 type messageMetric struct {
-	published  bool
-	publisher  string
-	targets    map[string]struct{} // nil: unknown legacy cohort, empty: explicitly none
-	deliveries map[string]deliveryMetric
-	duplicates map[string]int
+	publishedAt time.Time
+	published   bool
+	publisher   string
+	targets     map[string]struct{} // nil: unknown legacy cohort, empty: explicitly none
+	deliveries  map[string]deliveryMetric
+	duplicates  map[string]int
 }
 
 // This compact per-message index outlives the 300-row recent-events feed.
 // All access is protected by state.mu; deleting a result releases its index.
 type runMetricAccumulator struct {
+	research                         *researchAccumulator
 	seen                             map[string]struct{}
 	messages                         map[messageMetricKey]*messageMetric
 	control                          map[gossipSubControlKey]*model.GossipSubControlMetric
@@ -76,6 +79,9 @@ func (a *runMetricAccumulator) observe(event model.TraceEvent) bool {
 	if id := eventIdentity(event); id != "" {
 		a.seen[id] = struct{}{}
 	}
+	if a.research != nil {
+		a.research.observe(event)
+	}
 	a.window.observe(event)
 	a.observeGossipSubControl(event)
 	if interval := a.bandwidth.observe(event); interval != nil && a.onBandwidth != nil {
@@ -105,6 +111,7 @@ func (a *runMetricAccumulator) observe(event model.TraceEvent) bool {
 		a.published++
 		message.published = true
 		message.publisher = event.NodeID
+		message.publishedAt = event.Timestamp
 		if targets, known := targetNodeIDs(event.Fields["targetNodeIds"]); known {
 			message.targets = make(map[string]struct{}, len(targets))
 			for _, id := range targets {
@@ -129,7 +136,14 @@ func (a *runMetricAccumulator) observe(event model.TraceEvent) bool {
 		available, _ := event.Fields["latencyAvailable"].(bool)
 		clockSynchronized, _ := event.Fields["latencyClockSynchronized"].(bool)
 		latencyUncertaintyMS, _ := numericEventField(event.Fields, "latencyUncertaintyMs")
+		var detail *deliveryResearch
+		if a.research != nil {
+			basis, _ := event.Fields["clockBasis"].(string)
+			wireID, _ := event.Fields["pubsubMessageId"].(string)
+			detail = &deliveryResearch{wireID: wireID, peer: event.PeerID, from: event.RemotePeerID, synchronized: basis == "controller-offset-v1"}
+		}
 		message.deliveries[event.NodeID] = deliveryMetric{
+			research:  detail,
 			timestamp: event.Timestamp, agentID: event.AgentID, latencyMS: event.LatencyMS,
 			latencyAvailable: encoding == "envelope" && available, clockSynchronized: clockSynchronized,
 			latencyUncertaintyMS: latencyUncertaintyMS,

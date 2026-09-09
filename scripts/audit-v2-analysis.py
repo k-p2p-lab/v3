@@ -45,7 +45,7 @@ def main():
     if problems:
         print("\n".join(problems), file=sys.stderr)
         return 1
-    print(f"PASS: {len(fields)} parser fields/families and {len(actual)} source files match the audit. Full v2 visualization parity: NO.")
+    print(f"PASS: {len(fields)} parser fields/families and {len(actual)} source files match the audit. Source inventory verified; numerical equivalence is not asserted.")
     return 0
 
 

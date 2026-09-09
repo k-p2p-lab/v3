@@ -98,7 +98,7 @@ Dashboard는 Controller의 최신 상태와 이벤트를 표시합니다. Contro
 
 Metric과 토폴로지는 수신된 보고를 바탕으로 한 관측 결과입니다. 오래되거나 연결할 수 없는 Agent, telemetry queue 손실, `scope: all` impairment, scrape 시점 또는 강제 종료 때문에 P2P 트래픽이 일부 발생했더라도 control plane의 관측량이 줄어들 수 있습니다. Metric 정의는 [실험 지표](experiment-metrics.kr.md), 수집 한계는 [모니터링과 결과](monitoring.kr.md), 그래프 의미는 [토폴로지](topology.kr.md)를 참고하십시오.
 
-Controller는 실행 중 그룹별 토폴로지·점수 요약을 `observations.jsonl`로 주기적으로 저장합니다. 전체 관계 그래프나 평가자별 개별 점수는 보존하지 않습니다. 대역폭 표본은 이벤트로 저장하며 수신 기간의 대상 선정과 독립적으로 재계산합니다. [Bandwidth 측정](bandwidth.kr.md)을 참고하십시오. 내장 Dashboard의 [저장 결과 시각화](visualization.kr.md)는 저장된 이벤트·관측치를 분석 API로 조회해 실행별 분포와 시계열을 표시하고 여러 실행을 비교합니다. Prometheus 보존 시계열과 독립적으로 동작합니다.
+Controller는 실행 중 그룹별 토폴로지·점수 요약을 `observations.jsonl`로 주기적으로 저장합니다. 신선한 Peer 보고에서 확인한 transport·Kademlia·GossipSub 간선과 노드도 함께 저장하여 백그라운드 분석에서 그래프 지표를 계산합니다. 평가자별 개별 점수는 보존하지 않습니다. 대역폭 표본은 이벤트로 저장하며 수신 기간의 대상 선정과 독립적으로 재계산합니다. [Bandwidth 측정](bandwidth.kr.md)을 참고하십시오. 내장 Dashboard의 [저장 결과 시각화](visualization.kr.md)는 저장된 이벤트·관측치를 분석 API로 조회해 실행별 분포와 시계열을 표시하고 여러 실행을 비교합니다. Prometheus 보존 시계열과 독립적으로 동작합니다.
 
 ## 지원 배포 경계
 

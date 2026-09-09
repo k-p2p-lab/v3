@@ -17,7 +17,7 @@ English is the default language for code, the UI, and documentation. Korean docu
 - Live Kademlia, GossipSub GRAFT, and transport topology with Agent sectors and topic filters
 - Churn-aware delivery, latency, duplicate, coverage, and observation-quality metrics
 - Reusable scenario library plus repeat runs, persisted results, ZIP export, and deletion
-- Per-result graph image previews and PNG downloads
+- Background analysis, v2 research comparisons, bandwidth images and PNG/CSV/ZIP downloads
 - Measured libp2p stream throughput and cumulative bytes by protocol, with collection-quality indicators
 
 ## Prerequisites
@@ -63,7 +63,7 @@ Start with the [Hub](https://github.com/k-p2p-lab/hub) for objectives, research,
 | [Development](docs/development.md) | Go build, scenario validation, tests, and development deployment on Swarm |
 | [Experiment metrics](docs/experiment-metrics.md) | Churn-aware delivery denominator, latency, duplicates, and limitations |
 | [Monitoring and results](docs/monitoring.md) | Prometheus, Grafana, ZIP contents, retained data, and deletion |
-| [Saved-result visualization](docs/visualization.md) | Per-result graph images and PNG downloads |
+| [Saved-result visualization](docs/visualization.md) | Result images, repeated-run comparisons and PNG/CSV/ZIP downloads |
 | [Topology](docs/topology.md) | Agent sectors, graph layers, topic filters, and controls |
 | [Swarm churn and publish](docs/swarm-churn-publish.md) | Multi-server continuous-churn experiment walkthrough |
 | [Prysm block scoring under churn](docs/swarm-churn-prysm-block.md) | Three delay cohorts, concurrent churn, and score observation |

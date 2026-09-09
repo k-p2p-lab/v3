@@ -226,6 +226,25 @@
       <progress id="resultImagesProgress" max="100" aria-label="Log reading progress" hidden></progress>
       <div id="resultImagesAuth" hidden><label for="resultImagesToken">API token to start analysis</label><input id="resultImagesToken" type="password" autocomplete="off" placeholder="Enter token, then Retry"></div>
       <div class="result-images-actions"><a class="secondary-button" id="downloadResultAnalysis" hidden>Download analysis JSON</a><button class="secondary-button" id="refreshResultImages" type="button" hidden>Analyze latest snapshot</button></div>
+      <a class="secondary-button" id="downloadAllResultImages" hidden>Download all PNG + CSV (ZIP)</a>
+      <details id="researchTools" hidden>
+        <summary>Message images, repeated runs and v2 comparisons</summary>
+        <div class="research-controls"><label>Message <select id="researchMessage"></select></label><button type="button" id="drawResearchMessage">Message images</button><button type="button" id="drawResearchOverview">Result overview images</button></div>
+        <p class="dialog-help">Load results, select runs, and edit series/case labels. Identical series and case labels form repeats. Use separate series for baseline and treatment. i/f/p and D parameters are optional and required only by their models. A matched lazy-off baseline is required for lazy contribution estimates.</p>
+        <button type="button" id="loadResearchRuns">Load saved results</button>
+        <div class="research-table-wrap"><table><thead><tr><th>Select</th><th>Result</th><th>Series</th><th>Case</th><th>Parameters</th></tr></thead><tbody id="researchRuns"></tbody></table></div>
+        <div class="research-controls">
+          <label>Metric <select id="researchMetric"></select></label><label>X axis <select id="researchX"></select></label><label>Scatter color <select id="researchColor"></select></label>
+          <label>Baseline series <input id="researchBaseline" placeholder="First selected series"></label><label>Reference case <input id="researchReference" placeholder="First selected case"></label>
+          <label>Filter p (%) <input id="researchP" type="number" min="0" max="100" placeholder="All"></label><label>FRT, DRC, reach weights <input id="researchWeights" value="0.25,0.25,0.5"></label>
+          <label>Degree predictions (Dlow,D,Dhigh per line) <textarea id="researchPredictions" rows="2" placeholder="4,8,12"></textarea></label>
+        </div>
+        <button type="button" id="drawResearchCompare">Analyze selected results and generate comparison images</button>
+        <p class="dialog-help">Selected analyses continue on the server after closing. PNGs and CSVs are prepared from saved analyses when this view is open. Undefined values, missing evidence and rank-deficient fits appear as N/A.</p>
+        <div class="research-controls"><label>Import v2 JSON / JSONL / CSV or v3 analysis JSON (32 MiB/file) <input id="researchFiles" type="file" accept=".json,.jsonl,.csv" multiple></label><button type="button" id="drawImportedCurves">Imported curve overlays</button><button type="button" id="clearResearchImports">Clear imports</button></div>
+        <p class="dialog-help">For v2 x_case/y/yerr JSON, select its Metric before importing. Imported values retain their original analysis definitions. Use files with the same units for curve overlays.</p>
+        <button type="button" id="drawV2Reference">v2 fixed historical / ER reference images</button>
+      </details>
       <div class="result-images-grid" id="resultImagesGrid"></div>
     </div>
   </dialog>
@@ -310,6 +329,11 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="/navigation.js" defer></script>
   <script src="/topology-layout.js" defer></script>
+  <script src="/research-charts.js" defer></script>
+  <script src="/research-v2-reference.js" defer></script>
+  <script src="/research-files.js" defer></script>
+  <script src="/research-compare.js" defer></script>
+  <script src="/research-ui.js" defer></script>
   <script src="/result-images.js" defer></script>
   <script src="/app.js" defer></script>
 </body>

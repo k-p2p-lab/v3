@@ -429,3 +429,12 @@ dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
 .result-images-actions { display: flex; flex-wrap: wrap; gap: .65rem; margin: .8rem 0; }
 #resultImagesAuth { margin: .8rem 0; }
 #resultImagesAuth label { display: block; margin-bottom: .5rem; }
+
+#researchTools { margin: 1rem 0; padding: .8rem; border: 1px solid var(--line); border-radius: .5rem; }
+#researchTools summary { cursor: pointer; color: var(--cyan); }
+.research-controls { display: flex; flex-wrap: wrap; align-items: end; gap: .7rem; margin: .8rem 0; }
+.research-controls label { display: grid; gap: .35rem; max-width: 100%; font-size: .8rem; }
+.research-controls input, .research-controls select, .research-controls textarea { max-width: 24rem; width: 100%; }
+.research-table-wrap { max-height: 22rem; overflow: auto; margin: .8rem 0; }
+.research-table-wrap input:not([type=checkbox]) { min-width: 10rem; }
+.result-image figcaption { flex-wrap: wrap; }

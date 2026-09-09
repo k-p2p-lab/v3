@@ -33,6 +33,8 @@ type analysisBin struct {
 }
 
 type resultAnalysis struct {
+	AnalysisVersion     int                   `json:"analysisVersion"`
+	Research            *researchAnalysis     `json:"research,omitempty"`
 	AnalysisID          string                `json:"analysisId,omitempty"`
 	BandwidthTimeline   []bandwidthBin        `json:"bandwidthTimeline"`
 	BandwidthBinSeconds int64                 `json:"bandwidthBinSeconds"`
@@ -153,6 +155,7 @@ func analyzeResult(ctx context.Context, snapshot *resultSnapshot) (resultAnalysi
 	result := resultAnalysis{Version: 1, Result: snapshot.result, AsOf: snapshot.exportedAt,
 		LatencyCDF: []analysisPoint{}, LatencyHistogram: []analysisPoint{}, Timeline: []analysisBin{}, Observations: []analysisObservation{}}
 	accumulator := newRunMetricAccumulator()
+	accumulator.research = newResearchAccumulator()
 	var bandwidth bandwidthTimeline
 	accumulator.onBandwidth = bandwidth.add
 	bins := make(map[int64]analysisBin)
@@ -299,6 +302,15 @@ func analyzeResult(ctx context.Context, snapshot *resultSnapshot) (resultAnalysi
 	}
 	sort.Slice(result.Timeline, func(i, j int) bool { return result.Timeline[i].At.Before(result.Timeline[j].At) })
 	sort.Slice(result.Observations, func(i, j int) bool { return result.Observations[i].At.Before(result.Observations[j].At) })
+	if err := enrichAnalysisGraphs(ctx, result.Observations); err != nil {
+		return result, err
+	}
+	research, err := accumulator.research.finish(ctx, accumulator, result.Observations)
+	if err != nil {
+		return result, err
+	}
+	result.Research = &research
+	result.AnalysisVersion = currentAnalysisVersion
 	return result, ctx.Err()
 }
 
