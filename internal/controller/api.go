@@ -94,6 +94,7 @@ func (s *Server) serve(ctx context.Context, listener net.Listener) error {
 	// the final experiment state. Returning sooner would let main exit while
 	// those goroutines still own resources, especially after Linux SIGTERM.
 	s.runs.Wait()
+	s.analysisWorkers.Wait()
 	<-analysisDone
 	if errors.Is(err, http.ErrServerClosed) {
 		err = nil
@@ -125,6 +126,7 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 	mux.HandleFunc("/api/v1/results", s.handleResults)
 	mux.HandleFunc("/api/v1/results/", s.handleResultAction)
 	mux.HandleFunc("/api/v1/experiments/", s.handleExperimentAction)
+	mux.HandleFunc("/api/v1/analysis-jobs/", s.handleAnalysisJob(ctx))
 	mux.HandleFunc("/api/v1/stream", s.handleStream)
 	mux.Handle("/", http.FileServer(http.FS(webui.FS())))
 	return s.withMiddleware(mux)

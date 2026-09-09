@@ -423,3 +423,9 @@ dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
 .result-image figcaption a { padding: .3rem; color: var(--cyan); white-space: nowrap; text-decoration: none; }
 .result-image a:focus-visible { outline: 3px solid var(--cyan); outline-offset: -3px; }
 @media (max-width: 760px) { .result-images-grid { grid-template-columns: 1fr; } .result-images-shell { padding: 1rem; } }
+
+#resultImagesProgress { display: block; width: 100%; height: .8rem; margin: .75rem 0; accent-color: var(--cyan); }
+#resultImagesProgress[hidden] { display: none; }
+.result-images-actions { display: flex; flex-wrap: wrap; gap: .65rem; margin: .8rem 0; }
+#resultImagesAuth { margin: .8rem 0; }
+#resultImagesAuth label { display: block; margin-bottom: .5rem; }

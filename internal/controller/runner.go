@@ -50,6 +50,9 @@ type Server struct {
 	resultArchiveFlights   map[string]*resultArchiveFlight
 	resultArchiveSlots     chan struct{}
 	analysisSlots          chan struct{}
+	analysisJobMu          sync.Mutex
+	analysisJobs           map[string]*analysisJob
+	analysisWorkers        sync.WaitGroup
 	scenarioMu             sync.Mutex
 	scenarioCacheMu        sync.Mutex
 	scenarioSummaries      map[string][]scenarioSummaryCacheEntry
@@ -83,6 +86,7 @@ func New(config ServerConfig, logger *slog.Logger) *Server {
 		resultArchiveFlights:   make(map[string]*resultArchiveFlight),
 		resultArchiveSlots:     make(chan struct{}, resultArchiveMeasureLimit),
 		analysisSlots:          make(chan struct{}, 1),
+		analysisJobs:           make(map[string]*analysisJob),
 		scenarioSummaries:      make(map[string][]scenarioSummaryCacheEntry),
 		scenarioSummaryFlights: make(map[string][]*scenarioSummaryFlight),
 		scenarioRecordCheck: func(data []byte) error {

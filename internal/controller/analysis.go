@@ -33,6 +33,7 @@ type analysisBin struct {
 }
 
 type resultAnalysis struct {
+	AnalysisID          string                `json:"analysisId,omitempty"`
 	BandwidthTimeline   []bandwidthBin        `json:"bandwidthTimeline"`
 	BandwidthBinSeconds int64                 `json:"bandwidthBinSeconds"`
 	Version             int                   `json:"version"`
@@ -104,11 +105,33 @@ func (s *Server) handleResultAnalysis(w http.ResponseWriter, r *http.Request, id
 	writeJSON(w, http.StatusOK, analysis)
 }
 
+type analysisProgress func(phase string, bytes int64)
+type analysisProgressKey struct{}
+type analysisProgressReader struct {
+	io.Reader
+	report func(int64)
+}
+
+func (r analysisProgressReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	if n > 0 {
+		r.report(int64(n))
+	}
+	return n, err
+}
+func reportAnalysisProgress(ctx context.Context, phase string, bytes int64) {
+	if report, ok := ctx.Value(analysisProgressKey{}).(analysisProgress); ok {
+		report(phase, bytes)
+	}
+}
+
 func scanAnalysisFile(ctx context.Context, file resultFile, consume func([]byte) error) error {
 	if file.file == nil {
 		return nil
 	}
-	scanner := bufio.NewScanner(io.NewSectionReader(file.file, 0, file.size))
+	reportAnalysisProgress(ctx, file.name, 0)
+	reader := analysisProgressReader{Reader: io.NewSectionReader(file.file, 0, file.size), report: func(n int64) { reportAnalysisProgress(ctx, file.name, n) }}
+	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	line := 0
 	for scanner.Scan() {
@@ -258,7 +281,11 @@ func analyzeResult(ctx context.Context, snapshot *resultSnapshot) (resultAnalysi
 			result.Observations = append(result.Observations, latestObservation)
 		}
 	}
-	metrics, samples := accumulator.summarize(result.Result.ID, result.AsOf)
+	reportAnalysisProgress(ctx, "aggregating", 0)
+	metrics, samples, err := accumulator.summarizeContext(ctx, result.Result.ID, result.AsOf)
+	if err != nil {
+		return result, err
+	}
 	result.Metrics = metrics
 	values := make([]float64, 0, len(samples))
 	for _, sample := range samples {

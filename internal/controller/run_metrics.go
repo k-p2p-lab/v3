@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -193,6 +194,15 @@ type propagationSample struct {
 }
 
 func (a *runMetricAccumulator) summarize(runID string, asOf ...time.Time) (model.Metrics, []propagationSample) {
+	metrics, samples, _ := a.summarizeContext(context.Background(), runID, asOf...)
+	return metrics, samples
+}
+
+func (a *runMetricAccumulator) summarizeContext(ctx context.Context, runID string, asOf ...time.Time) (model.Metrics, []propagationSample, error) {
+	if err := ctx.Err(); err != nil {
+		return model.Metrics{}, nil, err
+	}
+	var err error
 	var result model.Metrics
 	var samples []propagationSample
 	if a.window.enabled {
@@ -200,13 +210,16 @@ func (a *runMetricAccumulator) summarize(runID string, asOf ...time.Time) (model
 		if len(asOf) > 0 {
 			boundary = asOf[0]
 		}
-		result, samples = a.window.summarize(runID, boundary, a.published, a.delivered, a.duplicates)
+		result, samples, err = a.window.summarizeContext(ctx, runID, boundary, a.published, a.delivered, a.duplicates)
 	} else {
-		result, samples = a.summarizeLegacy(runID)
+		result, samples, err = a.summarizeLegacyContext(ctx, runID)
+	}
+	if err != nil {
+		return model.Metrics{}, nil, err
 	}
 	result.GossipSubControl = a.summarizeGossipSubControl()
 	result.Bandwidth = a.bandwidth.summarize()
-	return result, samples
+	return result, samples, ctx.Err()
 }
 
 func gossipSubControlEvent(eventType string) (gossipSubControlKey, bool) {
@@ -268,17 +281,27 @@ func (a *runMetricAccumulator) summarizeGossipSubControl() []model.GossipSubCont
 }
 
 func (a *runMetricAccumulator) summarizeLegacy(runID string) (model.Metrics, []propagationSample) {
+	metrics, samples, _ := a.summarizeLegacyContext(context.Background(), runID)
+	return metrics, samples
+}
+func (a *runMetricAccumulator) summarizeLegacyContext(ctx context.Context, runID string) (model.Metrics, []propagationSample, error) {
 	result := model.Metrics{Definition: "dispatch-cohort-v1", RunID: runID, Published: a.published, Delivered: a.delivered, Duplicates: a.duplicates}
 	latencies := make([]float64, 0)
 	samples := make([]propagationSample, 0)
 	knownPublications := 0
 	for key, message := range a.messages {
+		if err := ctx.Err(); err != nil {
+			return model.Metrics{}, nil, err
+		}
 		if !message.published || message.targets == nil {
 			continue
 		}
 		knownPublications++
 		result.ExpectedDeliveries += len(message.targets)
 		for receiver := range message.targets {
+			if err := ctx.Err(); err != nil {
+				return model.Metrics{}, nil, err
+			}
 			delivery, exists := message.deliveries[receiver]
 			if !exists || receiver == message.publisher {
 				continue
@@ -315,7 +338,7 @@ func (a *runMetricAccumulator) summarizeLegacy(runID string) (model.Metrics, []p
 		}
 		result.P95LatencyMS = latencies[int(math.Ceil(0.95*float64(len(latencies))))-1]
 	}
-	return result, samples
+	return result, samples, ctx.Err()
 }
 
 // Rebuild the identical metrics from a pinned events.jsonl prefix in a result

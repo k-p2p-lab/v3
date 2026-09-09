@@ -28,6 +28,8 @@ The Controller exposes the following public and operational endpoints. When `KPL
 | `GET` | `/api/v1/results` | Saved experiment results, including runs from previous Controller sessions |
 | `DELETE` | `/api/v1/results/{id}` | Delete an inactive saved result; active batches and downloads are protected |
 | `GET` | `/api/v1/experiments/{id}/analysis` | Chart distributions, timelines and metrics from saved events and observations |
+| `GET` / `POST` | `/api/v1/analysis-jobs/{id}` | Inspect / submit background analysis. Duplicate requests reuse work; `?refresh=1` requests a new snapshot |
+| `GET` / `HEAD` | `/api/v1/analysis-jobs/{id}/result?jobId={jobId}` | Download persisted analysis JSON. Unfinished or mismatched attempts return `409` |
 | `GET` / `HEAD` | `/api/v1/experiments/{id}/download` | Download the scenario, metadata, events, optional observations and derived metrics as ZIP, or measure its size without a response body |
 | `POST` | `/api/v1/experiments` | Run YAML once, or JSON `{scenario, repetitions}` for 1–100 sequential runs |
 | `POST` | `/api/v1/experiments/{id}/stop` | Cancel a running experiment, then perform bounded job shutdown and generation-fenced Peer cleanup |
@@ -46,7 +48,7 @@ The bootstrap response is an array of `{nodeId, peerId, addresses}` records (or 
 
 Repeated submissions reserve a separate run ID and result record for every iteration, sharing `batchId`, `iteration`, and `repetitions`. Runs execute sequentially; a failed or canceled iteration cancels the queued remainder. Stopping any member while its repetition batch is still active cancels that batch. For `repetitions > 1`, every iteration, including the last, fences and removes its Peers before finalization. Only a naturally successful single run may retain Peers when its YAML omits `stop-all`.
 
-The stop endpoint returns `202` once cancellation is requested, before cleanup completes. Observe `/api/v1/experiments` or the snapshot until the final state is recorded. A run with no remaining cancellation handle returns `404`. SSE sends an initial `event: snapshot`, subsequent full snapshots on state updates, and keepalive comments every 15 seconds; it does not provide event-ID replay. `/api/v1/events` contains at most the 300 most recent events across live Controller state.
+The stop endpoint returns `202` once cancellation is requested, before cleanup completes. Observe `/api/v1/experiments` or the snapshot until the final state is recorded. A run with no remaining cancellation handle returns `404`. SSE sends an initial `event: snapshot`, subsequent full snapshots on state updates, and full snapshots every 15 seconds even without events; it does not provide event-ID replay. `/api/v1/events` contains at most the 300 most recent events across live Controller state.
 
 From the repository root, replace `control-node:8080` with the Controller address printed by `sh scripts/swarm.sh access` and export the token printed by `sh scripts/swarm.sh credentials` as `KPL_API_TOKEN`:
 

@@ -30,17 +30,18 @@ var (
 )
 
 type savedResult struct {
-	ID                     string    `json:"id"`
-	Name                   string    `json:"name"`
-	State                  string    `json:"state"`
-	StartedAt              time.Time `json:"startedAt"`
-	FinishedAt             time.Time `json:"finishedAt"`
-	Active                 bool      `json:"active"`
-	BatchID                string    `json:"batchId,omitempty"`
-	Iteration              int       `json:"iteration,omitempty"`
-	Repetitions            int       `json:"repetitions,omitempty"`
-	DownloadBytes          *int64    `json:"downloadBytes,omitempty"`
-	DownloadSizeMaxAgeMS   *int64    `json:"downloadSizeMaxAgeMs,omitempty"`
+	Analysis               *analysisJobStatus `json:"analysis,omitempty"`
+	ID                     string             `json:"id"`
+	Name                   string             `json:"name"`
+	State                  string             `json:"state"`
+	StartedAt              time.Time          `json:"startedAt"`
+	FinishedAt             time.Time          `json:"finishedAt"`
+	Active                 bool               `json:"active"`
+	BatchID                string             `json:"batchId,omitempty"`
+	Iteration              int                `json:"iteration,omitempty"`
+	Repetitions            int                `json:"repetitions,omitempty"`
+	DownloadBytes          *int64             `json:"downloadBytes,omitempty"`
+	DownloadSizeMaxAgeMS   *int64             `json:"downloadSizeMaxAgeMs,omitempty"`
 	storedState            string
 	downloadArchiveVersion resultArchiveVersion
 	downloadSizePending    bool
@@ -326,6 +327,8 @@ func (s *Server) deleteSavedResult(id string) error {
 	}
 	s.cancelMu.Lock()
 	defer s.cancelMu.Unlock()
+	s.analysisJobMu.Lock()
+	defer s.analysisJobMu.Unlock()
 	s.state.persistMu.Lock()
 	defer s.state.persistMu.Unlock()
 	s.state.mu.RLock()
@@ -353,6 +356,10 @@ func (s *Server) deleteSavedResult(id string) error {
 	if err := s.markResultDeletedLocked(id); err != nil {
 		return fmt.Errorf("persist deletion marker: %w", err)
 	}
+	if job := s.analysisJobs[id]; job != nil && job.cancel != nil {
+		job.cancel()
+	}
+	delete(s.analysisJobs, id)
 	if err := removeResultDirectory(runs, id); err != nil {
 		return err
 	}
@@ -429,6 +436,9 @@ func (s *Server) handleResults(w http.ResponseWriter, r *http.Request) {
 				} else if !errors.Is(snapshotErr, errResultNotFound) {
 					s.logger.Warn("capture saved result for archive size", "run", id, "error", snapshotErr)
 				}
+			}
+			if job, err := s.analysisJobStatus(id); err == nil && job.State != "idle" {
+				result.Analysis = &job
 			}
 			results = append(results, result)
 		}

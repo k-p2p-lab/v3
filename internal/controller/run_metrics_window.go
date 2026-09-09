@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"math"
 	"sort"
 	"time"
@@ -248,6 +249,10 @@ type sessionTopicIndex struct {
 // scanning every historical session for every message. The remaining work is
 // proportional to actual candidate message/session pairs and their receipts.
 func (w *sessionWindowAccumulator) summarize(runID string, asOf time.Time, published, delivered, duplicates int) (model.Metrics, []propagationSample) {
+	metrics, samples, _ := w.summarizeContext(context.Background(), runID, asOf, published, delivered, duplicates)
+	return metrics, samples
+}
+func (w *sessionWindowAccumulator) summarizeContext(ctx context.Context, runID string, asOf time.Time, published, delivered, duplicates int) (model.Metrics, []propagationSample, error) {
 	result := model.Metrics{Definition: sessionWindowDefinition, RunID: runID, Published: published, Delivered: delivered, Duplicates: duplicates,
 		LegacyPublications: max(0, published-len(w.publications)), MeasurementIncomplete: w.incomplete}
 	topics := make(map[string]*sessionTopicIndex)
@@ -259,6 +264,9 @@ func (w *sessionWindowAccumulator) summarize(runID string, asOf time.Time, publi
 		return topics[topic]
 	}
 	for _, session := range w.sessions {
+		if err := ctx.Err(); err != nil {
+			return model.Metrics{}, nil, err
+		}
 		evaluated, known := evaluateSession(session)
 		if !known {
 			result.MeasurementIncomplete = true
@@ -284,6 +292,9 @@ func (w *sessionWindowAccumulator) summarize(runID string, asOf time.Time, publi
 		}
 	}
 	for key, publication := range w.publications {
+		if err := ctx.Err(); err != nil {
+			return model.Metrics{}, nil, err
+		}
 		// Local-only publications have no remote delivery cohort or window.
 		if publication.local {
 			continue
@@ -325,6 +336,9 @@ func (w *sessionWindowAccumulator) summarize(runID string, asOf time.Time, publi
 		active := make(map[measurementSessionKey]*evaluatedSession)
 		start, end := 0, 0
 		for _, publication := range index.publications {
+			if err := ctx.Err(); err != nil {
+				return model.Metrics{}, nil, err
+			}
 			for start < len(index.starts) && !index.starts[start].source.start.at.After(publication.at) {
 				session := index.starts[start]
 				active[session.source.key] = session
@@ -335,6 +349,9 @@ func (w *sessionWindowAccumulator) summarize(runID string, asOf time.Time, publi
 				end++
 			}
 			for key, session := range active {
+				if err := ctx.Err(); err != nil {
+					return model.Metrics{}, nil, err
+				}
 				if key.nodeID == publication.publisher {
 					continue
 				}
@@ -415,7 +432,7 @@ func (w *sessionWindowAccumulator) summarize(runID string, asOf time.Time, publi
 		}
 		result.P95LatencyMS = latencies[int(math.Ceil(0.95*float64(len(latencies))))-1]
 	}
-	return result, samples
+	return result, samples, ctx.Err()
 }
 
 func containsWindow(windows []string, candidate string) bool {

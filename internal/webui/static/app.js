@@ -483,7 +483,9 @@ function resultLocked(run) {
 }
 
 function resultImagesButton(run) {
-  return `<button class="result-images-button" type="button" data-result-images="${escapeHTML(run.id)}" aria-label="${escapeHTML(`View graph images: ${run.name || run.id}`)}" ${run.state === "unreadable" || run.state === "queued" ? "disabled" : ""}>Images</button>`;
+  const job = run.analysis;
+  const label = job?.state === "queued" ? "Images · Queued" : job?.state === "running" ? (job.phase === "aggregating" ? "Images · Calculating" : job.phase === "saving" ? "Images · Saving" : `Images · ${Math.floor(job.progress || 0)}% read`) : job?.state === "completed" ? "Images · Ready" : ["failed", "interrupted"].includes(job?.state) ? "Images · Retry" : "Images";
+  return `<button class="result-images-button" type="button" data-result-images="${escapeHTML(run.id)}" aria-label="${escapeHTML(`View graph images: ${run.name || run.id}`)}" ${run.state === "unreadable" || run.state === "queued" ? "disabled" : ""}>${label}</button>`;
 }
 
 function resultDownloadLink(run) {
@@ -1031,6 +1033,8 @@ async function refreshSavedResults() {
     if (state.resultsRefreshPending) {
       state.resultsRefreshPending = false;
       refreshSavedResults();
+    } else if (refreshed && (state.savedResults || []).some(run => ["queued", "running"].includes(run.analysis?.state))) {
+      state.resultsRefreshTimer = setTimeout(refreshSavedResults, 3000);
     }
   }
 }
@@ -1681,7 +1685,11 @@ $("#deleteResultDialog").addEventListener("close", () => {
   }
 });
 
-globalThis.KPLResultImages?.init({ api });
+globalThis.KPLResultImages?.init({ api, saveToken, onJob: job => {
+  const run = (state.savedResults || []).find(run => run.id === job.runId);
+  if (run) { run.analysis = job; renderSavedResults(); }
+  if (!state.resultsRefreshTimer && !state.resultsLoading) state.resultsRefreshTimer = setTimeout(refreshSavedResults, 3000);
+} });
 setupTopologyControls();
 setupDetailPanelSizing();
 renderSavedScenarios();

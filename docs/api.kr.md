@@ -28,6 +28,8 @@ Controller는 아래 공개 및 운영 엔드포인트를 제공합니다. `KPL_
 | `GET` | `/api/v1/results` | 이전 Controller 실행에서 저장한 실험을 포함하는 결과 목록 |
 | `DELETE` | `/api/v1/results/{id}` | 비활성 저장 결과 삭제. 진행 중 배치·다운로드 보호 |
 | `GET` | `/api/v1/experiments/{id}/analysis` | 저장 이벤트·관측치를 분석한 그래프 데이터와 집계 JSON |
+| `GET` / `POST` | `/api/v1/analysis-jobs/{id}` | 백그라운드 분석 상태 조회 / 접수. 중복 요청 재사용, `?refresh=1`로 새 snapshot 분석 |
+| `GET` / `HEAD` | `/api/v1/analysis-jobs/{id}/result?jobId={jobId}` | 서버에 보관된 완료 분석 JSON 다운로드. 작업 미완료·다른 attempt는 `409` |
 | `GET` / `HEAD` | `/api/v1/experiments/{id}/download` | 시나리오·메타데이터·이벤트·선택적 관측 파일·파생 지표를 ZIP으로 다운로드하거나 응답 본문 없이 크기 계산 |
 | `POST` | `/api/v1/experiments` | YAML 1회 실행 또는 JSON `{scenario, repetitions}`로 1~100회 순차 실행 |
 | `POST` | `/api/v1/experiments/{id}/stop` | 실행을 취소한 뒤 제한 시간 내 job 종료와 generation-fenced Peer cleanup 수행 |
@@ -46,7 +48,7 @@ Bootstrap 응답은 `{nodeId, peerId, addresses}` 항목 배열이며 비어 있
 
 반복 제출은 매 iteration에 별도 run ID와 결과 기록을 예약하고 `batchId`, `iteration`, `repetitions`를 공유합니다. 순차 실행하며 실패하거나 취소된 iteration은 대기 중인 나머지 실행도 취소합니다. 반복 배치가 진행 중일 때 구성원 하나를 중지하면 해당 배치를 취소합니다. `repetitions > 1`에서는 마지막을 포함한 매 iteration이 최종 상태를 기록하기 전에 Peer를 fence하고 제거합니다. 자연스럽게 성공한 단일 실행만 YAML에 `stop-all`이 없을 때 Peer를 남겨둘 수 있습니다.
 
-중지 endpoint는 cleanup 완료 전, 취소 요청을 접수하면 `202`를 반환합니다. `/api/v1/experiments` 또는 snapshot에서 최종 상태를 확인하십시오. 취소 handle이 더 이상 없는 run은 `404`입니다. SSE는 최초 `event: snapshot`, 상태 변경 시 전체 snapshot, 15초마다 keepalive comment를 보내며 event ID 기반 replay는 제공하지 않습니다. `/api/v1/events`는 현재 Controller 상태에서 가장 최근 event 최대 300개를 포함합니다.
+중지 endpoint는 cleanup 완료 전, 취소 요청을 접수하면 `202`를 반환합니다. `/api/v1/experiments` 또는 snapshot에서 최종 상태를 확인하십시오. 취소 handle이 더 이상 없는 run은 `404`입니다. SSE는 최초 `event: snapshot`, 상태 변경 시 전체 snapshot, 이벤트가 없어도 15초마다 전체 snapshot를 보내며 event ID 기반 replay는 제공하지 않습니다. `/api/v1/events`는 현재 Controller 상태에서 가장 최근 event 최대 300개를 포함합니다.
 
 저장소 루트에서 실행하는 예시입니다. `control-node:8080`은 `sh scripts/swarm.sh access`가 표시한 Controller 주소로 바꾸고, `sh scripts/swarm.sh credentials`가 표시한 토큰을 `KPL_API_TOKEN`으로 export하십시오.
 

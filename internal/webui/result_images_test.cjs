@@ -8,14 +8,14 @@ function sample(id='run') {
     metrics:{definition:'session-window-v1',deliveryWindows:['1s'],latencySamples:2,averageLatencyMs:15,p95LatencyMs:20},
     latencyCDF:[{x:10,y:.5},{x:20,y:1}],latencyHistogram:[{x:10,y:1},{x:20,y:1}],timeline:[{at:'2026-09-09T00:00:00Z',publish:2,deliver:4,duplicate:0}],observations:[]};
 }
-function fixture(api,renderImage=async()=>png) {
+function fixture(api,renderImage=async()=>png,options={}) {
   const elements=new Map();
   const element=id=>{
-    if(!elements.has(id))elements.set(id,{innerHTML:'',textContent:'',open:false,hidden:false,listeners:{},classList:{toggle(){}},setAttribute(){},
+    if(!elements.has(id))elements.set(id,{innerHTML:'',textContent:'',open:false,hidden:id==='resultImagesAuth',listeners:{},classList:{toggle(){}},setAttribute(){},removeAttribute(){},insertAdjacentHTML(position,html){this.innerHTML+=html;},
       addEventListener(name,fn){this.listeners[name]=fn;},showModal(){this.open=true;},close(){this.open=false;this.listeners.close?.();}});
     return elements.get(id);
   };
-  return {element,ui:images.createUI({api,renderImage,document:{querySelector:selector=>element(selector.slice(1))}})};
+  return {element,ui:images.createUI({api,renderImage,pollInterval:0,...options,document:{querySelector:selector=>element(selector.slice(1))}})};
 }
 async function settle(predicate) {
   for(let i=0;i<40;i++){if(predicate())return;await new Promise(resolve=>setImmediate(resolve));}
@@ -70,52 +70,108 @@ test('PNG source SVG uses a white background and embeds escaped source and defin
   }
 });
 
-test('Images opens just the selected result and uses identical PNGs for preview and download',async()=>{
-  const calls=[];
-  const {ui,element}=fixture(async(url,options)=>{calls.push({url,options});return sample('one');});
-  assert.equal(calls.length,0);
-  await ui.open('one');
-  assert.equal(calls.length,1);assert.match(calls[0].url,/\/one\/analysis$/);
-  assert.equal(calls[0].options.cache,'no-store');
-  assert.equal(element('resultImagesDialog').open,true);
-  assert.equal(element('resultImagesName').textContent,'Example <run>');
-  assert.equal((element('resultImagesGrid').innerHTML.match(/<figure/g)||[]).length,3);
-  assert.equal((element('resultImagesGrid').innerHTML.match(/href="data:image\/png;base64,iVBORw0KGgo="/g)||[]).length,6);
-  assert.match(element('resultImagesGrid').innerHTML,/one-latency-cdf.png/);
-  assert.match(element('resultImagesStatus').textContent,/3 images/);
+const job = (id='run',state='completed',extra={}) => ({version:1,id:id+'-job',runId:id,state,progress:state==='completed'?100:50,phase:'events.jsonl',processedBytes:1048576,totalBytes:2097152,...extra});
+const artifact = id => ({...sample(id),analysisId:id+'-job'});
+const completedAPI = async url => {
+ const id=url.split('/')[4].split('?')[0];
+ return url.includes('/result?') ? artifact(id) : job(id);
+};
+
+test('a new result starts once, polls byte progress, and downloads the completed snapshot',async()=>{
+ const calls=[],updates=[];let poll=0;
+ const {ui,element}=fixture(async(url,options)=>{
+  calls.push({url,options});
+  if(url.includes('/result?')) return artifact('one');
+  if(options.method==='POST')return job('one','queued');
+  return ++poll===1 ? job('one','idle') : job('one',poll===2?'running':'completed');
+ },undefined,{onJob:value=>updates.push(value.state)});
+ await ui.open('one');
+ assert.equal(calls.filter(c=>c.options.method==='POST').length,1);
+ assert.deepEqual(updates,['queued','running','completed']);
+ assert.ok(calls.every(c=>c.options.cache==='no-store'));
+ assert.ok(calls.every(c=>!c.url.endsWith('/analysis')));
+ assert.equal(element('resultImagesDialog').open,true);
+ assert.equal(element('resultImagesName').textContent,'Example <run>');
+ assert.equal((element('resultImagesGrid').innerHTML.match(/<figure/g)||[]).length,3);
+ assert.match(element('downloadResultAnalysis').href,/one\/result\?jobId=one-job$/);
+ assert.equal(element('downloadResultAnalysis').hidden,false);
+ assert.equal(element('refreshResultImages').hidden,false);
+ assert.match(element('resultImagesStatus').textContent,/3 images ready/);
+ assert.match(images.jobDescription(job()),/Analysis complete/);
+ assert.match(images.jobDescription(job('one','running')),/1 \/ 2 MiB read/);
 });
 
-test('closing or switching results aborts requests and discards late responses',async()=>{
-  const pending=[];
-  const {ui,element}=fixture((url,options)=>new Promise(resolve=>pending.push({options,resolve})));
-  const first=ui.open('first');
-  element('resultImagesDialog').close();
-  assert.equal(pending[0].options.signal.aborted,true);
-  const second=ui.open('second');
-  pending[0].resolve(sample('first'));await first;
-  assert.equal(element('resultImagesGrid').innerHTML,'');
-  pending[1].resolve(sample('second'));await second;
-  assert.match(element('resultImagesGrid').innerHTML,/second-latency-cdf.png/);
-  assert.doesNotMatch(element('resultImagesGrid').innerHTML,/first-latency-cdf.png/);
-  ui.remove('second');assert.equal(element('resultImagesDialog').open,false);
-  assert.equal(element('resultImagesGrid').innerHTML,'');
+test('closing detaches from server analysis and reopening completed work does not POST',async()=>{
+ let resolveStatus;const calls=[];
+ const {ui,element}=fixture((url,options)=>{
+  calls.push({url,options});
+  if(calls.length===1)return new Promise(resolve=>resolveStatus=resolve);
+  return completedAPI(url);
+ });
+ const first=ui.open('one');
+ element('resultImagesDialog').close();
+ assert.equal(calls[0].options.signal.aborted,true);
+ const second=ui.open('two');
+ resolveStatus(job('one','running'));await first;await second;
+ assert.match(element('resultImagesGrid').innerHTML,/two-latency-cdf.png/);
+ assert.doesNotMatch(element('resultImagesGrid').innerHTML,/one-latency-cdf.png/);
+ assert.ok(calls.every(call=>!call.options.method));
+ ui.remove('two');assert.equal(element('resultImagesDialog').open,false);
+ assert.equal(element('resultImagesGrid').innerHTML,'');
 });
 
-test('closing during PNG conversion prevents a detached gallery from being installed',async()=>{
-  let finish;
-  const {ui,element}=fixture(async()=>sample(),()=>new Promise(resolve=>finish=resolve));
-  const work=ui.open('run');await settle(()=>finish);
-  element('resultImagesDialog').close();finish(png);await work;
-  assert.equal(element('resultImagesGrid').innerHTML,'');
+test('closing during PNG conversion preserves server artifacts and rejects late gallery writes',async()=>{
+ let finish;
+ const {ui,element}=fixture(completedAPI,()=>new Promise(resolve=>finish=resolve));
+ const work=ui.open('run');await settle(()=>finish);
+ element('resultImagesDialog').close();finish(png);await work;
+ assert.equal(element('resultImagesGrid').innerHTML,'');
 });
 
-test('failed requests, malformed data and PNG errors remain visible and retryable',async()=>{
-  for(const response of [async()=>{throw Error('Saved result not found');},async()=>({...sample(),result:{id:'wrong'}}),async()=>({...sample(),observations:[{at:sample().asOf,groups:[{group:'bad',layers:{}}]}]})]){
-    let calls=0;
-    const {ui,element}=fixture(async()=>++calls===1 ? response() : sample());
-    await ui.open('run');assert.equal(element('retryResultImages').hidden,false);assert.equal(element('resultImagesGrid').innerHTML,'');
-    element('retryResultImages').listeners.click();await settle(()=>element('retryResultImages').hidden && element('resultImagesGrid').innerHTML);
+test('status failures reconnect without resubmitting jobs; saved failures require explicit retry',async()=>{
+ let failed=true,posts=0;
+ const {ui,element}=fixture(async(url,options)=>{
+  if(url.includes('/result?'))return artifact('run');
+  if(options.method==='POST'){posts++;failed=false;}
+  return job('run',failed?'failed':'completed',{error:'Unreadable event log'});
+ });
+ await ui.open('run');assert.equal(posts,0);assert.equal(element('retryResultImages').hidden,false);
+ assert.match(element('resultImagesStatus').textContent,/Unreadable event log/);
+ element('retryResultImages').listeners.click();await settle(()=>element('resultImagesGrid').innerHTML);
+ assert.equal(posts,1);
+ let calls=0;
+ const transient=fixture(async(url,options)=>{calls++;if(calls===1)throw Error('Connection lost');assert.ok(!options.method);return completedAPI(url);});
+ await transient.ui.open('run');
+ transient.element('retryResultImages').listeners.click();await settle(()=>transient.element('resultImagesGrid').innerHTML);
+});
+
+test('explicit refresh requests a new snapshot and authentication failures accept a token',async()=>{
+ const methods=[];
+ const refresh=fixture(async(url,options)=>{methods.push([url,options.method]);return completedAPI(url);});
+ await refresh.ui.open('run');
+ refresh.element('refreshResultImages').listeners.click();await settle(()=>methods.some(([url,method])=>url.endsWith('?refresh=1')&&method==='POST'));
+ await settle(()=>refresh.element('resultImagesGrid').innerHTML);
+ let saved='',started=false;
+ const auth=fixture(async(url,options)=>{
+  if(url.includes('/result?'))return artifact('run');
+  if(options.method==='POST'){
+   if(!saved)throw Object.assign(Error('valid bearer token required'),{status:401});
+   started=true;return job();
   }
-  const {ui,element}=fixture(async()=>sample(),async()=>{throw Error('Canvas unavailable');});
-  await ui.open('run');assert.match(element('resultImagesStatus').textContent,/Canvas unavailable/);assert.equal(element('retryResultImages').hidden,false);
+  return job('run',started?'completed':'idle');
+ },undefined,{saveToken:value=>saved=value});
+ await auth.ui.open('run');assert.equal(auth.element('resultImagesAuth').hidden,false);
+ auth.element('resultImagesToken').value='test-token';auth.element('retryResultImages').listeners.click();
+ await settle(()=>auth.element('resultImagesGrid').innerHTML);
+ assert.equal(saved,'test-token');
+});
+
+test('corrupt artifacts and PNG errors stay retryable without discarding saved analysis access',async()=>{
+ for(const data of [{...artifact('run'),analysisId:'wrong'},{...artifact('run'),observations:[{at:sample().asOf,groups:null}]}]){
+  const {ui,element}=fixture(async url=>url.includes('/result?')?data:job());
+  await ui.open('run');assert.equal(element('retryResultImages').hidden,false);assert.equal(element('resultImagesGrid').innerHTML,'');
+ }
+ const {ui,element}=fixture(completedAPI,async()=>{throw Error('Canvas unavailable');});
+ await ui.open('run');assert.match(element('resultImagesStatus').textContent,/Canvas unavailable/);
+ assert.equal(element('retryResultImages').hidden,false);assert.equal(element('downloadResultAnalysis').hidden,false);
 });

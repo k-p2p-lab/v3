@@ -202,7 +202,8 @@
   function toPNG(svg, doc, signal) {
     return new Promise((resolve,reject)=>{
       const image = new root.Image();
-      const finish = (error,value) => { image.onload = image.onerror = null; signal?.removeEventListener("abort",abort); error ? reject(error) : resolve(value); };
+      const finish = (error,value) => { clearTimeout(timer); image.onload = image.onerror = null; signal?.removeEventListener("abort",abort); error ? reject(error) : resolve(value); };
+      const timer = setTimeout(()=>finish(new Error("PNG conversion timed out. The saved analysis is still available; please retry.")),30000);
       const abort = () => { image.onload = image.onerror = null; image.src = ""; finish(new DOMException("Image generation canceled", "AbortError")); };
       if (signal?.aborted) { abort(); return; }
       signal?.addEventListener("abort",abort,{once:true});
@@ -221,7 +222,16 @@
     });
   }
 
-  function createUI({api,document:doc=root.document,renderImage=(svg,signal)=>toPNG(svg,doc,signal)}) {
+  const pendingJob = job => job && ["queued", "running"].includes(job.state);
+  function jobDescription(job) {
+    if (job.state === "queued") return "Queued — waiting for an analysis worker.";
+    if (job.state === "completed") return "Analysis complete. Preparing PNG downloads…";
+    const phase = {starting:"Opening saved logs", "events.jsonl":"Reading event log", "observations.jsonl":"Reading topology and score history", aggregating:"Calculating metrics and chart data", saving:"Saving analysis result"}[job.phase] || "Analyzing";
+    const mb = bytes => number(bytes / 1048576);
+    return `${phase} · ${mb(job.processedBytes)} / ${mb(job.totalBytes)} MiB read`;
+  }
+
+  function createUI({api,document:doc=root.document,renderImage=(svg,signal)=>toPNG(svg,doc,signal),onJob=()=>{},saveToken=()=>{},pollInterval=2000}) {
     const $ = id => doc.querySelector(`#${id}`);
     const dialog = $("resultImagesDialog");
     let currentID = "", controller = null, revision = 0;
@@ -231,49 +241,102 @@
       $("resultImagesStatus").setAttribute("role",error ? "alert" : "status");
       $("retryResultImages").hidden = !error;
     }
+    // Detach the browser only: the accepted server job continues after closing.
     function cancel() { revision++; controller?.abort(); controller=null; $("resultImagesGrid").innerHTML=""; }
-    async function open(id) {
+    function delay(signal) {
+      return new Promise((resolve,reject)=>{
+        const done=()=>{signal.removeEventListener("abort",abort);resolve();};
+        const timer=setTimeout(done,pollInterval);
+        const abort=()=>{clearTimeout(timer);signal.removeEventListener("abort",abort);reject(new DOMException("Closed","AbortError"));};
+        if(signal.aborted) abort(); else signal.addEventListener("abort",abort,{once:true});
+      });
+    }
+    async function request(path,options,signal) {
+      const bounded=new AbortController();
+      const abort=()=>bounded.abort();
+      signal.addEventListener("abort",abort,{once:true});
+      if(signal.aborted) bounded.abort();
+      const timer=setTimeout(abort,30000);
+      try { return await api(path,{...options,cache:"no-store",signal:bounded.signal}); }
+      finally {clearTimeout(timer);signal.removeEventListener("abort",abort);}
+    }
+    async function open(id,{refresh=false,retry=false}={}) {
       if (!id || currentID===id && controller) return;
       cancel(); currentID=id;
-      const requestRevision=revision, request=new AbortController(); controller=request;
+      const requestRevision=revision, view=new AbortController(); controller=view;
+      const path=`/api/v1/analysis-jobs/${encodeURIComponent(id)}`;
       $("resultImagesName").textContent=id;
       $("resultImagesDate").textContent="";
-      status("Creating graph images…");
+      $("resultImagesProgress").hidden=true;
+      $("downloadResultAnalysis").hidden=true;
+      $("refreshResultImages").hidden=true;
+      status("Checking analysis job…");
       dialog.setAttribute("aria-busy","true");
       if (!dialog.open) dialog.showModal();
-      const timer=setTimeout(()=>request.abort(),130000);
       try {
-        const data=await api(`/api/v1/experiments/${encodeURIComponent(id)}/analysis`,{cache:"no-store",signal:request.signal});
+        let job=await request(path,{},view.signal);
+        if (refresh || job.state==="idle" || retry && ["failed","interrupted","canceled"].includes(job.state)) {
+          job=await request(path+(refresh?"?refresh=1":""),{method:"POST"},view.signal);
+        }
+        while (true) {
+          if (revision!==requestRevision) return;
+          if(job.runId!==id || !["queued","running","completed","failed","interrupted","canceled"].includes(job.state)) throw new Error("Unexpected analysis job response.");
+          $("resultImagesAuth").hidden=true;
+          $("resultImagesToken").value="";
+          onJob(job);
+          $("resultImagesDate").textContent=`Requested ${timeLabel(job.createdAt)} · Snapshot ${timeLabel(job.snapshotAt)}`;
+          status(jobDescription(job));
+          const progress=$("resultImagesProgress");
+          progress.hidden=!pendingJob(job);
+          if(job.state==="running" && ["events.jsonl","observations.jsonl"].includes(job.phase) && job.totalBytes>0) progress.value=Math.max(0,Math.min(100,job.progress));
+          else progress.removeAttribute("value");
+          if(!pendingJob(job)) break;
+          await delay(view.signal);
+          job=await request(path,{},view.signal);
+        }
+        if(job.state!=="completed") throw new Error(job.error || `Analysis ${job.state}. Retry to start again.`);
+        // Construct the same-origin URL locally; never trust a stored URL as a credential destination.
+        const resultPath=`${path}/result?jobId=${encodeURIComponent(job.id)}`;
+        const download=$("downloadResultAnalysis");
+        download.href=resultPath;download.download=`${id}-analysis.json`;download.hidden=false;
+        $("refreshResultImages").hidden=false;
+        const data=await request(resultPath,{},view.signal);
         validateResponse(data,id);
+        if(data.analysisId!==job.id) throw new Error("The saved analysis changed. Reopen this result.");
         if (revision!==requestRevision) return;
         $("resultImagesName").textContent=data.result.name || id;
         $("resultImagesDate").textContent=`${data.result.state} · Snapshot ${timeLabel(data.asOf)}`;
-        const images=[];
-        for (const chart of buildCharts(data)) {
-          if (request.signal.aborted) throw new DOMException("Canceled","AbortError");
-          const png=await renderImage(chartSVG(chart),request.signal);
+        const charts=buildCharts(data);
+        for (const [index,chart] of charts.entries()) {
+          if (view.signal.aborted) throw new DOMException("Closed","AbortError");
+          status(`Preparing PNG ${index+1} / ${charts.length} · ${chart.title}`);
+          const png=await renderImage(chartSVG(chart),view.signal);
           if (revision!==requestRevision) return;
           if (!png.startsWith("data:image/png;base64,")) throw new Error("Unable to create a PNG image.");
           const filename=`${id}-${chart.id}.png`;
-          images.push(`<figure class="result-image"><a href="${png}" download="${escape(filename)}" aria-label="${escape(`Download ${chart.title} as PNG`)}"><img src="${png}" alt="${escape(chart.title)}"></a><figcaption><span>${escape(chart.title)}</span><a href="${png}" download="${escape(filename)}">PNG ↓</a></figcaption></figure>`);
+          $("resultImagesGrid").insertAdjacentHTML("beforeend",`<figure class="result-image"><a href="${png}" download="${escape(filename)}" aria-label="${escape(`Download ${chart.title} as PNG`)}"><img src="${png}" alt="${escape(chart.title)}"></a><figcaption><span>${escape(chart.title)}</span><a href="${png}" download="${escape(filename)}">PNG ↓</a></figcaption></figure>`);
         }
-        if (request.signal.aborted) throw new DOMException("Canceled","AbortError");
-        $("resultImagesGrid").innerHTML=images.join("");
-        status(`${images.length} images. Select an image or PNG to download it.${data.observations.length ? "" : " This result has no saved topology or score history."}`);
+        status(`${charts.length} images ready. Select an image or PNG to download it.${data.observations.length ? "" : " This result has no saved topology or score history."}`);
       } catch(error) {
-        if (revision===requestRevision) status(error.name==="AbortError" ? "Image generation timed out. Please retry." : error.message,true);
+        if (revision===requestRevision) {
+          status(error.name==="AbortError" ? "Status request timed out. The server job continues; retry to reconnect." : error.message,true);
+          if(error.status===401) $("resultImagesAuth").hidden=false;
+        }
       } finally {
-        clearTimeout(timer);
         if (revision===requestRevision) { controller=null; dialog.setAttribute("aria-busy","false"); }
       }
     }
     $("closeResultImages").addEventListener("click",()=>dialog.close());
     dialog.addEventListener("close",cancel);
-    $("retryResultImages").addEventListener("click",()=>{ void open(currentID); });
+    $("retryResultImages").addEventListener("click",()=>{
+      if(!$("resultImagesAuth").hidden) saveToken($("resultImagesToken").value);
+      void open(currentID,{retry:true});
+    });
+    $("refreshResultImages").addEventListener("click",()=>{void open(currentID,{refresh:true});});
     return {open,remove:id=>{if(currentID===id) {cancel();currentID="";dialog.close();}}};
   }
   let ui;
-  const exported={buildCharts,chartSVG,metricValue,trafficPoints,bandwidthPoints,observationPoints,validateResponse,createUI,
+  const exported={buildCharts,chartSVG,metricValue,trafficPoints,bandwidthPoints,observationPoints,validateResponse,createUI,jobDescription,pendingJob,
     init:options=>{ui=createUI(options);},open:id=>ui?.open(id),remove:id=>ui?.remove(id)};
   if(typeof module!=="undefined" && module.exports) module.exports=exported;
   else root.KPLResultImages=exported;
