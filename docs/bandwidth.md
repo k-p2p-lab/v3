@@ -1,6 +1,6 @@
 # P2P bandwidth measurement
 
-English | [한국어](bandwidth.kr.md)
+English | [Korean](bandwidth.kr.md)
 
 v3 measures **libp2p stream usage**, not physical link capacity or available capacity. Rebuild and apply Controller, Agent and Peer together, then start a new experiment. Old Agents reject the new typed event field. Historical payload sizes cannot reconstruct this traffic.
 
@@ -39,7 +39,7 @@ The main Dashboard Metrics area shows the current run's send/receive rates and c
 
 **B/W measurement** shows fresh active sessions, finalized sessions, the last sample time and rejected samples. It displays `Partial` when only some active sessions are fresh, `Rate unavailable` when their rate is unknown, and `N/A` without valid samples. Measured zero remains zero. The 15-second freshness rule and zero rate after normal finalization match Grafana, while cumulative totals remain available. SSE refreshes snapshots every 15 seconds even without events so expired rates update. Live snapshots include this aggregate as `metrics.bandwidth.currentRates`; saved-result aggregates do not acquire wall-clock-dependent current rates.
 
-Use **Saved results → Images** for a PNG of total P2P stream throughput (send/receive kbit/s). Per-protocol cumulative counters remain available in the result API/ZIP and Grafana.
+**Saved results → Images** provides total and per-protocol send/receive throughput (kbit/s) and cumulative transfer (KiB) as PNG/CSV, with a ZIP of all charts. Original cumulative counters also remain in the result API/ZIP and Grafana. See [visualization](visualization.md) for controls and comparisons.
 
 The analysis API adds `bandwidthTimeline` and `bandwidthBinSeconds`. Bins contain `at`, fractional send/receive byte allocations, per-protocol allocations, and `peerSeconds` (sum of allocated source observation durations, not unique nodes or completeness). Five-second bins adaptively merge to at most 360. An interval's bytes are distributed uniformly across overlapping bins; dividing by the full bin width gives the displayed average, including partial edge bins. Integrating the chart preserves bytes to floating-point precision. Missing intervals remain gaps. Missing Peer reports make the aggregate partial; peaks inside a reporting interval cannot be recovered.
 

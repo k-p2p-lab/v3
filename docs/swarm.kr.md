@@ -4,7 +4,7 @@
 
 하나 이상의 Linux 서버에서 활성 Swarm manager의 `scripts/swarm.sh`로 `stack.swarm.yaml`을 배포·관리합니다. Swarm은 **선택한 서버마다 Agent 하나**를 유지하고, Controller가 실험의 Peer를 Agent에 배분합니다. Peer는 해당 서버의 독립 Docker 컨테이너입니다. Swarm 서비스처럼 Peer를 다른 서버로 자동 재배치하지 않습니다.
 
-실행 가능한 배포 근거는 [`stack.swarm.yaml`](../stack.swarm.yaml), [`scripts/swarm.sh`](../scripts/swarm.sh), [`scripts/swarm-config.sh`](../scripts/swarm-config.sh)입니다. 실제 서비스·네트워크 대응은 [v3 아키텍처](architecture.kr.md)를, 개념 아키텍처는 [Hub](https://github.com/k-p2p-lab/hub)를 참고하십시오.
+실행 가능한 배포 근거는 [`stack.swarm.yaml`](../stack.swarm.yaml), [`scripts/swarm.sh`](../scripts/swarm.sh), [`scripts/swarm-config.sh`](../scripts/swarm-config.sh)입니다. 실제 서비스·네트워크 대응은 [v3 아키텍처](architecture.kr.md)를, 개념 아키텍처는 [Hub](https://github.com/k-p2p-lab/hub/blob/master/README.kr.md)를 참고하십시오.
 
 ## 배포 전 준비
 
@@ -87,7 +87,7 @@ sh scripts/swarm.sh scenario
 
 실험이 끝나고 해당 Peer들이 종료되었는지 확인하십시오. 다른 실험이 없다면 Agent 점유량은 0으로 돌아와야 합니다. 실행 중인 실험을 취소하려면 해당 실험의 **Stop**을 누르고 정리가 완료될 때까지 기다립니다.
 
-실험 항목이나 **Saved results**에서 **Download results**를 선택합니다. ZIP에는 `scenario.yaml`, `experiment.json`, `events.jsonl`, 선택적 `observations.jsonl`, `metrics.json`, `export.json`이 들어갑니다. 수집된 관측 요약과 대역폭 카운터도 포함합니다. 최근 300개 버퍼와 별개로 전체 저장 로그와 같은 경계에서 재계산한 지표를 포함하며 Prometheus/Grafana DB는 포함하지 않습니다. 실행 중 **Download snapshot**은 다운로드 경계까지의 기록입니다. **Delete**는 확인 후 비활성 결과를 삭제합니다. [다운로드 구성과 한계](monitoring.kr.md#실험-결과-다운로드)
+실험 항목이나 **Saved results**에서 **Download results**를 선택합니다. ZIP에는 `scenario.yaml`, `experiment.json`, `events.jsonl`, 선택적 `observations.jsonl`, `metrics.json`, `export.json`이 들어갑니다. 수집된 관측 요약·표본 그래프·대역폭 카운터도 포함합니다. 최근 300개 버퍼와 별개로 전체 저장 로그와 같은 경계에서 재계산한 지표를 포함하며 Prometheus/Grafana DB는 포함하지 않습니다. 실행 중 **Download snapshot**은 다운로드 경계까지의 기록입니다. **Delete**는 확인 후 비활성 결과를 삭제합니다. [다운로드 구성과 한계](monitoring.kr.md#실험-결과-다운로드)
 
 철거하면 웹 화면도 내려가므로 먼저 다운로드한 뒤 실행하십시오.
 
@@ -278,6 +278,8 @@ SIGTERM을 받으면 Controller는 새 실험 수락을 중단하고 HTTP 연결
 Controller 기록, Prometheus 시계열과 Grafana 데이터는 `KPL_CONTROL_NODE_ID`의 별도 named volume에 저장됩니다. 일반 서비스 재생성과 `swarm.sh remove`는 이 volume을 보존합니다. 시나리오, 실행 기록과 삭제 표식을 유지하려면 Controller 데이터 디렉터리 전체를 보존하고 Prometheus 이력과 Grafana 설정이 필요하면 별도로 백업하십시오. Volume 삭제는 일반 종료 절차에 포함되지 않습니다. 사용자 지정 저장소나 bind mount를 사용하면 컨테이너 UID/GID의 쓰기 권한을 확인하고 경로가 Docker daemon 호스트에서 해석됨을 고려하십시오.
 
 Controller 데이터 디렉터리에 쓸 수 없으면 시작이 실패합니다. 실행 메타데이터는 임시 파일에 쓴 뒤 같은 파일시스템에서 rename하여 부분 JSON 읽기를 방지하며 이벤트 로그는 append로 기록합니다. 쓰기마다 강제로 디스크에 동기화하지 않으므로 전원 장애 때 최근 기록을 잃을 수 있습니다. 재시작 후 보존 결과에 접근할 수 있지만 실시간 실행과 counter는 복원하지 않습니다.
+
+백그라운드 분석의 상태·완료 JSON·비교 요약도 Controller 볼륨에 보존됩니다. 완료 결과는 재시작 후 재사용하며 미완료·취소 작업은 다시 접수합니다. 일반 실행 ZIP에는 이 분석 캐시가 포함되지 않으므로 보존 경계는 [분석 파일과 이미지](monitoring.kr.md#분석-파일과-이미지-보존)를 참고하십시오.
 
 ## 검증 범위
 

@@ -2,7 +2,7 @@
 
 [English](README.md) | 한국어
 
-[K-P2PLab Hub](https://github.com/k-p2p-lab/hub)는 프로젝트 공통 개념과 연구 배경을 관리하며, 이 저장소는 실행 가능한 v3 구현, 배포 절차, 설정과 버전별 동작을 관리합니다.
+[K-P2PLab Hub](https://github.com/k-p2p-lab/hub/blob/master/README.kr.md)는 프로젝트 공통 개념과 연구 배경을 관리하며, 이 저장소는 실행 가능한 v3 구현, 배포 절차, 설정과 버전별 동작을 관리합니다.
 
 K-P2PLab v3는 하나 이상의 Linux 호스트에 구성된 Docker Swarm에서 설정 가능한 libp2p Kademlia 및 PubSub 실험을 실행합니다. Controller는 시나리오 스케줄링과 웹 Dashboard 제공을 맡고, Agent는 로컬 Docker daemon으로 Peer 컨테이너를 생성하고 관리합니다. Docker Swarm은 선택한 호스트마다 Agent 하나를 실행하며 각 Peer에 독립된 컨테이너와 네트워크 네임스페이스를 제공합니다. Prometheus/Grafana는 수집된 telemetry를 보여 주고, Controller는 다운로드 가능한 실행 결과를 보존합니다.
 
@@ -51,7 +51,7 @@ manager에도 Agent를 실행해야 한다면 `--workers` 대신 `--all`을 사�
 
 ## 문서
 
-목적, 연구, 설계 원칙과 개념 아키텍처는 [Hub](https://github.com/k-p2p-lab/hub)에서 시작하십시오. 아래 가이드는 현재 v3 구현과 한계를 설명합니다.
+목적, 연구, 설계 원칙과 개념 아키텍처는 [Hub](https://github.com/k-p2p-lab/hub/blob/master/README.kr.md)에서 시작하십시오. 아래 가이드는 현재 v3 구현과 한계를 설명합니다.
 
 | 문서 | 내용 |
 |---|---|
@@ -70,4 +70,4 @@ manager에도 Agent를 실행해야 한다면 `--workers` 대신 `--all`을 사�
 | [v2 재현](docs/v2-reproduction.kr.md) | K-P2PLab v2 호환 매핑과 의도적인 차이 |
 | [프로토콜 설정](docs/protocol-options.kr.md) | PubSub·스코어·Kademlia·이름 있는 정책의 전체 설정 |
 | [Bandwidth 측정](docs/bandwidth.kr.md) | 스트림 사용량, 전송률 계산, 프로토콜 귀속과 수집 한계 |
-| [v2 전체 분석 대조](docs/v2-analysis-coverage.kr.md) | 분석기 출력·Python 분석 전체, 정의 차이와 미지원 기능 |
+| [v2 전체 분석 대조](docs/v2-analysis-coverage.kr.md) | v2 분석·시각화 대응, 정의 차이와 필요한 관측 근거 |

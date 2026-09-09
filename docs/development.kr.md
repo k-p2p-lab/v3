@@ -2,7 +2,7 @@
 
 [English](development.md) | 한국어
 
-정식 Go 모듈 경로는 `github.com/k-p2p-lab/v3`이며 [`go.mod`](../go.mod)는 Go 1.25 이상을 요구합니다. 이 문서는 v3 개발 절차를 다룹니다. 프로젝트 목표와 개념 설계는 [Hub](https://github.com/k-p2p-lab/hub)에서 관리합니다.
+정식 Go 모듈 경로는 `github.com/k-p2p-lab/v3`이며 [`go.mod`](../go.mod)는 Go 1.25 이상을 요구합니다. 이 문서는 v3 개발 절차를 다룹니다. 프로젝트 목표와 개념 설계는 [Hub](https://github.com/k-p2p-lab/hub/blob/master/README.kr.md)에서 관리합니다.
 
 ## Linux 빌드와 검증
 
@@ -59,3 +59,17 @@ node --test internal/webui/*_test.cjs
 Windows에서는 편집과 정적 검사를 수행합니다. Windows 네이티브 `go test`, `go test -c`, 생성된 테스트 실행 파일 또는 이를 호출하는 `make test` 등의 helper를 실행하지 마십시오. 대화형 방화벽·보안·권한 상승 창이 필요한 명령도 실행하지 않습니다. 실행 검증에는 위의 Linux Docker test target이나 기존의 비대화형 Linux 호스트를 사용하십시오. 둘 다 사용할 수 없으면 정적 검사와 실행 검증 여부를 구분하여 보고합니다.
 
 런타임 이미지는 `CGO_ENABLED=0`으로 빌드합니다. 셸 스크립트, Dockerfile과 Makefile은 [`.gitattributes`](../.gitattributes)를 통해 LF 줄바꿈을 유지합니다. 런타임 이미지는 빌드한 애플리케이션과 실행 유틸리티를 포함하며 Go나 Node.js 개발 도구를 포함하지 않습니다.
+
+## 문서 관리
+
+프로젝트 공통 목적·설계·연구·논문은 [Hub](https://github.com/k-p2p-lab/hub/blob/master/README.kr.md), 실행 동작·운영 계약은 v3에서 관리합니다. 영어가 기본이며 변경한 안내는 대응하는 `.kr.md`에도 반영합니다. 문서 제목과 UI 조작 이름을 구분하고 UI 이름은 실제 영어 표시를 유지합니다.
+
+지표의 수식·추정은 `experiment-metrics`와 `bandwidth`, endpoint·로그 스키마·분석 버전은 `api`, 저장 파일과 수명은 `monitoring`, 화면 조작은 `visualization`을 정본으로 삼습니다. 관련 문서는 정의를 복제하기보다 해당 절로 연결합니다. README의 문서 목록과 Hub↔v3 링크는 같은 언어의 안내로 연결하고 상대 경로·절 앵커·코드 예제를 확인하십시오.
+
+v2 자료가 나란히 있을 때 분석 소스 목록은 다음과 같이 확인합니다.
+
+```sh
+python3 scripts/audit-v2-analysis.py --v2 ../v2
+```
+
+이 검사는 v2 분석 필드·소스 hash의 변경을 찾으며 수치 동등성이나 현재 runtime 검증을 증명하지 않습니다. 수행한 검증과 보존된 과거 기록을 구분하고, 문서 수정 때 오류 수정 일지를 별도로 추가하지 않습니다.

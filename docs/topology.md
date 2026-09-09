@@ -66,7 +66,9 @@ Older Peers lacking overlay snapshots provide only Transport lines. The graph re
 
 `protocol` is `transport`, `kademlia`, or `gossipsub`. GossipSub edges are distinct per topic in the API. Duplicate reports are merged deterministically, and unknown endpoints, ambiguous Peer identities within a run, and cross-run relationships are excluded. IDs in the graph and API are Node IDs; reported neighbor lists inside Node objects use libp2p Peer IDs.
 
-These snapshots are live state, not a complete historical topology database. Saved `events.jsonl` retains collected GRAFT/PRUNE events, subject to telemetry loss. New runs also include group degree/clustering and score summaries in `observations.jsonl` for [saved-result charts](visualization.md). These summaries cannot reconstruct an exhaustive history of DHT tables, mesh edges, or individual observer-to-peer scores. Protocol filtering and topology layout do not alter the [delivery metric definitions](experiment-metrics.md).
+During a run, the Controller saves group state/degree/clustering/score summaries and protocol graph samples in `observations.jsonl` about every five seconds. Each `graphs` item has `protocol`, sorted Node IDs in `nodes`, aligned `groups`, and node-index pairs in `edges`. Edges are unique and undirected; GossipSub merges the same peer pair across topics. The live edge fields `topic` and `reportedBy` are not retained in this graph format. Changes between samples and individual observer-to-peer scores are not retained.
+
+`events.jsonl` preserves collected GRAFT/PRUNE transitions and [detailed RPC metadata](api.md#detailed-peer-logs), subject to telemetry loss. Historical summaries without edges cannot recover new graph metrics. Use the [result ZIP](monitoring.md#download-experiment-results) for source records and [research metrics](experiment-metrics.md#research-graph-observations) for thinning and graph calculations. Layer visibility and layout do not change the main delivery definition.
 
 ## Development checks
 

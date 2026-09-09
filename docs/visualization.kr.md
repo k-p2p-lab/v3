@@ -4,7 +4,7 @@
 
 **Saved results → Images**에서 백그라운드 분석을 시작합니다. 서버가 로그 읽기·그래프 지표·전파 경로·분포 적합·저장 단계를 처리하고, 완료 데이터를 브라우저가 흰 배경의 가로 1,600px PNG로 만듭니다. **PNG ↓**, **CSV ↓**, **Download all PNG + CSV (ZIP)**으로 개별 이미지·차트 좌표·전체 묶음을 다운로드합니다. ZIP에는 축·범례·정의를 포함한 차트 JSON도 있습니다. **Download analysis JSON**은 서버에 저장된 전체 분석입니다.
 
-창이나 브라우저를 닫아도 접수한 서버 분석은 계속됩니다. 같은 실행의 중복 요청은 기존 작업을 재사용하며, 한 번에 1개씩 최대 32개 작업을 접수합니다. 읽기 100% 이후에도 그래프 계산과 저장이 남을 수 있습니다. 완료 데이터는 Controller 재시작 후에도 보존됩니다. 진행 중 재시작한 작업은 `interrupted`가 되며 **Retry**로 다시 시작합니다. 네트워크 요청만 실패한 경우 Retry는 기존 작업에 연결합니다. PNG 변환과 비교 수식 계산은 창을 열었을 때 브라우저에서 수행합니다.
+창이나 브라우저를 닫아도 접수한 서버 분석은 계속됩니다. 같은 실행의 중복 요청은 기존 작업을 재사용하며, 최대 32개의 대기·실행 작업을 접수하며 한 번에 하나씩 계산합니다. 읽기 100% 이후에도 그래프 계산과 저장이 남을 수 있습니다. 완료 데이터는 Controller 재시작 후에도 보존됩니다. 진행 중 재시작한 작업은 `interrupted`가 되며 **Retry**로 다시 시작합니다. 네트워크 요청만 실패한 경우 Retry는 기존 작업에 연결합니다. PNG 변환과 비교 수식 계산은 창을 열었을 때 브라우저에서 수행합니다.
 
 **Analyze latest snapshot**은 새 원본 스냅샷을 분석합니다. 분석기 버전이 바뀐 이전 캐시는 Images를 열 때 새 작업으로 갱신합니다. 원본 로그가 없는 정보는 캐시 갱신으로 복원되지 않습니다. 새 분석·재시도·갱신에는 Controller에 설정된 API 토큰이 필요합니다. 실행 삭제 시 분석 작업과 아티팩트도 삭제됩니다.
 
@@ -34,16 +34,18 @@
 
 Import에서 v2 `metrics.jsonl`, 전파 tree JSON/JSONL, 중복 시간 map, `x_case/y/yerr`·`x/y` JSON, 숫자 CSV, v3 분석 JSON을 읽습니다. 파일당 최대 32MiB이며 브라우저 안에서 처리합니다. `x_case/y/yerr`를 읽기 전에 해당 Metric을 선택하십시오. CSV overlay는 단위가 같은 파일끼리 사용합니다. Peak-normalized overlay는 각 곡선 최대를 1로 바꾸므로 원래 확률/횟수가 아닙니다. **v2 fixed historical / ER reference images**는 v2 코드에 들어 있던 고정 참고자료이며 선택한 실험의 관측값이 아닙니다.
 
-기존 v3 메인 Metrics의 수신 기간·세션 기반 정의는 유지됩니다. 추가 연구 지표는 별도의 `research` 영역입니다. FRT는 메시지별 비발행 노드의 최초 수신 시간(초)이며 envelope 또는 동기화된 양쪽 시각/같은 Agent 시각 근거를 사용합니다. 모집단은 최초 수신 시점들에 구독 중이던 비발행 노드의 **합집합**입니다. 구독 이력이 없을 때만 dispatch targets를 사용합니다. 전파·중복 누적비율은 같은 메시지–노드 모집단을 사용합니다. `drc_per_node_count`의 분모는 관측 그래프 평균 노드 수이며, `drc_per_target`과 구분합니다.
+## 지표와 수집 근거 확인
 
-그래프는 신선한 보고의 무방향 고유 이웃 관계이고 isolate를 포함합니다. 최단 경로는 자기 자신과 도달 불가능한 쌍을 제외합니다. saved snapshot은 동일 가중치입니다. v2의 reciprocal GRAFT 그래프·메시지별 관측 구간과 수치가 항상 같지는 않습니다. 비잎 분모 차수는 v2처럼 **전체 차수 합 / degree > 1인 노드 수**이며 잎 제거 그래프 평균이 아닙니다. Student-t는 관측 확률에 직접 가중 적합하며, df/scale 경계와 수렴 상태를 결과에 기록합니다.
+같은 이름의 메인 Metrics와 추가 `research` 값은 모집단·기간·집계가 다릅니다. 특히 연구 reachability는 수신 관측 시각에 조건부이고, raw 메시지도 시각 근거가 있으면 연구용 로그 지연 추정이 나올 수 있습니다. [저장 결과 연구 지표](experiment-metrics.kr.md#저장-결과-연구-지표)에서 정의·단위·표본·그래프 정규화를 확인하십시오. 서로 다른 정의의 결과를 동일 Series/Case 반복으로 묶지 마십시오. 가져온 v2 값은 원래 정의를 유지하며 자동 변환되지 않습니다.
 
-Controller는 현재 보고에서 얻을 수 있는 그래프 간선을 관측 파일에 저장합니다. Peer는 수정하지 않은 upstream libp2p의 trace 메타정보만 사용합니다. IHAVE의 토픽별 메시지 ID, IWANT/IDONTWANT의 메시지 ID, PRUNE의 peer-exchange ID, 데이터 RPC의 메시지 ID·토픽, 구독 변경을 기록합니다. `rpcObservationId`는 같은 **로컬 RPC 콜백**에서 나온 기록을 묶으며 상대 노드의 RPC ID와 같다는 뜻이 아닙니다. `pubsub_reject`는 거부한 메시지 ID와 제공된 사유를 보존합니다. 실제 필드는 [API](api.kr.md#상세-peer-로그)를 참고하십시오.
+Eager Push/Lazy Pull 색상과 기여 값은 메타정보 추정입니다. 분류된 eager/lazy가 0이어도 unknown 수신이 남을 수 있으므로 미분류 수를 함께 확인하십시오. [추정 규칙](experiment-metrics.kr.md#eager-push와-lazy-pull-추정)은 메시지 ID·GRAFT·IHAVE·IWANT의 사용과 근거 충돌을 설명합니다. [상세 Peer 로그](api.kr.md#상세-peer-로그)는 실제 수집 필드와 생략 한도를 정의합니다.
 
-Eager Push/Lazy Pull은 **메타정보 기반 추정**입니다. 수신 시점의 활성 GRAFT는 eager 후보, 같은 상대·토픽의 IHAVE→IWANT 순서는 lazy 후보입니다. 새 로그는 전달 메시지의 pubsub ID를 우선 대조하고, ID가 없는 과거 로그는 최대 5초 내 시각 연관을 사용합니다. 이 5초는 분석 규칙이며 프로토콜 timeout이 아닙니다. PRUNE은 활성 GRAFT를 해제하며, 연결 해제·구독 해제·측정 종료는 그 이전 연결 근거를 무효화합니다. 두 후보가 충돌하거나 근거가 부족하면 unknown으로 남깁니다. 경로 전체를 복원할 수 없으면 간선의 추정 근거는 보존하되 전체 경로를 분류하지 않습니다. 요청 ID가 일치해도 실제 발신 원인을 직접 측정한 것은 아닙니다.
+과거 기록에 없는 메시지 ID·그래프 간선·세션 증거는 재분석으로 복원되지 않습니다. 현재 이미지를 Controller·Agent에 배포하고 새 Peer로 실험하면 해당 버전의 로그를 수집합니다. [Swarm 업데이트](swarm.kr.md#장애업데이트종료)를 따르십시오. 현재 구현은 upstream libp2p의 관측값을 사용하며 별도 Python 실행 환경이나 이미지 생성 서비스는 필요하지 않습니다.
 
-ID 상세 목록은 종류별 최대 8,192개 및 hex 문자열 합계 512KiB로 제한하고, 생략 수와 완전성 표시를 기록합니다. 집계 개수는 잘리지 않습니다. 구독 목록도 최대 8,192개입니다. payload 본문이나 수집할 수 없는 큐 출처·패킷 헤더를 기록하지 않습니다. 예전 로그의 누락된 ID와 간선은 재분석으로 복원되지 않습니다. **Controller와 Peer 이미지를 새 빌드로 배포한 뒤 실험**하면 새 상세 로그를 사용할 수 있습니다. third_party와 로컬 libp2p fork는 사용하지 않습니다.
+## 분석 결과 보존과 API
 
-API: `POST /api/v1/analysis-jobs/{id}`, 같은 경로의 `GET`, `/result?jobId={jobId}`의 전체 분석, `/summary?jobId={jobId}`의 경량 비교 자료를 사용합니다. 완료 분석의 `analysisVersion`은 3입니다. 동기식 `/api/v1/experiments/{id}/analysis`는 호환용이며 2분 제한을 유지합니다. Python과 별도 이미지 서버는 필요하지 않습니다.
+[백그라운드 분석 API](api.kr.md#백그라운드-분석)는 작업 상태·버전·원본 snapshot 시점과 전체/경량 응답을 정의합니다. 원본 경계는 대기열 접수 시점이 아니라 해당 작업이 계산 슬롯을 얻은 뒤 잡힙니다. 완료 작업은 이 경계를 유지하므로 나중에 도착한 로그를 포함하려면 **Analyze latest snapshot**을 사용하십시오.
+
+서버는 완료 분석 JSON을 보존하고, PNG·CSV·비교 ZIP은 창을 열었을 때 브라우저에서 생성합니다. **Download results**의 원본 ZIP과 이 화면의 **Download analysis JSON**, **Download all PNG + CSV (ZIP)**은 서로 다른 파일입니다. 파일별 구성·보존 범위는 [분석 파일과 이미지 보존](monitoring.kr.md#분석-파일과-이미지-보존)을 참고하십시오.
 
 [실험 지표](experiment-metrics.kr.md) · [v2 기능 대조](v2-analysis-coverage.kr.md) · [Bandwidth](bandwidth.kr.md)

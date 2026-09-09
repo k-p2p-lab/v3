@@ -1,6 +1,6 @@
 # Three delay cohorts with Prysm beacon-block scoring
 
-English | [한국어](swarm-churn-prysm-block.kr.md)
+English | [Korean](swarm-churn-prysm-block.kr.md)
 
 [`examples/swarm-churn-prysm-block.yaml`](../examples/swarm-churn-prysm-block.yaml) extends the supplied 10-boot, 5-minute warm-up, 4-KiB experiment with three concurrent churn jobs. All workers share `kpl/prysm/beacon_block`; publisher cohorts rotate while all three cohorts receive messages.
 

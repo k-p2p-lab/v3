@@ -70,4 +70,4 @@ Start with the [Hub](https://github.com/k-p2p-lab/hub) for objectives, research,
 | [v2 reproduction](docs/v2-reproduction.md) | Compatibility mapping and intentional differences from K-P2PLab v2 |
 | [Protocol configuration](docs/protocol-options.md) | Complete PubSub, scoring, Kademlia and named-policy controls |
 | [Bandwidth measurement](docs/bandwidth.md) | Stream usage, rate calculation, protocol attribution and collection limits |
-| [v2 analysis coverage](docs/v2-analysis-coverage.md) | All reviewed parser outputs and Python analyses, definition differences and unsupported features |
+| [v2 analysis coverage](docs/v2-analysis-coverage.md) | v2 analysis/visualization mapping, definition differences, and required evidence |

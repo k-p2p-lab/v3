@@ -47,11 +47,13 @@ Import는 파일당 32MiB까지 지원합니다. 제공 형식은 metric JSONL, 
 
 ## 해석과 원자료
 
-- 연구 FRT는 비발행 노드의 최초 수신을 초 단위로 집계합니다. 표본 내 deviation은 모집단 SD, 짝수 표본 median은 가운데 두 값의 평균입니다. 실행 반복 오차막대는 표본 SD이며 반복 1회에는 SD가 없습니다.
-- 연구 reachability의 분모는 수신 시점들에 구독한 비발행 노드의 합집합입니다. 수신이 없으면 발행 시점으로 평가합니다. 구독 이력이 전혀 없을 때만 dispatch targets를 사용합니다. 전파·중복 누적비율은 같은 메시지–노드 모집단을 사용합니다.
-- v2의 reciprocal GRAFT 그래프와 v3의 신선한 무방향 이웃 표본은 서로 다른 관측입니다. 저장 snapshot은 동일 가중치이며, 그룹 중심성은 전체 그래프 경로에서 계산한 해당 그룹 노드 평균입니다. 과거 요약만 남은 실행에서는 새 간선 기반 지표를 복원할 수 없습니다.
-- Eager/Lazy는 직접 발신 원인 계측이 아닙니다. 새 로그는 IHAVE→IWANT와 전달 메시지의 ID를 대조하고, 옛 로그는 최대 5초 내 같은 peer/topic의 순서를 사용합니다. 충돌·부족·순환 경로는 미분류입니다. 연결·구독·측정 종료가 이전 근거를 무효화합니다. 추정 방법과 간선 근거를 분석 JSON/CSV에 보존합니다.
-- Student-t는 차수 확률에 직접 가중 적합합니다. 정수 차수 PMF와 연속 밀도의 차이를 표시하고 수렴 실패·경계 도달을 공개합니다. 가상 표본 60,000개나 실패 시 임의 파라미터를 만들지 않습니다. 회귀의 계수가 식별되지 않으면 N/A입니다.
-- 새 상세 ID 로그와 그래프 간선은 Controller·Peer를 새 빌드로 배포한 이후의 실험에서 얻습니다. third_party fork, payload 본문, 관측할 수 없는 발신 큐 출처는 수집하지 않습니다. 대역폭은 [Bandwidth 정의](bandwidth.kr.md)의 실제 스트림 사용량이며 물리 회선 용량이 아닙니다.
+정확한 수식·집계·그래프 표본·Eager/Lazy 추정은 [저장 결과 연구 지표](experiment-metrics.kr.md#저장-결과-연구-지표)에서 관리합니다. v2와 비교할 때 다음 차이를 유지하십시오.
 
-계산 검증은 `internal/controller/analysis_*_test.go`, 로그 검증은 `internal/peer/tracer_test.go`, 비교·가져오기·그림 검증은 `internal/webui/research_test.cjs`와 `result_images_test.cjs`에 있습니다. 작은 기준 그래프·확률·회귀 자료를 검증하며, v2 전체 자료에 대한 수치 동일성 주장은 하지 않습니다.
+- 메인 Metrics의 세션 기간 정의와 v2 그림을 위한 `research` 정의는 별개입니다. 연구 reachability는 수신 시점에 조건부인 모집단을 사용하며, 메시지별 지표와 누적 곡선의 가중 방식도 다릅니다.
+- v2 reciprocal GRAFT 그래프와 v3의 표본 이웃 그래프는 동일한 관측이 아닙니다. v3 저장 그래프는 토픽을 합친 무방향 간선이며 분석은 최대 1,440개 관측 표본을 사용합니다. 원본 간선이 없는 예전 요약으로 새 중심성·경로 지표를 복원할 수 없습니다.
+- 추정된 eager/lazy, 알려지지 않은 출처, 모델 예측과 v2의 고정 역사적/ER 참고자료를 구분합니다. 새 로그의 메시지 ID도 실제 발신 큐 원인을 직접 증명하지 않습니다.
+- 중앙값과 모집단 합집합을 바로잡은 연구 집계를 사용합니다. Student-t는 가상 표본 60,000개를 만들거나 실패 시 임의 파라미터를 넣지 않고 관측 확률에 직접 적합합니다. 따라서 기존 Python 수치·파일 구조·그림의 완전한 동일성을 주장하지 않습니다.
+
+새 상세 ID와 그래프 간선은 해당 버전으로 배포한 이후 수집한 로그에만 존재합니다. 필드·생략 한도는 [API](api.kr.md#상세-peer-로그), 원본·분석·이미지 구분은 [보존 안내](monitoring.kr.md#분석-파일과-이미지-보존), v3에 추가한 실제 스트림 B/W의 범위는 [대역폭 정의](bandwidth.kr.md)를 참고하십시오.
+
+계산 검증은 [연구 지표 테스트](../internal/controller/analysis_research_test.go)와 [출처 추정 테스트](../internal/controller/analysis_origin_test.go), 로그는 [Peer tracer 테스트](../internal/peer/tracer_test.go), 가져오기·비교·그림은 [연구 UI 테스트](../internal/webui/research_test.cjs)와 [결과 이미지 테스트](../internal/webui/result_images_test.cjs)에 있습니다. 소스 목록 검사는 [개발 안내](development.kr.md#문서-관리)를 따릅니다.

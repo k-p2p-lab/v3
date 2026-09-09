@@ -2,7 +2,7 @@
 
 English | [Korean](experiment-metrics.kr.md)
 
-This guide defines the calculations implemented by v3. For the project-wide research context, see the [Hub research guide](https://github.com/k-p2p-lab/hub/blob/master/docs/RESEARCH.md). Use [monitoring and results](monitoring.md) for Grafana, export, retention, and deletion procedures.
+This guide defines the calculations implemented by v3. Main Metrics, saved research views and bandwidth use distinct definitions, specified below. For the project-wide research context, see the [Hub research guide](https://github.com/k-p2p-lab/hub/blob/master/docs/RESEARCH.md). Use [monitoring and results](monitoring.md) for Grafana, export, retention, and deletion procedures.
 
 ## Run the same scenario several times
 
@@ -147,6 +147,54 @@ Bandwidth samples count actual libp2p stream bytes for each process session. Thr
 
 `metrics.bandwidth`, saved-analysis charts and `kpl_p2p_*` metrics expose transferred bytes, interval rates and final-sample quality. These values differ from the configured `network.rateMbps` limit and from `kpl_message_bytes_total`, which sums the recorded PubSub data sizes of publish/deliver events. See [bandwidth measurement](bandwidth.md) for units, protocol attribution, missing samples and restart behavior.
 
+## Saved-result research metrics
+
+The saved-analysis response contains two definition spaces. Its `metrics` object uses the session-window or historical definitions above. Its `research` object uses `definition: "v2-corrected-observations-v1"` for the additional v2 research views. The shared names FRT, reachability and DRC do not make these values interchangeable. These research values are not added to the main Metrics cards or the `kpl_window_*` Prometheus series.
+
+| Quantity | Main session-window Metrics | Saved `research` |
+|---|---|---|
+| Receiver unit | Message × subscription session | Message × Node ID, first recorded non-publisher receipt |
+| Population and time | Subscription evidence over a fixed publication/deadline window | Union of subscribed non-publisher nodes at first-receipt times; publication time when there are no receipts |
+| Run delivery aggregate | Sum receiver-pair successes and denominators, with unknown bounds | Mean of per-message research reachability; cumulative propagation divides total eligible receipts by total message populations |
+| Latency | Valid on-time envelope receipts at stable remote pairs, milliseconds in UI | Nonnegative first-reception values in seconds, without the main window/cohort restriction |
+| Duplicates | Window-limited copies per successful stable remote pair | Recorded nonlocal copies per message; `drc_per_node_count` divides by mean observed GossipSub graph nodes, `drc_per_target` by that message's receiver population |
+
+The research population uses observed JOIN/LEAVE and measurement lifecycle evidence. Only when topic subscription history is absent does it fall back to dispatch `targetNodeIds`; a zero or unavailable denominator gives N/A. `population` and `populationBasis` are retained per message. Because its sampling instants depend on observed receipts, this population is **conditioned on the observations** and does not satisfy the delivery-independent eligibility rule of the main session-window metric. Use the main bounds and coverage for that research question, and identify this retrospective definition when comparing v2-style curves. Research records do not apply the session stream's complete-prefix test to establish confirmed misses.
+
+Research FRT first uses a recorded nonnegative envelope latency. Otherwise it subtracts recorded publication and receipt times only when both carry trusted clock metadata or share a nonempty Agent ID. This can produce a log-time estimate for raw messages while main raw latency remains N/A. These point differences, membership boundaries, duplicate timelines and origin associations do not propagate clock uncertainty. Missing publication records are counted in `orphanReceipts`; they do not create a synthetic publication or zero latency.
+
+Within a message, `average`, `deviation`, `median`, and `count` describe the available samples: population SD and the mean of the two middle values for even medians. Run summaries of message statistics reduce message means with equal message weight; graph summaries reduce retained snapshots. Control summaries keep whole-record totals, separating RPCs, entries, ID references and mesh transitions. Between-run comparison bars use sample SD, unavailable for a single repeat. Propagation and duplicate normalized curves use the same eligible message–node cohort; duplicate copies per population can exceed one. Hop curves exclude unresolved hops, and estimated eager/lazy latency CDFs are conditional on classified receipts with valid times. Missing origins must be reported beside those curves.
+
+### Research graph observations
+
+The Controller records available fresh transport, Kademlia and GossipSub relationships in `observations.jsonl`. Graphs include qualifying isolated nodes, use undirected unique edges, and merge a peer pair's GossipSub topics into one pair for each saved protocol graph. The live API still has topic-specific edges. These are reported relationships, not proof of a packet transfer or an atomic cluster snapshot; see [topology](topology.md#api-and-retained-data).
+
+Analysis retains at most 1,440 observation samples, thinning longer records while preserving the latest sample. Graph averages and mean per-snapshot degree probabilities weight the retained samples equally, not by elapsed time or node population. The raw observation file remains available in the result ZIP. Generic graph keys in `research.summary`, `degreeDistribution` and `degreeFit` use the all-group GossipSub layer; protocol/group timelines remain in `observations[].groups[].layers[]`.
+
+| Statistic | Definition |
+|---|---|
+| Average degree | `2E/N`, including isolates. `average_degree_excluding_leaves` keeps v2's sum of ALL degrees divided by the count with degree > 1; an empty denominator is N/A |
+| Diameter / mean shortest path | Distinct reachable node pairs only. `connected_pair_fraction` reports their proportion; no reachable pair gives N/A distances |
+| Clustering | Mean local triangle ratio, with zero for degree < 2 |
+| Degree / betweenness / closeness centrality | Degree divided by `N-1`; normalized Brandes betweenness; reachable-count-adjusted closeness |
+| PageRank / eigenvector centrality | Damping 0.85 with dangling mass redistributed uniformly; L2-normalized eigenvector iteration on `A+I`. Nonconvergence is N/A; an edgeless eigenvector statistic is N/A |
+| Assortativity / modularity | Endpoint-degree correlation, unavailable for zero variance; Louvain modularity with resolution 1 and seed 1 |
+
+Group centralities average the group's nodes on full-graph paths; they are not recomputed on an induced subgroup graph. Degree and clustering group summaries remain available; whole-graph diameter, assortativity and modularity are not separate subgroup calculations. Historical degree-only summaries cannot recreate absent edges or edge-dependent metrics.
+
+The Student-t model fits the all-group GossipSub degree probabilities directly by weighted maximum likelihood, requiring at least three distinct degrees. It reports convergence and parameter-bound status. A continuous fitted density and an integer-degree probability mass are different quantities. Quadratic parameter predictions and duplicate regressions use selected case means, expose rank and in-sample R², and do not supply coefficients for an unidentified model. [Comparison controls](visualization.md#comparing-runs) select the inputs and parameters.
+
+### Eager Push and Lazy Pull estimates
+
+`originMethod: "message-id-preferred-graft-ihave-iwant-estimate-v1"` identifies the current method. `linkEstimate` describes the last observed sender-to-receiver link; `source` classifies the reconstructed path from the publisher. `evidence` preserves the supporting observations. These are estimates from upstream trace metadata, not directly observed sender-queue causes.
+
+- Active GRAFT at first receipt suggests eager. PRUNE clears that mesh evidence; connection removal, leaving and measurement termination invalidate older applicable evidence.
+- IHAVE followed strictly later by IWANT on the same directed sender/receiver pair and topic suggests lazy. The lookback begins at the latest of publication, the applicable reset, and receipt minus five seconds; it ends before receipt. The five seconds is an analysis rule, not a protocol timeout.
+- Detailed ID lists must match the delivered `pubsubMessageId`; legacy count-only records use time association. A matching data RPC adds supporting evidence. Local pre-send drops are excluded from successful control associations.
+- Conflicting push/pull evidence, missing peers, unusable IDs/times and unresolved paths remain unknown. Truncated ID lists are not negative proof that no request occurred. A complete path is eager only if every inferred edge is eager, and lazy if it contains a lazy estimate; an unresolved or cyclic path retains link evidence without a whole-path classification.
+
+`eager_count` and `lazy_count` count classified receipts and may both be zero while `unknown_count` is positive. They do not establish the true absence of either propagation mechanism. Their conditional FRT/reachability and the lazy-on/off contribution charts inherit this classification coverage. Matched-baseline differences are observational estimates, not proof of a causal effect. See [detailed Peer logs](api.md#detailed-peer-logs) for the collected fields and omission limits.
+
 ## Scope, export, and monitoring
 
 New summaries use `definition: "session-window-v1"`. A publication records `fields.measurementDefinition` and `fields.deliveryWindow`. The stored session evidence, publication and receipt times, and source sequences allow the same calculation from the raw log.
@@ -173,6 +221,7 @@ The continuous-subscription window, evidence rules, pair weighting, unknown boun
 | [Session-window accumulator](../internal/controller/run_metrics_window.go) | Cohorts, receipt bounds, coverage, latency, and duplicate summaries |
 | [Window regression cases](../internal/controller/run_metrics_window_test.go) | Deadline boundaries, missing evidence, churn, and out-of-order telemetry cases |
 | [Prometheus collector](../internal/controller/run_metrics_prometheus.go) | Run gauges and reconstructed latency histogram |
+| [Research aggregation](../internal/controller/analysis_research.go), [graphs](../internal/controller/analysis_graph.go), [origin inference](../internal/controller/analysis_origin.go) | Separate saved research definitions, sampled graphs and metadata estimates |
 | [Result export](../internal/controller/results.go) | Event-log boundary and metrics reconstruction for downloads |
 
 The [topology guide](topology.md) owns graph layers, Agent numbering, and display controls. Display changes do not alter measurement cohorts. [Monitoring and results](monitoring.md) owns saved-file retention and deletion; deleting a result releases its metric index but does not stop Peers or delete Prometheus history. The [REST API guide](api.md) defines the download and deletion endpoints.

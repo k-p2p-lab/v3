@@ -62,11 +62,32 @@ curl -X POST http://control-node:8080/api/v1/experiments \
 
 The scenario library endpoints store reusable editor inputs independently of experiment results. The list omits YAML, while individual GET, POST, and PUT responses include it. See the [scenario library guide](scenario-library.md) for the UI workflow, payloads, validation limits, and storage location.
 
-Raw events, including typed bandwidth samples, are stored at `<data-dir>/runs/<run-id>/events.jsonl`; the exact input is stored as `scenario.yaml`, experiment metadata as `experiment.json`, and collected topology/score summaries as optional `observations.jsonl` in the same directory. The local Controller data directory defaults to `data`. In Swarm, the persistent `controller-data` volume is mounted at `/var/lib/kpl/data`, and each run's files are under `/var/lib/kpl/data/runs/<run-id>`.
+Raw events, including typed bandwidth samples, are stored at `<data-dir>/runs/<run-id>/events.jsonl`; the exact input is stored as `scenario.yaml`, experiment metadata as `experiment.json`, and collected graph samples and topology/score summaries as optional `observations.jsonl` in the same directory. The local Controller data directory defaults to `data`. In Swarm, the persistent `controller-data` volume is mounted at `/var/lib/kpl/data`, and each run's files are under `/var/lib/kpl/data/runs/<run-id>`.
 
 Use **Download results** in the Dashboard to export a run as ZIP. **Saved results** also lists files retained from previous Controller sessions; **Refresh** reloads that list. Running experiments offer **Download snapshot**, which contains the records saved when the download starts. These exports include the full saved event log, independently of the 300-event recent buffer. See [result downloads](monitoring.md#download-experiment-results) for archive contents and collection limits.
 
 `DELETE /api/v1/results/{id}` returns `204` on deletion, `404` if the result is absent, and `409` while the run/batch is active or an actual `GET` download holds it. Automatic `HEAD` size calculations and list reads do not cause a download conflict.
+
+## Background analysis
+
+Use `POST /api/v1/analysis-jobs/{id}` to analyze one saved run, then poll `GET` on that path. The POST requires the configured Bearer token; GET/HEAD reads are public. An admitted queued/running job returns `202`; reuse of a current completed artifact returns `200`. At most 32 queued/running jobs are admitted across the Controller (`503` when full), and the shared analysis slot permits one computation at a time. Closing a client does not cancel admitted work.
+
+The status `state` is `idle`, `queued`, `running`, `completed`, `failed`, `canceled`, or `interrupted`. `idle` means the saved run has no requested analysis. Failed/canceled/interrupted work can be resubmitted. Persisted unfinished work recovered after restart becomes `interrupted`; orderly cancellation can already have saved `canceled`. There is no separate job-cancel endpoint. Deleting an eligible saved run cancels its job and removes its artifacts.
+
+| Status field | Meaning |
+|---|---|
+| `id`, `runId` | Analysis attempt identity and source run identity; a retry or refresh can create a new attempt |
+| `version`, `analysisVersion` | Status/response format version `1`, computation version `3` for current jobs; independent of metric `definition` and log `rpcMetadataVersion` |
+| `phase`, `processedBytes`, `totalBytes`, `progress` | Current stage and log-reading byte progress (0–100). Reading 100% does not complete graph/propagation calculations or persistence; wait for `state: completed` |
+| `createdAt`, `startedAt`, `updatedAt`, `finishedAt` | Job timestamps; a phase not reached has no meaningful timestamp |
+| `snapshotAt` | Source boundary captured after the worker obtains its analysis slot, rather than at POST admission |
+| `error`, `resultUrl` | Failure detail or completed full-artifact URL with its attempt ID |
+
+Requests reuse an existing queued/running job even with `?refresh=1`. A current completed job is reused unless refreshed; an outdated completed `analysisVersion` is regenerated on POST. GET status alone does not refresh it. **Images** performs that version check automatically. A fresh analysis uses a new recorded boundary; absent historical metadata remains absent.
+
+After completion, `GET` or `HEAD` `/api/v1/analysis-jobs/{id}/result?jobId={jobId}` serves the full JSON; `/summary?jobId={jobId}` serves the comparison artifact. Supplying `jobId` guards against downloading a different attempt; omission selects the current completed attempt. An unfinished/mismatched attempt returns `409`, a missing run `404`, and malformed/unreadable stored data normally `422`. The compact artifact sets `observations`, `timeline`, `bandwidthTimeline` and `research.messages` to empty arrays while preserving `messageCount`, metrics, aggregates, distributions and fits. It cannot supply per-message paths or original timelines. Both responses carry `analysisId`, `analysisVersion`, and the source `asOf` boundary.
+
+`GET /api/v1/experiments/{id}/analysis` remains a synchronous compatibility route with a two-minute request timeout. It computes a response without creating a persisted background job. Use the job API for long analysis and later downloads. The [metric guide](experiment-metrics.md#saved-result-research-metrics) owns research definitions; [monitoring](monitoring.md#analysis-and-image-retention) owns saved files, and [visualization](visualization.md) describes the browser workflow.
 
 ## Internal cluster endpoints
 
@@ -97,10 +118,9 @@ The Agent additionally exposes this Controller-driven cleanup endpoint:
 
 Internal endpoints may change independently of the operator API. Request and snapshot field definitions are in [`internal/model/model.go`](../internal/model/model.go), with bandwidth types in [`internal/model/bandwidth.go`](../internal/model/bandwidth.go); handlers are in [`internal/controller/api.go`](../internal/controller/api.go) and [`internal/agent/api.go`](../internal/agent/api.go).
 
-
 ## Detailed Peer logs
 
-Updated Peers add metadata actually exposed by upstream libp2p to `events.jsonl`. Existing publish/deliver/duplicate events and main Metrics aggregation remain in use. `messageId` is an application identity; `fields.pubsubMessageId` and detailed ID lists encode pubsub wire IDs as hex.
+Updated Peers add metadata actually exposed by upstream libp2p to `events.jsonl`. Existing publish/deliver/duplicate events and main Metrics aggregation remain in use. `messageId` is the envelope application ID or the raw `pubsub-<hex native ID>`; `fields.pubsubMessageId` and detailed ID lists encode pubsub wire IDs as hex.
 
 | Event / field | Meaning |
 |---|---|
@@ -116,9 +136,7 @@ Updated Peers add metadata actually exposed by upstream libp2p to `events.jsonl`
 | `timestampSource`, `sourceTimestamp` | Trace time provenance and original unadjusted time. Missing upstream time uses `peer-clock` without fabricating a source timestamp |
 | `clockBasis`, `clockOffsetMs`, `clockUncertaintyMs` | Added when a valid Controller clock synchronization estimate exists |
 
-Detailed IDs are limited to 8,192 entries and 512KiB of hex per category; subscription lists are capped at 8,192. RPC/entry/ID totals remain complete. Existing `telemetry_drop` and source sequences expose event loss. Payload bodies, IWANT sender-queue causes and nonexistent global RPC IDs are not collected. Eager/Lazy follows the metadata estimation rules in [visualization](visualization.md).
-
-The current completed `analysisVersion` is `3`. Full artifacts include `research` definitions, per-message paths/populations, `linkEstimate` and `evidence`. `/summary` preserves `messageCount`, aggregates, distributions and fits. Requests regenerate outdated caches; regeneration cannot recreate missing source metadata.
+Detailed IDs are limited to 8,192 entries and 512KiB of hex per category; subscription lists are capped at 8,192. RPC/entry/ID totals retain their full counts even when detailed lists are truncated. Existing `telemetry_drop` and source sequences expose event loss. Payload bodies, IWANT sender-queue causes and nonexistent global RPC IDs are not collected. Eager/Lazy follows the metadata estimation rules in [experiment metrics](experiment-metrics.md#eager-push-and-lazy-pull-estimates).
 
 ## Authentication
 
@@ -126,7 +144,7 @@ The current completed `analysisVersion` is `3`. Full artifacts include `research
 
 Enter the value in the dashboard's **Run experiment → API token** field. Running, saving, updating, or deleting through that dialog saves it in that origin's browser `localStorage` for later mutation requests; it does not expire automatically. REST clients send `Authorization: Bearer <token>`. GET reads, including state, events, SSE, and metrics, stay public. The stateless `POST /api/v1/scenarios/validate` is also public; this exception applies only to that exact method and path. The Controller also exempts HEAD; Agents and Peers only exempt GET. The token does not encrypt HTTP traffic.
 
-The same four job counters are present in `/api/v1/snapshot` and SSE snapshots. The dashboard displays them on each run, so active, successful, failed, and canceled background work is visible without inspecting Controller logs.
+The same four scenario job counters are present in `/api/v1/snapshot` and SSE snapshots. The dashboard displays them on each run, so active, successful, failed, and canceled background work is visible without inspecting Controller logs.
 
 See [visualization](visualization.md) for analysis responses, charts and export formats.
 

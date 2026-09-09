@@ -66,7 +66,9 @@ overlay 보고가 없는 이전 Peer는 Transport 선만 제공합니다. 화면
 
 `protocol`은 `transport`, `kademlia`, `gossipsub` 중 하나입니다. API는 GossipSub edge를 topic별로 구분합니다. 중복 보고는 일관된 순서로 합치고 알 수 없는 endpoint, 같은 run 안의 모호한 중복 Peer ID, 다른 run 관계는 제외합니다. 그래프/API edge endpoint는 Node ID이고 Node 내부 이웃 목록은 libp2p Peer ID입니다.
 
-이 snapshot은 현재 상태이며 완전한 과거 토폴로지 DB는 아닙니다. `events.jsonl`에는 수집된 GRAFT/PRUNE가 남지만 telemetry 누락 가능성이 있습니다. 새 실행은 [저장 결과 차트](visualization.kr.md)를 위한 그룹별 차수·clustering·점수 요약도 `observations.jsonl`에 포함합니다. 이 요약만으로 DHT 테이블·mesh edge·평가자별 개별 점수의 전체 이력을 복원할 수는 없습니다. 레이어 표시와 배치는 [도달 지표의 정의](experiment-metrics.kr.md)를 변경하지 않습니다.
+Controller는 실행 중 약 5초마다 `observations.jsonl`에 그룹 상태·차수·clustering·점수 요약과 프로토콜별 그래프 표본을 저장합니다. `graphs`의 각 항목은 `protocol`, 정렬된 Node ID 배열 `nodes`, 같은 인덱스의 `groups`, 노드 인덱스 쌍 `edges`입니다. 고유 무방향 간선을 저장하며 GossipSub는 여러 토픽의 같은 Peer 쌍을 합칩니다. 실시간 간선의 `topic`과 `reportedBy`는 이 저장 형식에 포함되지 않습니다. 표본 사이 변화 전부나 평가자별 개별 점수는 보존하지 않습니다.
+
+`events.jsonl`에는 수집한 GRAFT/PRUNE 등의 전이와 [상세 RPC 메타정보](api.kr.md#상세-peer-로그)가 남지만 telemetry 유실의 영향을 받습니다. 간선이 없는 과거 요약은 새 그래프 지표를 복원할 수 없습니다. 원본은 [결과 ZIP](monitoring.kr.md#실험-결과-다운로드), 표본 축소·그래프 계산은 [연구 지표](experiment-metrics.kr.md#연구-그래프-관측)를 참고하십시오. 레이어 표시와 배치는 메인 도달 지표의 정의를 바꾸지 않습니다.
 
 ## 개발 검증
 

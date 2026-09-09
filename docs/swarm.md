@@ -87,7 +87,7 @@ For analysis, open the Grafana URL, sign in, and select this experiment in **Run
 
 Wait for the run to finish and check that its Peers are stopped. With no other experiments running, Agent occupancy should return to zero. To cancel an active run, use its **Stop** button and wait for cleanup.
 
-Choose **Download results** on the run or in **Saved results**. The ZIP contains `scenario.yaml`, `experiment.json`, `events.jsonl`, optional `observations.jsonl`, `metrics.json`, and `export.json`. Observation summaries and bandwidth counters are included when collected. It includes the full saved event log and metrics rebuilt from that prefix, independently of the 300-event recent buffer, but not the Prometheus/Grafana time-series database. **Download snapshot** on a running experiment contains only records saved at the download boundary. **Delete** removes an inactive saved result after confirmation. [Download contents and limits](monitoring.md#download-experiment-results)
+Choose **Download results** on the run or in **Saved results**. The ZIP contains `scenario.yaml`, `experiment.json`, `events.jsonl`, optional `observations.jsonl`, `metrics.json`, and `export.json`. Observation summaries, graph samples and bandwidth counters are included when collected. It includes the full saved event log and metrics rebuilt from that prefix, independently of the 300-event recent buffer, but not the Prometheus/Grafana time-series database. **Download snapshot** on a running experiment contains only records saved at the download boundary. **Delete** removes an inactive saved result after confirmation. [Download contents and limits](monitoring.md#download-experiment-results)
 
 Download before removing the services, since removal also takes the web pages offline:
 
@@ -278,6 +278,8 @@ On SIGTERM, the Controller stops accepting new experiments and waits for HTTP co
 Controller records, Prometheus time series, and Grafana data live in separate named volumes on `KPL_CONTROL_NODE_ID`. Ordinary service recreation and `swarm.sh remove` retain these volumes. Preserve the entire Controller data directory to retain scenarios, run records, and deletion markers; back up Prometheus and Grafana separately if their history or settings are needed. Volume deletion is not part of routine shutdown. If using custom storage or bind mounts, verify write access for the container UID/GID and remember that paths are resolved on the Docker daemon's host.
 
 The Controller fails at startup when its data directory is not writable. It writes run metadata to a temporary file and renames it on the same filesystem, preventing partial JSON reads. Event logs use append writes. Neither path forcibly synchronizes each write to disk, so power loss can lose recent records. Retained results become available after restart, while live execution and counters are not restored.
+
+Background job state, completed analysis JSON and compact summaries also live in the Controller volume. Completed work can be reused after restart; unfinished/canceled work is resubmitted. Ordinary run ZIPs do not include these caches; see [analysis and image retention](monitoring.md#analysis-and-image-retention) for preservation boundaries.
 
 ## Validation Scope
 

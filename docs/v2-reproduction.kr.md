@@ -4,7 +4,7 @@
 
 검토 기준은 `kpl-v2`의 실제 Controller/Peer 코드와 `exp/exp-2603_churn-02.sh`입니다. 설명 문서와 실행 코드가 다를 때는 실행 코드를 기준으로 삼았습니다. 아래 설정으로 실험의 주요 조건을 재현할 수 있으나, 과거 실행의 패킷 순서나 토폴로지가 동일해지는 것은 아닙니다.
 
-이 호환성 세부 사항은 v3에서 관리합니다. 프로젝트 공통 버전 이력과 연구 배경은 [Hub](https://github.com/k-p2p-lab/hub)를 참고하십시오.
+이 호환성 세부 사항은 v3에서 관리합니다. 프로젝트 공통 버전 이력과 연구 배경은 [Hub](https://github.com/k-p2p-lab/hub/blob/master/README.kr.md)를 참고하십시오.
 
 ## 컨테이너 격리와 배치
 
@@ -84,9 +84,10 @@ raw 발행·수신·중복 이벤트는 `pubsub-` 뒤에 native PubSub 메시지
 ## 관측과 남은 차이
 
 - `wait-ready`는 초기화/API 준비를 뜻하며 mesh 수렴을 보장하지 않습니다. 예제는 별도의 안정화 대기를 둡니다.
-- [dashboard 토폴로지](topology.kr.md)는 현재 Peer 상태를 바탕으로 transport, Kademlia 라우팅 테이블, topic별 GossipSub mesh를 별도로 표시합니다. `TopicPeers`는 `len(pubsub.ListPeers(topic))`이며 로컬에서 알고 있는 topic peer 수입니다. mesh 차수나 원격 애플리케이션 구독 세션의 증거가 아닙니다. 과거 분석에는 저장된 `graft`/`prune`, `add_peer`/`remove_peer`, `join`/`leave` 이벤트를 함께 사용하고 telemetry 누락을 고려해야 합니다. 새 결과에는 `observations.jsonl`의 그룹별 차수·clustering·점수 요약도 있지만 routing·mesh snapshot 전체 이력은 아닙니다.
+- [dashboard 토폴로지](topology.kr.md)는 현재 Peer 상태를 바탕으로 transport, Kademlia 라우팅 테이블, topic별 GossipSub mesh를 별도로 표시합니다. `TopicPeers`는 `len(pubsub.ListPeers(topic))`이며 로컬에서 알고 있는 topic peer 수입니다. mesh 차수나 원격 애플리케이션 구독 세션의 증거가 아닙니다. 과거 분석에는 저장된 `graft`/`prune`, `add_peer`/`remove_peer`, `join`/`leave` 이벤트를 함께 사용하고 telemetry 누락을 고려해야 합니다. 새 결과의 `observations.jsonl`에는 그룹별 요약과 표본 노드·간선도 있습니다. 저장 프로토콜 그래프는 여러 토픽의 관계를 합치며 개별 시점의 모든 routing·mesh 전이를 보존하지 않습니다. 저장 형식은 [토폴로지](topology.kr.md#api와-보존-데이터)를 참고하십시오.
 - v3의 타입별 RPC 수는 v2의 physical IHAVE/IWANT counter, 메시지 ID 참조 수는 logical counter에 대응합니다. v3는 protobuf entry 수, IDONTWANT, 로컬 송신 전 drop, PRUNE peer-exchange record, 혼합 RPC 안의 모든 타입도 보존합니다. v2는 이 경우들을 누락하고 IHAVE topic 정보도 버렸습니다. 기존 단순 `graft`/`prune` 이벤트는 로컬 mesh 전이이므로 wire traffic은 별도 `send_*`, `recv_*`, `drop_*` 제어 이벤트와 비교하십시오. [제어 트래픽 정의](experiment-metrics.kr.md#gossipsub-제어-트래픽)를 참고하십시오.
 - interval/lifetime/base delay 샘플은 seed로 재현할 수 있으나 run ID를 포함한 Peer ID, 네트워크 타이밍, 커널 패킷 난수는 동일하지 않습니다. 노드 metadata에 `seed`, `networkRequested`, 실제 `network`를 남기며 Agent의 Peer config 파일에도 실효 설정을 저장합니다.
+- [추가 연구 분석](experiment-metrics.kr.md#저장-결과-연구-지표)은 v2 그림 계열을 별도 정의로 제공합니다. 메인 세션 지표와 모집단·기간·집계가 다르고 Eager/Lazy는 GRAFT·IHAVE·IWANT·메시지 ID의 추정입니다. 실제 발신 큐 원인과 누락된 과거 간선을 만들어 수집하지 않습니다. 지원 그림과 가져오기 형식은 [v2 분석 대응](v2-analysis-coverage.kr.md)을 참고하십시오.
 - 기본 연결 상한 55와 주요 worker DHT/GossipSub 파라미터는 일치합니다. 그러나 v2 custom PubSub fork 경로의 소스가 제공된 디렉터리에 없어 fork 내부까지 동등성을 검증할 수 없습니다. v3는 공식 라이브러리이며 HopWave는 지원 범위 밖입니다.
 - dashboard 메시지 지표는 최근 이벤트 버퍼와 독립적으로 누적되지만 Controller 재시작 시 초기화되며 telemetry 누락의 영향을 받습니다. [저장 결과 분석](visualization.kr.md)과 ZIP 지표는 재시작 후에도 기록된 실행을 재계산합니다. [churn 대상 집합 정의](experiment-metrics.kr.md)와 [v2 전체 분석 대조표](v2-analysis-coverage.kr.md)를 함께 확인하십시오. 시나리오 설정이 대응하더라도 수치나 시각화 동등성을 보장하지 않습니다.
 
@@ -102,6 +103,5 @@ raw 발행·수신·중복 이벤트는 `pubsub-` 뒤에 native PubSub 메시지
 - 동일 worker 프로파일의 피어별 기본 지연은 `57.008524ms`, `50.467284ms`, `47.92387ms`로 각각 추출. 실제 qdisc에서 loss `1%`, reorder `2%`, correlation `25%` 및 packet drop 카운터 확인.
 - Worker 3개에서 topic 두 개에 총 6개 raw 메시지 발행. 모든 PubSub data는 정확히 32바이트, 자기 수신을 포함한 24개 수신 이벤트와 도달률 1 확인. raw 지연은 전부 미측정으로 기록.
 - 최종 churn run `run-20260904T022448Z-0f9d`: 약 86초 동안 16개 Peer 참여, 발행 3건·수신 8건. 선택된 Peer의 이탈로 발행 1건이 실패했지만 `phase-operation-failed`로 기록하고 계속 진행하여 정상 완료. 모든 Peer stopped 및 잔여 관리 컨테이너 0개 확인.
-- 실제 검증에서 발견한 TBF latency 단위 오류, 삭제 시간초과/삭제 진행 중 응답 처리, 취소된 create의 늦은 생성 경합을 수정하고 재검증했습니다.
 
 이 검증은 설정 적용과 작은 규모의 실제 통신을 확인한 것입니다. TBF 최대 처리량, 다중 물리 호스트 overlay, 수백·수천 Peer의 churn 부하 성능까지 측정한 결과는 아닙니다.

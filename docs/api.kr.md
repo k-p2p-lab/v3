@@ -62,11 +62,32 @@ curl -X POST http://control-node:8080/api/v1/experiments \
 
 시나리오 라이브러리 endpoint는 재사용할 편집기 입력을 실험 결과와 별도로 저장합니다. 목록에서는 YAML을 제외하고, 개별 GET·POST·PUT 응답에는 포함합니다. UI 사용 순서, payload, 검증 제한과 저장 위치는 [시나리오 라이브러리 안내](scenario-library.kr.md)를 참고하십시오.
 
-typed 대역폭 표본을 포함한 원시 이벤트는 `<data-dir>/runs/<run-id>/events.jsonl`, 실행 입력은 같은 디렉터리의 `scenario.yaml`, 실험 메타데이터는 `experiment.json`, 수집한 토폴로지·점수 요약은 선택적 `observations.jsonl`에 저장됩니다. 로컬 Controller의 기본 data 디렉터리는 `data`입니다. Swarm에서는 영구 `controller-data` 볼륨을 `/var/lib/kpl/data`에 마운트하며, 실험별 파일은 그 아래 `runs/<run-id>`에 저장됩니다.
+typed 대역폭 표본을 포함한 원시 이벤트는 `<data-dir>/runs/<run-id>/events.jsonl`, 실행 입력은 같은 디렉터리의 `scenario.yaml`, 실험 메타데이터는 `experiment.json`, 수집한 그래프 표본·토폴로지·점수 요약은 선택적 `observations.jsonl`에 저장됩니다. 로컬 Controller의 기본 data 디렉터리는 `data`입니다. Swarm에서는 영구 `controller-data` 볼륨을 `/var/lib/kpl/data`에 마운트하며, 실험별 파일은 그 아래 `runs/<run-id>`에 저장됩니다.
 
 대시보드의 **Download results**로 실험 결과를 ZIP으로 받을 수 있습니다. **Saved results**에는 이전 Controller 실행에서 보존된 결과도 표시되며, **Refresh**로 목록을 다시 읽습니다. 실행 중 실험의 **Download snapshot**은 다운로드 시작 시점까지 저장된 기록을 담습니다. 최근 300개 이벤트 버퍼와 별개로 저장된 전체 이벤트 로그를 내보냅니다. 파일 구성과 수집 한계는 [실험 결과 다운로드](monitoring.kr.md#실험-결과-다운로드)를 참고하십시오.
 
 `DELETE /api/v1/results/{id}`는 삭제 성공 시 `204`, 결과가 없으면 `404`, 실행·배치가 활성 상태이거나 실제 `GET` 다운로드가 결과를 사용 중이면 `409`를 반환합니다. 자동 `HEAD` 크기 계산과 목록 조회는 다운로드 충돌로 처리하지 않습니다.
+
+## 백그라운드 분석
+
+저장 실행 하나를 분석하려면 `POST /api/v1/analysis-jobs/{id}`로 접수하고 같은 경로의 `GET`으로 상태를 확인합니다. POST에는 설정된 Bearer 토큰이 필요하며 GET/HEAD 조회는 공개입니다. 접수된 대기·실행 작업은 `202`, 현재 버전의 완료 결과를 재사용하면 `200`입니다. Controller 전체에서 대기·실행 작업을 최대 32개 접수하고(가득 차면 `503`), 공유 분석 슬롯은 한 번에 하나씩 계산합니다. 클라이언트를 닫아도 접수된 작업은 취소되지 않습니다.
+
+상태 `state`는 `idle`, `queued`, `running`, `completed`, `failed`, `canceled`, `interrupted`입니다. `idle`은 해당 저장 실행에 요청한 분석이 없다는 뜻입니다. 실패·취소·중단 작업은 다시 접수할 수 있습니다. 재시작 후 복구한 미완료 기록은 `interrupted`이며 정상 종료 과정에서 이미 `canceled`를 저장했을 수도 있습니다. 별도 작업 취소 endpoint는 없습니다. 삭제 가능한 저장 결과를 지우면 분석 작업도 취소하고 분석 파일을 제거합니다.
+
+| 상태 필드 | 의미 |
+|---|---|
+| `id`, `runId` | 분석 시도 ID와 원본 실행 ID. 재시도·갱신으로 새 시도가 생길 수 있음 |
+| `version`, `analysisVersion` | 상태·응답 형식 버전 `1`, 현재 작업의 계산 버전 `3`. 지표의 `definition`, 로그의 `rpcMetadataVersion`과 별개 |
+| `phase`, `processedBytes`, `totalBytes`, `progress` | 현재 단계와 로그 읽기 바이트 진행률(0–100). 읽기 100% 뒤에도 그래프·전파 계산과 저장이 남으므로 `state: completed`를 확인 |
+| `createdAt`, `startedAt`, `updatedAt`, `finishedAt` | 작업 시각. 아직 도달하지 않은 단계의 시각에는 의미가 없음 |
+| `snapshotAt` | POST 접수 시점이 아니라 worker가 분석 슬롯을 얻은 뒤 잡은 원본 경계 |
+| `error`, `resultUrl` | 실패 내용 또는 시도 ID가 포함된 완료 전체 분석 URL |
+
+기존 대기·실행 작업은 `?refresh=1`이어도 재사용합니다. 현재 버전의 완료 결과는 refresh 때 새로 계산하고, 오래된 `analysisVersion`의 완료 결과는 POST 때 재생성합니다. GET 상태 조회만으로는 갱신하지 않습니다. **Images**가 이 버전 검사를 자동 수행합니다. 새 분석은 새 경계를 사용하며 과거에 없던 메타정보는 여전히 복원되지 않습니다.
+
+완료 후 `GET` 또는 `HEAD` `/api/v1/analysis-jobs/{id}/result?jobId={jobId}`는 전체 JSON, `/summary?jobId={jobId}`는 비교용 자료를 반환합니다. `jobId`를 지정하면 다른 분석 시도를 내려받지 않도록 확인하며 생략하면 현재 완료 시도를 선택합니다. 미완료·시도 불일치는 `409`, 실행 부재는 `404`, 잘못되거나 읽을 수 없는 저장 자료는 보통 `422`입니다. 경량 응답은 `observations`, `timeline`, `bandwidthTimeline`, `research.messages`를 빈 배열로 두고 `messageCount`·지표·집계·분포·적합 결과를 유지합니다. 개별 메시지 경로나 원본 시계열 용도로 사용할 수 없습니다. 두 응답 모두 `analysisId`, `analysisVersion`, 원본 경계 `asOf`를 포함합니다.
+
+`GET /api/v1/experiments/{id}/analysis`는 2분 요청 제한의 동기 호환 경로입니다. 보존되는 백그라운드 작업을 만들지 않고 응답을 계산합니다. 긴 분석과 나중 다운로드에는 job API를 사용하십시오. 연구 정의는 [지표 가이드](experiment-metrics.kr.md#저장-결과-연구-지표), 보존 파일은 [모니터링](monitoring.kr.md#분석-파일과-이미지-보존), 브라우저 조작은 [시각화](visualization.kr.md)에서 관리합니다.
 
 ## 내부 cluster endpoint
 
@@ -97,10 +118,9 @@ Agent는 Controller가 cleanup에 사용하는 다음 endpoint도 제공합니�
 
 내부 endpoint는 운영자 API와 별개로 변경될 수 있습니다. 요청과 snapshot의 필드 정의는 [`internal/model/model.go`](../internal/model/model.go), 대역폭 타입은 [`internal/model/bandwidth.go`](../internal/model/bandwidth.go), handler는 [`internal/controller/api.go`](../internal/controller/api.go)와 [`internal/agent/api.go`](../internal/agent/api.go)에 있습니다.
 
-
 ## 상세 Peer 로그
 
-새 Peer는 `events.jsonl`에 upstream libp2p에서 실제 제공하는 메타정보를 추가합니다. 기존 `publish`/`deliver`/`duplicate`와 메인 Metrics 집계는 유지됩니다. `messageId`는 애플리케이션 ID이며, `fields.pubsubMessageId` 및 아래 상세 ID 목록은 pubsub wire ID의 hex 표현입니다.
+새 Peer는 `events.jsonl`에 upstream libp2p에서 실제 제공하는 메타정보를 추가합니다. 기존 `publish`/`deliver`/`duplicate`와 메인 Metrics 집계는 유지됩니다. `messageId`는 envelope의 애플리케이션 ID 또는 raw의 `pubsub-<hex native ID>`이며, `fields.pubsubMessageId` 및 아래 상세 ID 목록은 pubsub wire ID의 hex 표현입니다.
 
 | 이벤트 / 필드 | 의미 |
 |---|---|
@@ -116,9 +136,7 @@ Agent는 Controller가 cleanup에 사용하는 다음 endpoint도 제공합니�
 | `timestampSource`, `sourceTimestamp` | trace 시각의 출처와 보정 전 원본 시각. upstream 시각이 없으면 `peer-clock`으로 표시하고 원본 시각을 만들지 않음 |
 | `clockBasis`, `clockOffsetMs`, `clockUncertaintyMs` | 유효한 Controller 동기화 근거가 있을 때 추가하는 시각 보정 정보 |
 
-ID 상세는 종류별 최대 8,192개 및 hex 합계 512KiB, 구독 목록은 최대 8,192개입니다. 기존 RPC·entry·ID 집계는 전체 개수를 유지합니다. 이벤트 유실은 기존 `telemetry_drop`과 소스 sequence로 추적합니다. 원본 payload, IWANT 발신 원인, wire에 없는 RPC 전역 ID는 만들지 않습니다. Eager/Lazy는 [시각화 문서](visualization.kr.md)의 메타정보 추정 규칙을 적용합니다.
-
-완료 분석의 현재 `analysisVersion`은 `3`입니다. 전체 결과의 `research`에는 지표 정의·메시지별 경로·모집단·`linkEstimate`·`evidence`가 포함됩니다. 비교용 `/summary`는 `messageCount`와 집계·분포·적합 정보를 유지합니다. 이전 버전의 완료 캐시는 새 분석 요청 시 재생성되지만, 원본에 없는 상세 필드는 복원되지 않습니다.
+ID 상세는 종류별 최대 8,192개 및 hex 합계 512KiB, 구독 목록은 최대 8,192개입니다. 상세 목록이 잘려도 해당 이벤트의 RPC·entry·ID 집계는 전체 개수를 유지합니다. 이벤트 유실은 기존 `telemetry_drop`과 소스 sequence로 추적합니다. 원본 payload, IWANT 발신 원인, wire에 없는 RPC 전역 ID는 만들지 않습니다. Eager/Lazy는 [지표 문서](experiment-metrics.kr.md#eager-push와-lazy-pull-추정)의 메타정보 추정 규칙을 적용합니다.
 
 ## 인증
 
@@ -126,7 +144,7 @@ ID 상세는 종류별 최대 8,192개 및 hex 합계 512KiB, 구독 목록은 �
 
 대시보드의 **Run experiment → API token**에 같은 값을 입력하십시오. 이 창에서 실행·저장·갱신·삭제하면 해당 origin의 브라우저 `localStorage`에 저장하여 이후 변경 요청에 사용하며 자동 만료되지 않습니다. REST 요청에는 `Authorization: Bearer <token>`을 붙입니다. 상태·이벤트·SSE·metrics 등 GET 조회는 토큰 설정 후에도 공개입니다. 상태를 바꾸지 않는 `POST /api/v1/scenarios/validate`도 공개이며 해당 method와 정확한 path에만 적용됩니다. Controller는 HEAD도 인증 검사에서 제외하고 Agent와 Peer는 GET만 제외합니다. 토큰 자체가 HTTP 전송을 암호화하지는 않습니다.
 
-같은 네 가지 job counter가 `/api/v1/snapshot`과 SSE snapshot에도 포함됩니다. 대시보드는 각 run에 이를 표시하므로 Controller 로그를 열지 않아도 실행 중, 성공, 실패, 취소된 background 작업 수를 확인할 수 있습니다.
+시나리오의 같은 네 가지 job counter가 `/api/v1/snapshot`과 SSE snapshot에도 포함됩니다. 대시보드는 각 run에 이를 표시하므로 Controller 로그를 열지 않아도 실행 중, 성공, 실패, 취소된 background 작업 수를 확인할 수 있습니다.
 
 [시각화 가이드](visualization.kr.md)에서 분석 응답, 그래프와 내보내기 형식을 확인하십시오.
 

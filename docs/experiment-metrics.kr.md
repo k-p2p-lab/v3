@@ -2,7 +2,7 @@
 
 [English](experiment-metrics.md) | 한국어
 
-이 가이드는 v3가 구현한 계산을 정의합니다. 프로젝트 공통 연구 배경은 [Hub 연구 가이드](https://github.com/k-p2p-lab/hub/blob/master/docs/RESEARCH.kr.md)를 참고하십시오. Grafana, 내보내기, 보존과 삭제 절차는 [모니터링과 결과](monitoring.kr.md)에서 설명합니다.
+이 가이드는 v3가 구현한 계산을 정의합니다. 메인 Metrics·저장 연구 그림·대역폭은 아래에서 구분한 정의를 사용합니다. 프로젝트 공통 연구 배경은 [Hub 연구 가이드](https://github.com/k-p2p-lab/hub/blob/master/docs/RESEARCH.kr.md)를 참고하십시오. Grafana, 내보내기, 보존과 삭제 절차는 [모니터링과 결과](monitoring.kr.md)에서 설명합니다.
 
 ## 같은 시나리오 여러 번 실행
 
@@ -147,6 +147,54 @@ PRUNE peer-exchange record는 별도로 집계합니다. IHAVE, GRAFT, PRUNE에�
 
 `metrics.bandwidth`, 저장 분석 차트, `kpl_p2p_*` 지표는 전송량·구간 전송률·종료 표본 품질을 제공합니다. 설정 제한인 `network.rateMbps`나 publish/deliver 이벤트의 PubSub data 크기를 더하는 `kpl_message_bytes_total`과는 다른 값입니다. 단위·프로토콜 귀속·표본 누락·재시작 동작은 [Bandwidth 측정](bandwidth.kr.md)을 참고하십시오.
 
+## 저장 결과 연구 지표
+
+저장 분석 응답에는 두 정의 영역이 있습니다. `metrics` 객체는 위의 세션 기간 또는 과거 지표 정의를 사용하고, `research` 객체는 추가 v2 연구 그림을 위해 `definition: "v2-corrected-observations-v1"`을 사용합니다. FRT·reachability·DRC라는 이름이 같아도 두 값은 서로 대체할 수 없습니다. 연구 지표는 메인 Metrics 카드나 `kpl_window_*` Prometheus 계열에 추가되지 않습니다.
+
+| 항목 | 메인 세션 기간 Metrics | 저장 `research` |
+|---|---|---|
+| 수신자 단위 | 메시지 × 구독 세션 | 메시지 × Node ID, 비발행 노드의 기록된 최초 수신 |
+| 모집단과 시각 | 고정 발행·마감 기간의 구독 증거 | 최초 수신 시점들에 구독한 비발행 노드의 합집합. 수신이 없으면 발행 시점 |
+| 실행 도달률 집계 | 수신 쌍 성공 수와 분모를 합산하고 unknown 범위 표시 | 메시지별 연구 도달률의 평균. 누적 전파 곡선은 전체 적격 수신 수 / 메시지별 모집단 합 |
+| 지연 | 안정 원격 쌍의 유효한 기간 내 envelope 수신, UI는 밀리초 | 메인 기간·집합 제한 없이 얻은 음수가 아닌 최초 수신 값, 초 단위 |
+| 중복 | 성공한 안정 원격 쌍의 기간 내 추가 사본 평균 | 메시지별 기록된 비로컬 추가 사본 수. `drc_per_node_count`는 관측 GossipSub 평균 노드 수, `drc_per_target`은 해당 메시지의 수신 모집단으로 나눔 |
+
+연구 모집단은 JOIN/LEAVE와 측정 생명주기 관측을 사용합니다. 해당 토픽의 구독 이력이 없을 때만 dispatch `targetNodeIds`를 사용하며, 분모가 0이거나 없으면 N/A입니다. 메시지별 `population`과 `populationBasis`를 보존합니다. 이 모집단은 표본 시각이 수신 기록에 따라 정해지는 **관측 조건부 집합**이므로 메인 세션 지표의 전달 성공과 독립적인 대상 선정 규칙을 만족하지 않습니다. 그 연구 질문에는 메인 도달 범위와 coverage를 사용하고, v2 방식 곡선을 비교할 때는 이 사후 정의를 명시하십시오. 연구 기록은 세션 소스 sequence의 완전한 prefix로 미수신을 확정하는 검사도 적용하지 않습니다.
+
+연구 FRT는 기록된 음수가 아닌 envelope 지연을 우선 사용합니다. 없으면 발행·수신 양쪽에 유효한 시각 동기화 표시가 있거나 같은 비어 있지 않은 Agent ID를 가질 때만 로그 시각 차이를 사용합니다. 따라서 메인 raw 지연이 N/A여도 연구 분석에는 raw 메시지의 로그 시각 추정이 나올 수 있습니다. 이 시각 차이와 모집단 경계·중복 시계열·출처 연관에는 시각 불확실성 구간을 전파하지 않습니다. 발행 기록이 없는 수신은 `orphanReceipts`로 집계하며 발행이나 0 지연을 만들어 넣지 않습니다.
+
+메시지 내부의 `average`, `deviation`, `median`, `count`는 사용 가능한 표본의 평균·모집단 SD·중앙값·개수입니다. 짝수 중앙값은 가운데 두 값의 평균입니다. 메시지 통계의 실행 연구 요약은 메시지 평균에 동일 가중치를, 그래프 요약은 분석에 남긴 snapshot에 동일 가중치를 부여합니다. Control 요약은 기록 범위의 전체 횟수이며 RPC·entry·ID 참조·mesh 전이를 구분합니다. 실행 간 비교 막대는 표본 SD이며 반복 1회에는 SD가 없습니다. 전파·중복 정규화 곡선은 동일한 적격 메시지–노드 집합을 쓰며, 모집단당 중복 사본은 1을 넘을 수 있습니다. Hop 곡선은 미복원 hop을 제외하고, eager/lazy 지연 CDF는 분류되고 유효한 시각이 있는 수신에 조건부입니다. 곡선과 함께 미분류 수를 보고하십시오.
+
+### 연구 그래프 관측
+
+Controller는 신선한 보고에서 얻을 수 있는 transport·Kademlia·GossipSub 관계를 `observations.jsonl`에 기록합니다. 그래프는 조건을 만족하는 isolate를 포함하고 무방향 고유 간선을 사용합니다. 저장된 프로토콜별 그래프에서는 같은 GossipSub Peer 쌍의 여러 토픽을 하나의 쌍으로 합칩니다. 실시간 API는 토픽별 간선을 유지합니다. 보고된 관계이며 패킷 전송이나 클러스터 전체의 원자적 snapshot 증거가 아닙니다. [토폴로지](topology.kr.md#api와-보존-데이터)를 참고하십시오.
+
+분석은 관측 표본을 최대 1,440개로 줄이되 마지막 표본을 보존합니다. 그래프 평균과 snapshot별 차수 확률 평균은 분석에 남긴 표본에 동일 가중치를 주며, 시간 길이나 노드 수로 가중하지 않습니다. 원본 관측 파일은 결과 ZIP에 남습니다. `research.summary`의 일반 그래프 키와 `degreeDistribution`, `degreeFit`은 전체 그룹의 GossipSub 레이어를 사용합니다. 프로토콜·그룹별 시계열은 `observations[].groups[].layers[]`에 있습니다.
+
+| 통계 | 정의 |
+|---|---|
+| 평균 차수 | isolate를 포함한 `2E/N`. `average_degree_excluding_leaves`는 v2처럼 전체 차수 합 / degree > 1인 노드 수. 분모가 없으면 N/A |
+| 직경 / 평균 최단 경로 | 도달 가능한 서로 다른 노드 쌍만 사용. `connected_pair_fraction`은 그 비율이며 도달 가능한 쌍이 없으면 거리는 N/A |
+| Clustering | 지역 삼각형 비율 평균. degree < 2는 0 |
+| Degree / betweenness / closeness 중심성 | degree / `N-1`, 정규화 Brandes betweenness, 도달 노드 수로 보정한 closeness |
+| PageRank / eigenvector 중심성 | 감쇠 0.85와 dangling 질량 균등 배분, `A+I` 반복의 L2 정규화 고유벡터. 미수렴은 N/A이며 간선이 없는 고유벡터 통계도 N/A |
+| Assortativity / modularity | 양 끝 차수의 상관으로 분산 0이면 N/A. 해상도 1·seed 1의 Louvain modularity |
+
+그룹 중심성은 전체 그래프 경로를 기준으로 해당 그룹 노드를 평균하며 그룹 유도 그래프에서 다시 계산하지 않습니다. 그룹 차수·clustering 요약도 제공하지만 전체 그래프의 직경·assortativity·modularity를 그룹마다 계산하지는 않습니다. 과거 차수 요약만으로 누락된 간선과 간선 기반 지표를 복원할 수 없습니다.
+
+Student-t는 전체 그룹 GossipSub의 차수 확률에 직접 가중 최대우도 적합하며 서로 다른 차수가 3개 이상이어야 합니다. 수렴과 파라미터 경계 상태를 보고합니다. 연속 적합 밀도와 정수 차수의 확률 질량은 서로 다른 양입니다. 이차 파라미터 예측과 중복 회귀는 선택한 case 평균에 적합하고 rank·학습 자료 R²를 표시하며, 식별되지 않는 모델의 계수는 만들지 않습니다. 입력·파라미터 선택은 [비교 도구](visualization.kr.md#반복-실험과-비교)를 참고하십시오.
+
+### Eager Push와 Lazy Pull 추정
+
+현재 방법은 `originMethod: "message-id-preferred-graft-ihave-iwant-estimate-v1"`입니다. `linkEstimate`는 관측 발신자에서 수신자로 향하는 마지막 간선, `source`는 발행자부터 복원한 경로의 분류이며 `evidence`에 근거가 남습니다. Upstream trace 메타정보에 따른 추정이며 직접 관측한 발신 큐 원인이 아닙니다.
+
+- 최초 수신 때 활성 GRAFT는 eager 후보입니다. PRUNE은 그 mesh 근거를 해제하고, 연결 해제·구독 해제·측정 종료는 관련된 이전 근거를 무효화합니다.
+- 같은 방향의 발신자·수신자 쌍과 토픽에서 IHAVE보다 엄격히 나중인 IWANT는 lazy 후보입니다. 탐색 구간은 발행 시점, 해당 초기화 시점, 수신 5초 전 중 가장 나중부터 수신 직전까지입니다. 5초는 분석 규칙이며 프로토콜 timeout이 아닙니다.
+- 상세 ID 목록은 전달된 `pubsubMessageId`와 일치해야 하며, 옛 개수 전용 기록은 시각 연관을 사용합니다. 동일 메시지의 데이터 RPC는 보조 근거입니다. 로컬 전송 전 drop은 성공한 control 연관에서 제외합니다.
+- Push/pull 충돌, Peer 누락, 사용할 수 없는 ID·시각과 미복원 경로는 unknown입니다. 잘린 ID 목록은 요청이 없었다는 증거가 아닙니다. 완전히 복원한 경로의 모든 간선이 eager 추정이면 eager, lazy 추정 간선이 있으면 lazy입니다. 미복원·순환 경로는 간선 근거만 남기고 전체 경로를 분류하지 않습니다.
+
+`eager_count`, `lazy_count`는 분류된 수신만 세므로 둘 다 0이어도 `unknown_count`가 양수일 수 있습니다. 실제 전파 방식이 없었다는 뜻이 아닙니다. 조건부 FRT·reachability와 lazy-on/off 기여 그림도 이 분류 범위의 영향을 받습니다. 기준 실험과의 차이는 관측 추정이며 인과 효과의 증명이 아닙니다. 수집 필드와 생략 한도는 [상세 Peer 로그](api.kr.md#상세-peer-로그)를 참고하십시오.
+
 ## 집계 범위, 내보내기, 모니터링
 
 새 요약은 `definition: "session-window-v1"`을 사용합니다. 발행은 `fields.measurementDefinition`과 `fields.deliveryWindow`를 기록합니다. 저장된 세션 증거, 발행·수신 시각, 원본 sequence로 같은 계산을 재구성합니다.
@@ -173,6 +221,7 @@ PRUNE peer-exchange record는 별도로 집계합니다. IHAVE, GRAFT, PRUNE에�
 | [세션 기간 집계](../internal/controller/run_metrics_window.go) | 대상 집합, 수신 범위, coverage, 지연과 중복 요약 |
 | [기간 지표 회귀 사례](../internal/controller/run_metrics_window_test.go) | 마감 경계, 증거 누락, churn과 순서가 뒤바뀐 telemetry 사례 |
 | [Prometheus collector](../internal/controller/run_metrics_prometheus.go) | Run gauge와 재구성한 지연 histogram |
+| [연구 집계](../internal/controller/analysis_research.go), [그래프](../internal/controller/analysis_graph.go), [출처 추정](../internal/controller/analysis_origin.go) | 저장 결과의 별도 연구 정의·표본 그래프·메타정보 추정 |
 | [결과 내보내기](../internal/controller/results.go) | 다운로드의 이벤트 로그 경계와 지표 재계산 |
 
 그래프 레이어, Agent 번호와 화면 조작은 [토폴로지 가이드](topology.kr.md)에서 관리합니다. 화면 변경은 측정 대상 집합을 바꾸지 않습니다. [모니터링과 결과](monitoring.kr.md)에서 저장 파일의 보존·삭제를 관리하며, 결과 삭제는 해당 지표 인덱스를 해제하지만 Peer를 종료하거나 Prometheus 이력을 삭제하지 않습니다. 다운로드·삭제 endpoint는 [REST API 가이드](api.kr.md)에서 정의합니다.

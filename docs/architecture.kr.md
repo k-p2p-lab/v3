@@ -2,14 +2,14 @@
 
 [English](architecture.md) | 한국어
 
-이 문서는 [K-P2PLab Hub](https://github.com/k-p2p-lab/hub)의 프로젝트 공통 개념을 현재 v3 구현에 대응시킵니다. 이 저장소에 구현된 실행 컴포넌트, Docker 배치, 통신 경로와 격리 보장을 설명합니다. 프로젝트 목표, 버전에 독립적인 설계 원칙, 연구 배경과 출판물은 Hub에서 관리합니다.
+이 문서는 [K-P2PLab Hub](https://github.com/k-p2p-lab/hub/blob/master/README.kr.md)의 프로젝트 공통 개념을 현재 v3 구현에 대응시킵니다. 이 저장소에 구현된 실행 컴포넌트, Docker 배치, 통신 경로와 격리 보장을 설명합니다. 프로젝트 목표, 버전에 독립적인 설계 원칙, 연구 배경과 출판물은 Hub에서 관리합니다.
 
 ```mermaid
 flowchart TB
     operator["운영자 브라우저 또는 REST client"]
     subgraph controllerContainer["Controller 컨테이너"]
         dashboard["내장 Dashboard 정적 파일"]
-        controller["Controller HTTP API와 scenario scheduler"]
+        controller["Controller HTTP API, scenario scheduler와 분석 worker"]
     end
     subgraph agentHost["각 Agent 호스트: 노드 로컬 Docker Engine"]
         agent["Agent 컨테이너"]
@@ -99,6 +99,8 @@ Dashboard는 Controller의 최신 상태와 이벤트를 표시합니다. Contro
 Metric과 토폴로지는 수신된 보고를 바탕으로 한 관측 결과입니다. 오래되거나 연결할 수 없는 Agent, telemetry queue 손실, `scope: all` impairment, scrape 시점 또는 강제 종료 때문에 P2P 트래픽이 일부 발생했더라도 control plane의 관측량이 줄어들 수 있습니다. Metric 정의는 [실험 지표](experiment-metrics.kr.md), 수집 한계는 [모니터링과 결과](monitoring.kr.md), 그래프 의미는 [토폴로지](topology.kr.md)를 참고하십시오.
 
 Controller는 실행 중 그룹별 토폴로지·점수 요약을 `observations.jsonl`로 주기적으로 저장합니다. 신선한 Peer 보고에서 확인한 transport·Kademlia·GossipSub 간선과 노드도 함께 저장하여 백그라운드 분석에서 그래프 지표를 계산합니다. 평가자별 개별 점수는 보존하지 않습니다. 대역폭 표본은 이벤트로 저장하며 수신 기간의 대상 선정과 독립적으로 재계산합니다. [Bandwidth 측정](bandwidth.kr.md)을 참고하십시오. 내장 Dashboard의 [저장 결과 시각화](visualization.kr.md)는 저장된 이벤트·관측치를 분석 API로 조회해 실행별 분포와 시계열을 표시하고 여러 실행을 비교합니다. Prometheus 보존 시계열과 독립적으로 동작합니다.
+
+Controller의 백그라운드 분석은 저장한 이벤트·관측 파일의 경계를 잡아 계산하고 작업 상태·완료 분석·비교용 요약을 같은 데이터 디렉터리에 보존합니다. 재시작은 완료 분석을 유지하지만 실험 실행이나 미완료 계산을 자동 재개하지 않습니다. 브라우저는 완료 JSON에서 PNG·CSV와 비교 그림을 생성하며 창을 닫아도 접수된 서버 계산은 계속됩니다. [API](api.kr.md#백그라운드-분석), [보존 파일](monitoring.kr.md#분석-파일과-이미지-보존), [시각화 사용법](visualization.kr.md)에서 각각의 계약을 설명합니다.
 
 ## 지원 배포 경계
 

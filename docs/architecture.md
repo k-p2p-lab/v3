@@ -9,7 +9,7 @@ flowchart TB
     operator["Operator browser or REST client"]
     subgraph controllerContainer["Controller container"]
         dashboard["Embedded Dashboard assets"]
-        controller["Controller HTTP API and scenario scheduler"]
+        controller["Controller HTTP API, scenario scheduler and analysis worker"]
     end
     subgraph agentHost["Each Agent host: node-local Docker Engine"]
         agent["Agent container"]
@@ -98,7 +98,9 @@ The Dashboard renders recent state and events from the Controller. The Controlle
 
 Metrics and topology are observations of received reports. A stale or unreachable Agent, telemetry queue loss, `scope: all` impairment, scrape timing, or forced shutdown can reduce what the control plane observes even while some P2P traffic occurred. Use [experiment metrics](experiment-metrics.md) for metric definitions, [monitoring and results](monitoring.md) for collection limits, and [topology](topology.md) for graph semantics.
 
-The Controller periodically saves group topology and score summaries in `observations.jsonl` during each run. It also saves nodes and transport/Kademlia/GossipSub edges available from fresh Peer reports for background graph analysis. Individual observer-to-peer scores are not retained. Bandwidth samples are stored as events and reconstructed independently of delivery-window eligibility; see [bandwidth measurement](bandwidth.md). The embedded Dashboard uses the [saved-result analysis API](visualization.md) to visualize distributions and timelines and compare runs from saved events and observations, independently of Prometheus retention.
+The Controller periodically saves group topology and score summaries in `observations.jsonl` during each run. It also saves nodes and transport/Kademlia/GossipSub edges available from fresh Peer reports for background graph analysis. Individual observer-to-peer scores are not retained. Bandwidth samples are stored as events and reconstructed independently of delivery-window eligibility; see [bandwidth measurement](bandwidth.md). The embedded Dashboard uses the [saved-result visualization](visualization.md) to visualize distributions and timelines and compare runs from saved events and observations, independently of Prometheus retention.
+
+The Controller background worker computes from a fixed boundary of saved event/observation files and retains job state, completed analysis and compact comparison data in the same data directory. Restart preserves completed analysis but does not automatically resume experiment execution or unfinished calculations. The browser renders PNG/CSV and comparison charts from completed JSON; closing it leaves admitted server work running. See the [API](api.md#background-analysis), [retained files](monitoring.md#analysis-and-image-retention), and [visualization workflow](visualization.md) for their respective contracts.
 
 ## Supported deployment boundary
 

@@ -25,7 +25,7 @@ Swarm은 Prometheus/Grafana 포트를 control 노드에 게시합니다. 각 Age
 
 ## Dashboard 내장 시각화
 
-**Saved results → Images**에서 해당 결과의 그래프 이미지를 보고 PNG로 다운로드할 수 있습니다. 저장 기록을 사용하며 Prometheus와 독립적으로 동작합니다. [결과 이미지 사용법](visualization.kr.md)을 참고하십시오.
+**Saved results → Images**에서 서버 백그라운드 분석을 접수하고 개요·메시지·반복 비교 그림을 PNG/CSV/ZIP으로 다운로드합니다. 저장 기록을 사용하며 Prometheus 보존과 독립적입니다. 조작 방법은 [결과 이미지](visualization.kr.md), 계산 정의는 [실험 지표](experiment-metrics.kr.md#저장-결과-연구-지표)를 참고하십시오.
 
 ## 실행과 분석
 
@@ -47,7 +47,7 @@ ZIP에는 다음 파일이 들어 있습니다.
 | `scenario.yaml` | 실험 실행 시 제출한 시나리오 원문 |
 | `experiment.json` | 저장된 실험 메타데이터·상태·seed·job 카운터 원문 |
 | `events.jsonl` | 내보내기 기준 시점까지 저장된 전체 이벤트. 한 줄에 JSON 하나이며, 기록된 이벤트가 없으면 빈 파일 |
-| `observations.jsonl` | 새 실행에서 5초마다 저장한 그룹별 상태·차수·clustering·score 관측. 이전 결과에는 없을 수 있음 |
+| `observations.jsonl` | 실행 중 약 5초마다 저장한 그룹 상태·차수·clustering·점수와 이용 가능한 프로토콜별 노드·간선 표본. 과거 결과에는 파일이나 간선이 없을 수 있음 |
 | `metrics.json` | 동일 이벤트 로그 경계에서 재계산한 세션 기간 도달률 범위, 발행 시점 대상 결과, coverage, pending/unknown, 첫 원격 지연, 관측 중복, control 내역과 수집된 대역폭 누적량·품질. 과거 정의는 legacy 유지 |
 | `export.json` | 내보내기 시각, 실험 상태, active/partial 여부와 원본 파일의 캡처된 크기 |
 
@@ -76,6 +76,22 @@ curl --fail --output run-results.zip \
 `RUN_ID`를 저장 목록의 실험 ID로 바꾸십시오. Swarm에서는 control 노드 주소를 사용합니다. `KPL_STACK_NAME=kpl`이면 원본은 해당 노드의 `kpl_controller-data` 볼륨에 있습니다. 이 볼륨을 Controller 내부 `/var/lib/kpl/data`에 마운트하며, 실험별 파일은 그 아래 `runs/<run-id>`에 저장됩니다. 매니저의 `swarm.sh remove`는 이 볼륨을 보존합니다. 원시 이벤트의 자동 보존 기한이나 노드 간 복제는 없으므로 디스크 공간과 백업을 별도로 관리하십시오.
 
 내보내는 내용은 구독 세션 start/checkpoint/stop과 기록된 Agent 종료 확인을 포함한 수집 telemetry입니다. Peer 재시도, Agent 큐 backpressure, 정상 종료 drain은 유실을 줄이지만 한도가 있으며 강제 종료는 Peer를 drain하지 않습니다. 원본 sequence 간격이 있으면 미수신은 unknown입니다. 다운로드로 누락을 복구하거나 아예 보이지 않은 세션을 발견할 수는 없습니다. `/api/v1/events`는 여전히 최근 300개만 반환하고 웹 이벤트 화면은 그중 최신 40개를 표시하지만 ZIP은 저장된 전체 로그를 읽습니다.
+
+## 분석 파일과 이미지 보존
+
+실행의 원본 내보내기와 계산된 분석은 경계가 다릅니다. **Download results / Download snapshot**은 내보낼 때 원본 파일 경계를 잡고, **Download analysis JSON**은 완료된 분석 작업의 경계를 사용합니다. 나중에 추가된 로그는 새 분석을 실행하기 전까지 기존 분석에 들어가지 않습니다. 합계를 대조할 때 `export.json.exportedAt`과 분석의 `asOf`·작업의 `snapshotAt`을 확인하십시오.
+
+| 파일 / 산출물 | 위치와 내용 |
+|---|---|
+| `analysis-job.json` | 분석 요청 후 실행 파일 옆에 저장하는 현재 시도·상태·진행률·원본 경계 |
+| `analysis-result.json` | 완료 서버 분석. 메인 지표, 연구 메시지·모집단·근거, 계산된 그래프·대역폭 시계열, 분포와 적합 결과 |
+| `analysis-summary.json` | 완료 비교용 경량 응답. 메시지별 경로와 원본 시계열을 제외하고 집계·분포·적합·메시지 수 유지 |
+| PNG / 차트 CSV / 차트 정의 JSON | 브라우저가 선택한 개요·메시지·비교 화면에서 생성. 개별 또는 **Download all PNG + CSV (ZIP)**으로 다운로드 |
+| 가져온 v2 파일 / 비교 선택 | 브라우저 화면에서 유지하며 Controller에 업로드하거나 서버 비교 작업으로 저장하지 않음 |
+
+위 서버 분석 파일 세 개는 **Download results** ZIP에 포함되지 않습니다. 계산 JSON은 분석 다운로드 endpoint로, 그림은 차트 다운로드로 각각 보존하십시오. 비교 ZIP은 생성한 차트이며 재분석에 필요한 전체 원본 기록이나 가져온 파일의 묶음이 아닙니다. 원본과 선택한 Series/Case·파라미터·소프트웨어 revision을 함께 남기십시오.
+
+완료 분석은 데이터 볼륨에 보존되어 Controller 재시작 후에도 사용할 수 있습니다. 새 시도는 현재 캐시를 대체하므로 이전 분석 경계를 보존하려면 먼저 다운로드하십시오. 접수한 서버 계산은 브라우저를 닫아도 계속되고 이미지 변환·비교 계산은 화면을 다시 열거나 구성하여 수행합니다. 브라우저 다운로드는 서버가 미리 만든 이미지 보관소가 아닙니다. 실패·중단·취소 작업은 [백그라운드 API](api.kr.md#백그라운드-분석)에 따라 재시도합니다. 삭제 가능한 저장 실행을 지우면 분석 파일도 원본과 함께 제거됩니다.
 
 ## 지표의 의미
 
@@ -115,7 +131,7 @@ curl --fail --output run-results.zip \
 
 제어 counter는 `run_id`, `agent_id`, `direction`, `control_type` label만 사용합니다. IWANT와 IDONTWANT에는 topic이 없고 하나의 RPC가 여러 topic을 담을 수 있으므로 Topic filter는 적용하지 않습니다. `send`는 원격 수신이 아닌 outbound queue 수락, `recv`는 이후 router 정책 검사 전 관측, `drop`은 `netem` 손실이 아닌 로컬 queue/크기 거부입니다. RPC, entry, 메시지 ID 참조, PRUNE peer-exchange 수를 서로 다른 단위로 읽으십시오. RPC별 정확한 topic 수와 `metrics.json`의 Agent별 누적치는 결과 ZIP에 남습니다. [실험 지표 정의](experiment-metrics.kr.md#gossipsub-제어-트래픽)를 참고하십시오.
 
-현재 관계는 대시보드의 [대화형 토폴로지](topology.kr.md)에서 Peer 상태 snapshot을 통해 transport, Kademlia 라우팅 테이블, GossipSub mesh를 독립적으로 확인하십시오. 이 live snapshot은 최근 이벤트 버퍼와 독립적이며 Prometheus나 결과 ZIP에 전체 그래프 이력을 저장하는 것은 아닙니다.
+현재 관계는 Dashboard의 [대화형 토폴로지](topology.kr.md)가 Peer 상태 snapshot으로 transport·Kademlia 라우팅 테이블·GossipSub mesh를 각각 표시합니다. Controller는 `observations.jsonl`에도 표본 프로토콜 그래프를 저장하며, 이 그래프는 프로토콜 안에서 토픽 간선을 합치고 중간 전이 전부나 개별 점수 쌍을 보존하지 않습니다. Prometheus에는 이에 대응하는 전체 그래프 이력이 없습니다.
 
 `session-window-v1`은 실제 발행 시각과 `publish.deliveryWindow`(기본 10초, 양수·최대 1시간)를 사용합니다. 주 조건부 도달률은 기간 전체의 구독을 세션 증거로 확인해야 합니다. 마감 전 이탈은 조기 성공했어도 제외하며 발행 시점 대상 도달률에는 유지합니다. 늦은 join과 발행자 로컬 수신은 양쪽 모두 제외합니다. 단절이나 mesh 변화로 구독자를 제거하지 않습니다. 안정 도달률 범위, 발행 시점 대상 범위, coverage, pending, 불명을 함께 보십시오. sequence 누락은 확인된 미도달이 아닌 unknown이며 가용성 증거 부재도 확정 이탈은 아닙니다.
 

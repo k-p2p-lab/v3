@@ -1,6 +1,6 @@
 # v2 analysis and visualization coverage
 
-English | [한국어](v2-analysis-coverage.kr.md)
+English | [Korean](v2-analysis-coverage.kr.md)
 
 This inventory covers 40 parser fields/families and 34 Go, Python and shell sources from the supplied v2 revision `74b71090410cac1315ae08f479a95c086feeaaf6`. [The manifest](v2-analysis-coverage.json) records hashes. Run `python3 scripts/audit-v2-analysis.py --v2 ../v2` to detect changes or omissions; this is not a numerical equivalence test.
 
@@ -47,11 +47,13 @@ Imports support up to 32MiB/file: metric JSONL, propagation tree JSON/JSONL, dup
 
 ## Definitions and source evidence
 
-- Research FRT uses non-publisher first receptions in seconds. Within-sample deviation is population SD; even medians average the two middle values. Repeat error bars use sample SD, unavailable for one repeat.
-- Research reachability uses the union of subscribed non-publisher nodes at receipt times, or publication time when no receipts exist. Dispatch targets are a fallback only when subscription history is absent. Propagation and duplicate ratios use the same message–node cohort.
-- v2 reciprocal GRAFT graphs and v3 fresh undirected neighbor observations differ. Saved snapshots have equal weight. Group centralities average the group's nodes using full-graph paths. Historical summary-only archives cannot recover missing edges.
-- Eager/Lazy is estimated, not direct sender-cause measurement. New logs match delivered IDs to IHAVE→IWANT; old logs use a maximum five-second same-peer/topic association. Conflicts, missing evidence and cyclic paths stay unclassified. Disconnection, leaving and measurement termination invalidate prior evidence. JSON/CSV preserve link estimates and their evidence.
-- Student-t uses observed probability weights directly. Plots distinguish discrete degree probabilities from continuous density and expose convergence failures/parameter bounds. No synthetic 60,000-sample reconstruction or arbitrary fallback parameters are used. Unidentifiable regressions remain N/A.
-- New detailed IDs and graph edges require updated Controller/Peer images and subsequent experiments. There is no third_party fork, payload-body collection or unavailable sender-queue instrumentation. [Bandwidth](bandwidth.md) measures actual stream use, not physical link capacity.
+Exact formulas, aggregation, graph sampling and Eager/Lazy inference belong in [saved-result research metrics](experiment-metrics.md#saved-result-research-metrics). Retain these distinctions when comparing v2:
 
-Validation is in `internal/controller/analysis_*_test.go`, `internal/peer/tracer_test.go`, `internal/webui/research_test.cjs` and `result_images_test.cjs`. It checks small reference graphs, probability/statistical models and UI behavior; it does not assert identical results across all v2 datasets.
+- Main session-window Metrics and the `research` definition for v2 chart families are separate. Research reachability conditions its population on receipt times; per-message statistics and cumulative curves also use different weighting.
+- v2 reciprocal GRAFT graphs and v3 sampled neighbor graphs are different observations. Saved v3 graphs merge topics into undirected edges; analysis uses at most 1,440 observation samples. Historical summaries without edges cannot recover new centrality/path metrics.
+- Distinguish estimated eager/lazy, unclassified origins, model predictions and v2's fixed historical/ER references. Even new message-ID logs do not directly establish sender-queue causes.
+- Research reducers correct the membership union and even median. Student-t fits observed probabilities directly instead of reconstructing 60,000 artificial samples or substituting arbitrary fallback parameters. Exact numerical, file-layout and plot identity with the old Python output is not asserted.
+
+New detailed IDs and graph edges exist only in logs collected after deploying that version. See [API](api.md#detailed-peer-logs) for fields/omission limits, [retention](monitoring.md#analysis-and-image-retention) for source/analysis/image boundaries, and [bandwidth](bandwidth.md) for the additional measured stream-usage definition.
+
+Validation is in [research metrics](../internal/controller/analysis_research_test.go), [origin inference](../internal/controller/analysis_origin_test.go), [Peer tracing](../internal/peer/tracer_test.go), [research UI](../internal/webui/research_test.cjs), and [result image](../internal/webui/result_images_test.cjs) tests. See [development](development.md#documentation) for the source-inventory check.

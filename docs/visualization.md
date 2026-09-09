@@ -1,10 +1,10 @@
 # Experiment result images
 
-English | [한국어](visualization.kr.md)
+English | [Korean](visualization.kr.md)
 
 Choose **Saved results → Images** to submit background analysis. The server reads logs, calculates graph and propagation metrics, fits distributions, and saves the result. The browser prepares white-background, 1,600px PNGs. Use **PNG ↓**, **CSV ↓**, or **Download all PNG + CSV (ZIP)**. The ZIP includes chart definitions; **Download analysis JSON** downloads the full server artifact.
 
-Accepted server jobs continue after closing the window/browser. One worker processes up to 32 accepted jobs. Completed artifacts survive Controller restart; interrupted jobs require Retry. Reopening a completed analysis reuses it. **Analyze latest snapshot** captures later logs. An outdated analysis version is regenerated on opening. Regeneration cannot recreate missing source evidence. Configured API tokens are required to start/retry/refresh jobs. PNG conversion and cross-run calculations happen in the browser while the view is open.
+Accepted server jobs continue after closing the window/browser. At most 32 queued/running jobs are admitted, with one computation at a time. Completed artifacts survive Controller restart; interrupted jobs require Retry. Reopening a completed analysis reuses it. **Analyze latest snapshot** captures later logs. An outdated analysis version is regenerated on opening. Regeneration cannot recreate missing source evidence. Configured API tokens are required to start/retry/refresh jobs. PNG conversion and cross-run calculations happen in the browser while the view is open.
 
 ## Available images
 
@@ -31,16 +31,18 @@ One repeat has no sample SD. Error propagation assumes independent errors; same-
 
 Import v2 metric JSONL, propagation trees, duplicate-time maps, `x_case/y/yerr` or `x/y` JSON, numeric CSV, and v3 analysis JSON locally in the browser (32MiB/file). Select the appropriate Metric before importing v2 x/y summary data. Overlay files must share units. Peak normalization changes the original probability/count meaning. The fixed historical/ER reference button renders the data stored in v2's reference script, not selected-run measurements.
 
-The main v3 Metrics definitions remain unchanged. Additional metrics live under `research`. FRT uses non-publisher first receptions, in seconds, with envelope or clock evidence. Research reachability uses the union of subscribed non-publisher nodes at first-reception times, falling back to dispatch targets only if subscription history is absent. Propagation/duplicate curves use the same message–node cohort. `drc_per_node_count` uses mean observed graph nodes; `drc_per_target` uses receiver population.
+## Check definitions and collection evidence
 
-Graphs are fresh undirected unique-neighbor observations including isolates. Distances exclude self/unreachable pairs, with connected-pair coverage reported. Snapshots have equal weight. This differs from v2's reciprocal GRAFT graph and message-conditioned observation intervals. Non-leaf denominator degree retains v2's sum of ALL degrees divided by the count of nodes with degree > 1. Student-t fits use observed probability weights directly and report convergence/parameter bounds.
+Main Metrics and the additional `research` values use different populations, windows and aggregation even when their names match. Research reachability is conditioned on receipt observation times; raw messages can also have a research log-time estimate when timing evidence exists. See [saved-result research metrics](experiment-metrics.md#saved-result-research-metrics) for definitions, units, samples and graph normalization. Do not group different definitions as repeats under one Series/Case. Imported v2 values retain their original definitions and are not automatically converted.
 
-The Controller saves graph edges available from current reports. Peers use trace metadata exposed by unmodified upstream libp2p: per-topic IHAVE IDs, IWANT/IDONTWANT IDs, PRUNE peer-exchange IDs, data RPC message IDs/topics, and subscriptions. `rpcObservationId` groups records from one **local RPC callback**; it is not a shared network RPC identity. `pubsub_reject` preserves the rejected wire message ID and supplied reason. See [API](api.md#detailed-peer-logs) for fields.
+Eager Push/Lazy Pull colors and contribution values are metadata estimates. Zero classified eager/lazy receipts can coexist with unknown receipts, so report the unclassified count. The [estimation rules](experiment-metrics.md#eager-push-and-lazy-pull-estimates) define message-ID/GRAFT/IHAVE/IWANT evidence and conflicts; [detailed Peer logs](api.md#detailed-peer-logs) define available fields and omission limits.
 
-Eager Push/Lazy Pull are **metadata estimates**. Active GRAFT suggests eager; an IHAVE→IWANT sequence on the same peer pair/topic suggests lazy. Detailed logs match the delivered pubsub ID first; legacy count-only logs use time association within a maximum five-second lookback. This window is an analysis rule, not a protocol timeout. PRUNE clears active GRAFT; disconnection, leaving and measurement termination invalidate earlier connection evidence. Conflicting or missing evidence stays unknown. Unresolved paths retain link estimates without classifying the entire path. Even matching request IDs do not directly measure sender-queue origin.
+Reanalysis cannot recover message IDs, graph edges or session evidence absent from historical records. Deploy the current image to Controller/Agents and run new Peers to collect that version's logs, following [Swarm updates](swarm.md#failures-updates-and-shutdown). The current implementation uses upstream libp2p observations and needs no Python runtime or image-generation service.
 
-Detailed IDs are bounded to 8,192 entries and 512KiB of hex strings per category, with completeness and omission fields; full counters are preserved. Subscription lists are capped at 8,192. Payload bodies and unavailable queue origins/packet headers are not recorded. Historical logs cannot recover missing IDs or graph edges. **Rebuild and deploy Controller and Peer images, then run new experiments** to collect detailed logs. No third_party directory or local libp2p fork is used.
+## Analysis persistence and API
 
-Background endpoints: `POST /api/v1/analysis-jobs/{id}`, `GET` status, `/result?jobId={jobId}` full artifact, `/summary?jobId={jobId}` compact comparison artifact. Current `analysisVersion` is 3. The synchronous compatibility `/api/v1/experiments/{id}/analysis` retains its two-minute limit. No Python runtime or image service is needed.
+The [background analysis API](api.md#background-analysis) defines job state/version, source snapshot time and full/compact responses. The source boundary is captured after the job acquires its computation slot, not at queue admission. Completed work keeps that boundary; use **Analyze latest snapshot** to include later-arriving logs.
+
+The server retains completed analysis JSON. The browser generates PNGs, CSVs and comparison ZIPs while the view is open. The **Download results** source ZIP, **Download analysis JSON**, and **Download all PNG + CSV (ZIP)** are different artifacts. See [analysis and image retention](monitoring.md#analysis-and-image-retention) for contents and persistence.
 
 [Experiment metrics](experiment-metrics.md) · [v2 coverage](v2-analysis-coverage.md) · [Bandwidth](bandwidth.md)

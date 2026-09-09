@@ -59,3 +59,17 @@ node --test internal/webui/*_test.cjs
 Use Windows for editing and static inspection. Do not run native Windows `go test`, `go test -c`, generated test executables, or helpers such as `make test` that invoke them. Do not launch commands that require an interactive firewall, security, or elevation dialog. Use the Linux Docker test target above or an existing non-interactive Linux host for executable validation. If neither is available, report static inspection separately from runtime validation.
 
 The runtime image uses `CGO_ENABLED=0`. Shell scripts, Dockerfiles, and Makefiles retain LF endings through [`.gitattributes`](../.gitattributes). The runtime image contains the built application and runtime utilities, not Go or Node.js development tools.
+
+## Documentation
+
+The [Hub](https://github.com/k-p2p-lab/hub) owns project goals, conceptual design, research and publications; v3 owns executable behavior and operational contracts. English is the default, with matching updates in `.kr.md`. Keep actual English UI labels when describing controls, including in Korean guidance.
+
+Use `experiment-metrics` and `bandwidth` for formulas/estimates, `api` for endpoints/log schemas/analysis versions, `monitoring` for retained files and their lifetime, and `visualization` for UI operation. Link to the owning section instead of duplicating its definition. Keep the README index and Hub↔v3 links aligned with the matching language; check relative paths, section anchors and code examples.
+
+With the supplied v2 sources in the sibling directory, verify the analysis inventory with:
+
+```sh
+python3 scripts/audit-v2-analysis.py --v2 ../v2
+```
+
+This detects changed v2 analysis fields/source hashes; it does not prove numerical equivalence or current runtime validation. Distinguish performed checks from retained historical records, and do not add separate bug-fix diaries during documentation updates.
