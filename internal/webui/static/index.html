@@ -29,7 +29,7 @@
   </header>
 
   <main>
-    <p class="metrics-scope" id="messageMetricsScope" title="Message metrics are cumulative observations for this run. Agent and Peer counts describe the cluster.">Message metrics: No run selected</p>
+    <p class="metrics-scope" id="messageMetricsScope" title="Message and bandwidth metrics refer to this run. Agent and Peer counts describe the cluster.">Run metrics: No run selected</p>
     <section class="metric-grid" aria-label="Cluster metrics">
       <article class="metric-card accent-cyan">
         <span>Online Agents</span>
@@ -60,6 +60,27 @@
         <small id="duplicateTotalMetric">All duplicate events: 0</small>
       </article>
     </section>
+
+    <section class="bandwidth-grid" aria-label="P2P bandwidth metrics" aria-describedby="bandwidthScope">
+      <article class="metric-card accent-cyan" title="Sum of recent source interval-average send rates for this run. Transport overhead and HTTP management traffic are excluded.">
+        <span>P2P B/W · Send</span>
+        <strong id="bandwidthSendMetric">N/A</strong>
+        <small id="bandwidthSendTotal">Total sent: N/A</small>
+      </article>
+      <article class="metric-card accent-green" title="Sum of recent source interval-average receive rates for this run. Send and receive count opposite endpoints separately.">
+        <span>P2P B/W · Receive</span>
+        <strong id="bandwidthReceiveMetric">N/A</strong>
+        <small id="bandwidthReceiveTotal">Total received: N/A</small>
+      </article>
+      <article class="metric-card accent-amber" title="Only sessions that reported bandwidth can be counted. Missing final samples leave an unknown tail; absent peers are not included in these counts.">
+        <span>B/W measurement</span>
+        <strong id="bandwidthQualityMetric">N/A</strong>
+        <small id="bandwidthSessionsMetric">No bandwidth samples</small>
+        <small id="bandwidthSampleMetric">Last sample: N/A</small>
+        <small id="bandwidthRejectedMetric">Rejected samples: 0</small>
+      </article>
+    </section>
+    <p class="metrics-scope bandwidth-scope" id="bandwidthScope">P2P stream usage for the run above. Rates use recent source intervals; totals retain all accepted samples. Missing rates are N/A. Link capacity and HTTP management traffic are excluded.</p>
 
     <section class="measurement-summary" id="measurementSummary" aria-label="Churn measurement context">
       <article title="On-time delivery bounds among receiver sessions proved alive when publication began, including sessions that departed before the deadline.">

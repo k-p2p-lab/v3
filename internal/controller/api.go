@@ -613,8 +613,10 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-keepalive.C:
-			_, _ = io.WriteString(w, ": keepalive\n\n")
-			flusher.Flush()
+			// Refresh time-dependent metrics even if telemetry stops arriving.
+			if err := send(); err != nil {
+				return
+			}
 		}
 	}
 }

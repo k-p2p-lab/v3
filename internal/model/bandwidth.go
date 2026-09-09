@@ -23,7 +23,18 @@ type BandwidthSample struct {
 	Final         bool                `json:"final"`
 }
 
+// BandwidthRates is attached only to live snapshots. ReportingSessions counts
+// fresh non-final sessions; stale sessions are excluded from the summed rates.
+type BandwidthRates struct {
+	Available             bool    `json:"available"`
+	SentBitsPerSecond     float64 `json:"sentBitsPerSecond"`
+	ReceivedBitsPerSecond float64 `json:"receivedBitsPerSecond"`
+	ReportingSessions     int     `json:"reportingSessions"`
+	StaleSessions         int     `json:"staleSessions"`
+}
+
 type BandwidthSummary struct {
+	CurrentRates      *BandwidthRates     `json:"currentRates,omitempty"`
 	Scope             string              `json:"scope"`
 	Sessions          int                 `json:"sessions"`
 	FinalizedSessions int                 `json:"finalizedSessions"`

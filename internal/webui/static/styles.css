@@ -116,6 +116,10 @@ main { width: min(1600px, 100%); margin: 0 auto; padding: 1.4rem clamp(1rem, 3vw
 .metric-card strong { display: block; margin-top: 0.4rem; font-size: clamp(1.6rem, 2.5vw, 2rem); line-height: 1; letter-spacing: -0.045em; font-variant-numeric: tabular-nums; }
 .metric-card small { display: block; margin-top: 0.42rem; color: var(--muted); font-size: 0.75rem; line-height: 1.35; }
 .metric-card #reachMetric { font-size: clamp(1.3rem, 2vw, 1.75rem); overflow-wrap: anywhere; }
+.bandwidth-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.65rem; margin-top: 0.65rem; }
+.bandwidth-grid .metric-card { min-width: 0; }
+.bandwidth-grid .metric-card strong { font-size: clamp(1.35rem, 2vw, 1.8rem); overflow-wrap: anywhere; }
+.bandwidth-scope { margin-top: 0.55rem; }
 .measurement-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.65rem; margin-top: 0.65rem; }
 .measurement-summary article { min-width: 0; padding: 0.8rem 1rem; border: 1px solid var(--line-soft); border-radius: 0.8rem; background: rgba(13, 28, 39, 0.88); }
 .measurement-summary span, .measurement-summary small { display: block; color: var(--muted); font-size: 0.75rem; line-height: 1.4; }
@@ -126,6 +130,8 @@ main { width: min(1600px, 100%); margin: 0 auto; padding: 1.4rem clamp(1rem, 3vw
 .measurement-help summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
 .measurement-note { margin: 0.55rem 0; color: var(--muted); font-size: 0.75rem; line-height: 1.45; }
 @media (max-width: 760px) {
+  .bandwidth-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bandwidth-grid .metric-card:last-child { grid-column: 1 / -1; }
   .measurement-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .measurement-summary article:last-child { grid-column: 1 / -1; }
 }
@@ -339,8 +345,8 @@ dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
 
 @media (max-width: 1050px) {
   .metric-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
-  .metric-card { grid-column: span 2; }
-  .metric-card:nth-last-child(-n + 2) { grid-column: span 3; }
+  .metric-grid > .metric-card { grid-column: span 2; }
+  .metric-grid > .metric-card:nth-last-child(-n + 2) { grid-column: span 3; }
   .workspace-grid, .detail-grid { grid-template-columns: 1fr; }
   .events-panel { height: auto !important; overflow: visible; contain: none; }
   .event-list { overflow: visible; }
@@ -362,9 +368,9 @@ dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
   .top-actions time { display: none; }
   .connection-state { width: 100%; justify-content: flex-end; }
   .metric-grid { grid-template-columns: 1fr 1fr; }
-  .metric-card { grid-column: auto; min-height: 0; padding: 0.85rem; }
-  .metric-card:nth-last-child(-n + 2) { grid-column: auto; }
-  .metric-card:last-child { grid-column: 1 / -1; }
+  .metric-grid > .metric-card { grid-column: auto; min-height: 0; padding: 0.85rem; }
+  .metric-grid > .metric-card:nth-last-child(-n + 2) { grid-column: auto; }
+  .metric-grid > .metric-card:last-child { grid-column: 1 / -1; }
   .metric-card strong { font-size: 1.5rem; }
   .legend { display: none; }
   #topology { height: 30rem; }
@@ -388,6 +394,8 @@ dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
 }
 
 @media (max-width: 460px) {
+  .bandwidth-grid { grid-template-columns: 1fr; }
+  .bandwidth-grid .metric-card:last-child { grid-column: auto; }
   .measurement-summary { grid-template-columns: 1fr; }
   .measurement-summary article:last-child { grid-column: auto; }
 }

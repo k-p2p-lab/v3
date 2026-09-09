@@ -35,6 +35,10 @@ Original events and `metrics.json` are included in result ZIPs. Saved-result ana
 
 ## Dashboard and API
 
+The main Dashboard Metrics area shows the current run's send/receive rates and cumulative transfer under **P2P B/W · Send / Receive**. Rates sum each Peer's latest source interval average, with adaptive bit/s, kbit/s, Mbit/s and higher units; totals use B, KiB, MiB and higher units. They follow the run named by **Run metrics**, independently of topology topic/layer filters.
+
+**B/W measurement** shows fresh active sessions, finalized sessions, the last sample time and rejected samples. It displays `Partial` when only some active sessions are fresh, `Rate unavailable` when their rate is unknown, and `N/A` without valid samples. Measured zero remains zero. The 15-second freshness rule and zero rate after normal finalization match Grafana, while cumulative totals remain available. SSE refreshes snapshots every 15 seconds even without events so expired rates update. Live snapshots include this aggregate as `metrics.bandwidth.currentRates`; saved-result aggregates do not acquire wall-clock-dependent current rates.
+
 Use **Saved results → Images** for a PNG of total P2P stream throughput (send/receive kbit/s). Per-protocol cumulative counters remain available in the result API/ZIP and Grafana.
 
 The analysis API adds `bandwidthTimeline` and `bandwidthBinSeconds`. Bins contain `at`, fractional send/receive byte allocations, per-protocol allocations, and `peerSeconds` (sum of allocated source observation durations, not unique nodes or completeness). Five-second bins adaptively merge to at most 360. An interval's bytes are distributed uniformly across overlapping bins; dividing by the full bin width gives the displayed average, including partial edge bins. Integrating the chart preserves bytes to floating-point precision. Missing intervals remain gaps. Missing Peer reports make the aggregate partial; peaks inside a reporting interval cannot be recovered.

@@ -102,6 +102,41 @@ func (a *bandwidthAccumulator) observe(e model.TraceEvent) *bandwidthInterval {
 	a.samples++
 	return &interval
 }
+
+const bandwidthSampleMaxAge = 15 * time.Second
+
+// Share the same source interval and freshness rules with Prometheus.
+func (s bandwidthSession) rateFactor(now time.Time) (float64, bool) {
+	if s.sample.Final {
+		return 0, true
+	}
+	age := now.Sub(s.at)
+	if age < -bandwidthSampleMaxAge || age > bandwidthSampleMaxAge || s.interval.durationNS <= 0 {
+		return 0, false
+	}
+	return 8e9 / float64(s.interval.durationNS), true
+}
+
+func (a *bandwidthAccumulator) currentRates(now time.Time) *model.BandwidthRates {
+	out := &model.BandwidthRates{}
+	for _, session := range a.sessions {
+		factor, fresh := session.rateFactor(now)
+		if !fresh {
+			out.StaleSessions++
+			continue
+		}
+		if !session.sample.Final {
+			out.ReportingSessions++
+		}
+		out.SentBitsPerSecond += float64(session.interval.sentBytes) * factor
+		out.ReceivedBitsPerSecond += float64(session.interval.receivedBytes) * factor
+	}
+	// All finalized sessions are a measured zero; entirely stale active
+	// sessions have an unknown rate even if other sessions already finalized.
+	out.Available = out.ReportingSessions > 0 || (len(a.sessions) > 0 && out.StaleSessions == 0)
+	return out
+}
+
 func (a *bandwidthAccumulator) summarize() *model.BandwidthSummary {
 	if a.samples == 0 && a.rejected == 0 {
 		return nil

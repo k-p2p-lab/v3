@@ -220,6 +220,43 @@ function ratioRange(available, lower, upper, unknown) {
   return unknown > 0 ? `${percentage(lower)}–${percentage(upper)}` : percentage(lower);
 }
 
+function formatBandwidthRate(value) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "N/A";
+  const units = ["bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s", "Pbit/s"];
+  let unit = 0;
+  while (value >= 1000 && unit < units.length - 1) { value /= 1000; unit++; }
+  return `${formatNumber(value, value >= 100 ? 0 : value >= 10 ? 1 : 2)} ${units[unit]}`;
+}
+
+function bandwidthMetricView(bandwidth) {
+  const valid = value => typeof value === "number" && Number.isFinite(value) && value >= 0;
+  const measured = valid(bandwidth?.sessions) && bandwidth.sessions > 0;
+  const rates = bandwidth?.currentRates;
+  const available = measured && rates?.available === true && valid(rates.sentBitsPerSecond) && valid(rates.receivedBitsPerSecond);
+  const finalized = measured ? bandwidth.finalizedSessions || 0 : 0;
+  const active = measured ? Math.max(0, bandwidth.sessions - finalized) : 0;
+  const reporting = rates?.reportingSessions || 0, stale = rates?.staleSessions || 0;
+  const at = measured ? new Date(bandwidth.latestAt) : null;
+  const bytes = value => measured && valid(value) ? (value === 0 ? "0 B" : formatBytes(value)) : "N/A";
+  return {
+    send: available ? formatBandwidthRate(rates.sentBitsPerSecond) : "N/A",
+    receive: available ? formatBandwidthRate(rates.receivedBitsPerSecond) : "N/A",
+    sent: `Total sent: ${bytes(bandwidth?.sentBytes)}`,
+    received: `Total received: ${bytes(bandwidth?.receivedBytes)}`,
+    quality: !measured ? "N/A" : !available ? "Rate unavailable" : stale > 0 ? "Partial" : active === 0 ? "Finalized" : "Live",
+    sessions: measured ? `${formatNumber(reporting)} / ${formatNumber(active)} active sessions fresh · ${formatNumber(finalized)} / ${formatNumber(bandwidth.sessions)} finalized${stale > 0 ? ` · ${formatNumber(stale)} stale / clock-skewed` : ""}` : "No bandwidth samples",
+    sample: `Last sample: ${at && Number.isFinite(at.getTime()) ? at.toLocaleTimeString("en-US") : "N/A"}`,
+    rejected: `Rejected samples: ${formatNumber(bandwidth?.rejectedSamples || 0)}`,
+  };
+}
+
+function renderBandwidthMetrics(bandwidth) {
+  const view = bandwidthMetricView(bandwidth);
+  for (const [id, key] of Object.entries({bandwidthSendMetric:"send", bandwidthReceiveMetric:"receive", bandwidthSendTotal:"sent", bandwidthReceiveTotal:"received", bandwidthQualityMetric:"quality", bandwidthSessionsMetric:"sessions", bandwidthSampleMetric:"sample", bandwidthRejectedMetric:"rejected"})) {
+    setText($(`#${id}`), view[key]);
+  }
+}
+
 function sessionMetrics(metrics) {
   return metrics?.definition === "session-window-v1" ? metrics : {};
 }
@@ -369,8 +406,8 @@ function render(snapshot) {
   const metricRun = (snapshot.experiments || []).find((run) => run.id === metrics.runId);
   const metricIteration = metricRun?.repetitions > 1 ? ` · Run ${formatNumber(metricRun.iteration)} of ${formatNumber(metricRun.repetitions)}` : "";
   setText($("#messageMetricsScope"), metrics.runId
-    ? `Message metrics: ${metricRun?.name ? `${metricRun.name} · ` : ""}${metrics.runId}${metricIteration}`
-    : "Message metrics: No run selected");
+    ? `Run metrics: ${metricRun?.name ? `${metricRun.name} · ` : ""}${metrics.runId}${metricIteration}`
+    : "Run metrics: No run selected");
   rememberAgents([...agents.map((agent) => agent.id), ...nodes.map((node) => node.agentId)]);
   const online = agents.filter((agent) => agent.state === "online").length;
   const capacity = agents.reduce((sum, agent) => sum + Math.max(0, agent.capacity - agent.activeNodes), 0);
@@ -397,6 +434,7 @@ function render(snapshot) {
   setText($("#duplicateMetric"), measurement.duplicateSamples > 0 ? formatNumber(measurement.averageDuplicates, 2) : "N/A");
   setText($("#duplicateSamplesMetric"), `Eligible duplicates: ${formatNumber(measurement.eligibleDuplicates)} · Delivered pairs: ${formatNumber(measurement.duplicateSamples)}`);
   setText($("#duplicateTotalMetric"), `All duplicate events: ${formatNumber(metrics.duplicates)}`);
+  renderBandwidthMetrics(metrics.bandwidth);
   setText($("#updatedAt"), new Date(snapshot.generatedAt).toLocaleTimeString("en-US"));
   renderRuns(snapshot.experiments || []);
   renderAgents(agents);

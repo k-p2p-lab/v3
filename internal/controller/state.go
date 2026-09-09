@@ -407,7 +407,10 @@ func (s *state) snapshot() model.Snapshot {
 		}
 	}
 	if accumulator := s.runMetrics[runID]; accumulator != nil {
-		result.Metrics, _ = accumulator.summarize(runID)
+		result.Metrics, _ = accumulator.summarize(runID, result.GeneratedAt)
+		if result.Metrics.Bandwidth != nil {
+			result.Metrics.Bandwidth.CurrentRates = accumulator.bandwidth.currentRates(result.GeneratedAt)
+		}
 	} else {
 		result.Metrics.RunID = runID
 	}

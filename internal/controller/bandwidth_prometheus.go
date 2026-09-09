@@ -53,11 +53,7 @@ func (c *bandwidthCollector) Collect(ch chan<- prometheus.Metric) {
 			final = 1
 		}
 		ch <- prometheus.MustNewConstMetric(c.final, prometheus.GaugeValue, final, labels...)
-		fresh := s.sample.Final || (now.Sub(s.at) >= -15*time.Second && now.Sub(s.at) <= 15*time.Second)
-		factor := 8e9 / float64(s.interval.durationNS)
-		if s.sample.Final {
-			factor = 0
-		} // A closed session consumes no current bandwidth.
+		factor, fresh := s.rateFactor(now)
 		for _, sent := range []bool{false, true} {
 			direction := "receive"
 			total, delta := s.sample.ReceivedBytes, s.interval.receivedBytes
