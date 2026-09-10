@@ -51,7 +51,7 @@ Bootstrap 응답은 `{nodeId, peerId, addresses}` 항목 배열이며 비어 있
 
 반복 제출은 매 iteration에 별도 run ID와 결과 기록을 예약하고 `batchId`, `iteration`, `repetitions`를 공유합니다. 순차 실행하며 실패하거나 취소된 iteration은 대기 중인 나머지 실행도 취소합니다. 반복 배치가 진행 중일 때 구성원 하나를 중지하면 해당 배치를 취소합니다. `repetitions > 1`에서는 마지막을 포함한 매 iteration이 최종 상태를 기록하기 전에 Peer를 fence하고 제거합니다. 자연스럽게 성공한 단일 실행만 YAML에 `stop-all`이 없을 때 Peer를 남겨둘 수 있습니다.
 
-중지 endpoint는 cleanup 완료 전, 취소 요청을 접수하면 `202`를 반환합니다. `/api/v1/experiments` 또는 snapshot에서 최종 상태를 확인하십시오. 취소 handle이 더 이상 없는 run은 `404`입니다. SSE는 최초 `event: snapshot`, 상태 변경 시 전체 snapshot, 이벤트가 없어도 15초마다 전체 snapshot를 보내며 event ID 기반 replay는 제공하지 않습니다. `/api/v1/events`는 현재 Controller 상태에서 가장 최근 event 최대 300개를 포함합니다.
+중지 endpoint는 cleanup 완료 전, 취소 요청을 접수하면 `202`를 반환합니다. `/api/v1/experiments` 또는 snapshot에서 최종 상태를 확인하십시오. 취소 handle이 더 이상 없는 run은 `404`입니다. SSE는 최초 `event: snapshot`, 상태 변경을 최대 초당 한 번으로 합친 전체 snapshot(클라이언트 간 인코딩 공유), 이벤트가 없어도 15초마다 전체 snapshot를 보내며 event ID 기반 replay는 제공하지 않습니다. `/api/v1/events`는 현재 Controller 상태에서 가장 최근 event 최대 300개를 포함합니다.
 
 저장소 루트에서 실행하는 예시입니다. `control-node:8080`은 `sh scripts/swarm.sh access`가 표시한 Controller 주소로 바꾸고, `sh scripts/swarm.sh credentials`가 표시한 토큰을 `KPL_API_TOKEN`으로 export하십시오.
 
@@ -112,6 +112,7 @@ typed 대역폭 표본을 포함한 원시 이벤트는 `<data-dir>/runs/<run-id
 | Agent → Controller | `POST` | `/api/v1/events/batch` | batch당 최대 5000개 event 전달 |
 | Controller → Agent | `GET` | `/api/v1/status` | Agent와 Peer 상태 갱신 |
 | Controller → Agent | `POST` | `/api/v1/nodes` | `CreateNodeRequest`로 Peer 생성 |
+| Controller → Agent | `DELETE` | `/api/v1/nodes` | 기존 run을 fence 처리하고 남은 Peer와 대기 telemetry를 모두 정리한 뒤 `204` 반환. Controller 종료 시 사용 |
 | Controller → Agent | `DELETE` | `/api/v1/nodes/{nodeId}` | Peer 하나의 종료 요청 |
 | Controller → Agent | `POST` | `/api/v1/nodes/{nodeId}/publish` | publish 요청 중계 |
 | Peer → Agent | `POST` | `/api/v1/nodes/{nodeId}/status` | 해당 Peer의 최신 상태 보고 |

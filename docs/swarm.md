@@ -271,7 +271,9 @@ The Controller is a single instance without a shared database or leader election
 
 Use `sh scripts/swarm.sh remove` for full removal. Peers that are not stopped by Controller shutdown are also cleaned up during the subsequent Agent shutdown stage.
 
-On SIGTERM, the Controller stops accepting new experiments and waits for HTTP connections, experiment jobs, Peer cleanup, and the final run-state save. The default `jobShutdownTimeout: 3m` applies separately to job shutdown and Peer cleanup, so the stack gives the Controller a `7m` stop grace period. Agents receive `4m`, covering up to 175 seconds of Peer cleanup followed by HTTP-handler completion and a bounded telemetry drain. Increase the Controller grace period as well when a scenario uses a longer `jobShutdownTimeout`; external service managers must allow those grace periods to finish.
+On SIGTERM, the Controller stops accepting new experiments and waits for HTTP connections, experiment jobs, Peer cleanup, and the final run-state save. The default `jobShutdownTimeout: 3m` applies separately to job shutdown and Peer cleanup, so the stack gives the Controller a `10m` stop grace period. Agents receive `4m`, covering up to 175 seconds of Peer cleanup followed by HTTP-handler completion and a bounded telemetry drain. Increase the Controller grace period as well when a scenario uses a longer `jobShutdownTimeout`; external service managers must allow those grace periods to finish.
+
+The Controller keeps Agent event ingestion available after canceling runs, then removes Peers retained by completed runs and drains Agent queues before closing HTTP. This final Agent cleanup/drain has an additional 190-second budget. The default Controller wait in `remove` is 660 seconds; each Docker inspection is also bounded by the remaining wait budget.
 
 ### Data storage and restart
 

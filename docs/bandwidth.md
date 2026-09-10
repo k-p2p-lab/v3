@@ -45,7 +45,7 @@ The analysis API adds `bandwidthTimeline` and `bandwidthBinSeconds`. Bins contai
 
 ## Prometheus and Grafana
 
-Common labels: `run_id`, `agent_id`, `node_id`, `session_id`. Directions are `send` and `receive`.
+Common labels: `run_id`, `agent_id`. Directions are `send` and `receive`. Counters and fresh rates are summed across sessions before export so Peer churn does not create new Prometheus series. Node/session detail remains in the raw logs and saved analysis.
 
 | Metric | Type / extra labels |
 |---|---|
@@ -53,10 +53,10 @@ Common labels: `run_id`, `agent_id`, `node_id`, `session_id`. Directions are `se
 | `kpl_p2p_protocol_stream_bytes_total` | Counter / direction, protocol |
 | `kpl_p2p_stream_bits_per_second` | Gauge / direction |
 | `kpl_p2p_protocol_stream_bits_per_second` | Gauge / direction, protocol |
-| `kpl_p2p_bandwidth_sample_timestamp_seconds` | Gauge / latest source timestamp |
-| `kpl_p2p_bandwidth_session_final` | Gauge / 1 after a final sample |
+| `kpl_p2p_bandwidth_sample_timestamp_seconds` | Gauge / latest source timestamp across the group |
+| `kpl_p2p_bandwidth_sessions` | Gauge / session count by `state` (`open`, `final`) |
 
-Grafana's **P2P stream bandwidth** panels apply Run/Agent filters, not Topic: one RPC/stream can carry several topics and topicless controls. Empty protocol means negotiation/unassigned. Rate gauges represent source interval averages; do not apply `rate()` again. For non-final sessions, rate gauges are omitted when the source timestamp lies more than 15 seconds before or after the Controller clock; this also excludes implausibly future-dated samples. Finalized sessions report current zero. Counters remain available. `kpl_message_bytes_total` remains a separate application-payload metric.
+Grafana's **P2P stream bandwidth** panels apply Run/Agent filters, not Topic: one RPC/stream can carry several topics and topicless controls. Empty protocol means negotiation/unassigned. Rate gauges represent source interval averages; do not apply `rate()` again. Non-final sessions are excluded from aggregate rates when the source timestamp lies more than 15 seconds before or after the Controller clock; this also excludes implausibly future-dated samples. Finalized sessions contribute current zero; a group with no fresh or finalized sessions omits its rate. Counters retain bytes from departed sessions. `kpl_message_bytes_total` remains a separate application-payload metric.
 
 Live gauges/counters reflect sessions seen during the current Controller lifetime. Historical logs are not automatically loaded into Prometheus memory on restart; use saved-result analysis/ZIP for reconstruction, and the Prometheus server's retained history for earlier scrapes. A new cumulative sample recovers that session's previous bytes. A short experiment may finish between scrapes: final counters remain observable, while the stored analysis preserves its sampled throughput.
 

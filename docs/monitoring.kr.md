@@ -101,9 +101,9 @@ curl --fail --output run-results.zip \
 |---|---|
 | `kpl_events_total` | Controller가 수신한 이벤트 누적 수. `run_id`, `agent_id`, `event_type`, `topic`으로 구분 |
 | `kpl_message_bytes_total` | 발행/수신 이벤트의 `fields.wireBytes` 합계. Envelope 사용 시 JSON/base64를 포함한 PubSub data이며 libp2p framing 및 TCP/IP 헤더 제외 |
-| `kpl_p2p_stream_bytes_total`, `kpl_p2p_protocol_stream_bytes_total` | 세션·방향별 실제 libp2p 스트림 누적 바이트. 전체 및 negotiated protocol별 값 |
+| `kpl_p2p_stream_bytes_total`, `kpl_p2p_protocol_stream_bytes_total` | Run·Agent·방향별 실제 libp2p 스트림 누적 바이트. 전체 및 negotiated protocol별 값 |
 | `kpl_p2p_stream_bits_per_second`, `kpl_p2p_protocol_stream_bits_per_second` | 소스 수집 구간의 평균 bit/s gauge. `rate()` 없이 직접 조회 |
-| `kpl_p2p_bandwidth_sample_timestamp_seconds`, `kpl_p2p_bandwidth_session_final` | 최근 소스 표본 시각과 정상 host 종료 후 표본 수신 여부. [대역폭 품질과 한계](bandwidth.kr.md) 참고 |
+| `kpl_p2p_bandwidth_sample_timestamp_seconds`, `kpl_p2p_bandwidth_sessions` | 최근 소스 표본 시각과 정상 host 종료 후 표본 수신·미수신 세션 수. [대역폭 품질과 한계](bandwidth.kr.md) 참고 |
 | `kpl_gossipsub_control_rpcs_total` | 각 GossipSub 제어 타입을 포함한 RPC envelope 수. `send`, `recv`, 로컬 송신 전 `drop`으로 구분 |
 | `kpl_gossipsub_control_entries_total` | 해당 RPC에 담긴 repeated protobuf control entry 수 |
 | `kpl_gossipsub_control_message_ids_total` | IHAVE, IWANT, IDONTWANT entry 안의 중복 제거하지 않은 메시지 ID 참조 출현 횟수 |

@@ -364,9 +364,13 @@ func (s *state) persistEventsLocked(runID string, events []model.TraceEvent) err
 	return f.Close()
 }
 
-func (s *state) snapshot() model.Snapshot {
+func (s *state) inventory() model.Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.inventoryLocked()
+}
+
+func (s *state) inventoryLocked() model.Snapshot {
 	result := model.Snapshot{GeneratedAt: time.Now().UTC()}
 	for _, agent := range s.agents {
 		result.Agents = append(result.Agents, agent)
@@ -383,11 +387,20 @@ func (s *state) snapshot() model.Snapshot {
 	sort.Slice(result.Experiments, func(i, j int) bool {
 		return result.Experiments[i].StartedAt.After(result.Experiments[j].StartedAt)
 	})
+	return result
+}
+
+func (s *state) snapshot() model.Snapshot {
+	s.mu.RLock()
+	result := s.inventoryLocked()
+	agents := make(map[string]model.Agent, len(result.Agents))
+	for _, agent := range result.Agents {
+		agents[agent.ID] = agent
+	}
 	topologyNodes := append([]model.Node(nil), result.Nodes...)
 	for i := range topologyNodes {
 		topologyNodes[i].LastSeen = s.nodeReportTimes[topologyNodes[i].ID]
 	}
-	result.Edges = networkEdgesAt(topologyNodes, s.agents, result.GeneratedAt)
 	// Queued iterations have no observations yet and must not replace the
 	// currently running experiment's metrics simply because they were created
 	// a few microseconds later.
@@ -407,13 +420,17 @@ func (s *state) snapshot() model.Snapshot {
 		}
 	}
 	if accumulator := s.runMetrics[runID]; accumulator != nil {
-		result.Metrics, _ = accumulator.summarize(runID, result.GeneratedAt)
+		result.Metrics, _ = accumulator.liveSummary(runID, result.GeneratedAt)
 		if result.Metrics.Bandwidth != nil {
-			result.Metrics.Bandwidth.CurrentRates = accumulator.bandwidth.currentRates(result.GeneratedAt)
+			bandwidth := *result.Metrics.Bandwidth
+			bandwidth.CurrentRates = accumulator.bandwidth.currentRates(result.GeneratedAt)
+			result.Metrics.Bandwidth = &bandwidth
 		}
 	} else {
 		result.Metrics.RunID = runID
 	}
+	s.mu.RUnlock()
+	result.Edges = networkEdgesAt(topologyNodes, agents, result.GeneratedAt)
 	return result
 }
 

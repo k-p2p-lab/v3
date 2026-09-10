@@ -101,9 +101,9 @@ Repetition **Analyze batch mean** jobs are stored separately in `<data-dir>/batc
 |---|---|
 | `kpl_events_total` | Cumulative events received by the Controller, labeled by `run_id`, `agent_id`, `event_type`, and `topic` |
 | `kpl_message_bytes_total` | Sum of `fields.wireBytes` in publish/deliver events: PubSub data including envelope JSON/base64 when used, excluding libp2p framing and TCP/IP headers |
-| `kpl_p2p_stream_bytes_total`, `kpl_p2p_protocol_stream_bytes_total` | Measured cumulative libp2p stream bytes per session/direction, overall and by negotiated protocol |
+| `kpl_p2p_stream_bytes_total`, `kpl_p2p_protocol_stream_bytes_total` | Measured cumulative libp2p stream bytes per run/Agent/direction, overall and by negotiated protocol |
 | `kpl_p2p_stream_bits_per_second`, `kpl_p2p_protocol_stream_bits_per_second` | Source interval-average bit/s gauges; query directly, without `rate()` |
-| `kpl_p2p_bandwidth_sample_timestamp_seconds`, `kpl_p2p_bandwidth_session_final` | Latest source sample time and whether a normal post-close sample was received; see [bandwidth quality and limits](bandwidth.md) |
+| `kpl_p2p_bandwidth_sample_timestamp_seconds`, `kpl_p2p_bandwidth_sessions` | Latest source sample time and counts of sessions with/without a normal post-close sample; see [bandwidth quality and limits](bandwidth.md) |
 | `kpl_gossipsub_control_rpcs_total` | RPC envelopes containing each GossipSub control type, separated by `send`, `recv`, and local pre-send `drop` |
 | `kpl_gossipsub_control_entries_total` | Repeated protobuf control entries carried in those RPCs |
 | `kpl_gossipsub_control_message_ids_total` | Non-unique message-ID reference occurrences in IHAVE, IWANT, and IDONTWANT entries |

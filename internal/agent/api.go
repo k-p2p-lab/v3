@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/k-p2p-lab/v3/internal/model"
 )
@@ -79,6 +80,32 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		writeJSON(w, http.StatusOK, s.nodes())
+	case http.MethodDelete:
+		// Close old run generations without making this Agent permanently unusable
+		// after a Controller restart. Future runs get different IDs.
+		s.mu.Lock()
+		if s.runFences == nil {
+			s.runFences = make(map[string]uint64)
+		}
+		for _, proc := range s.processes {
+			s.runFences[proc.node.RunID] = ^uint64(0)
+		}
+		s.mu.Unlock()
+		s.stopAll()
+		cleanupCtx, cancel := context.WithTimeout(r.Context(), containerStopTimeout)
+		err := s.waitStoppedContext(cleanupCtx)
+		cancel()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		drainCtx, cancelDrain := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancelDrain()
+		if err := s.drainEvents(drainCtx); err != nil {
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	case http.MethodPost:
 		var request model.CreateNodeRequest
 		if err := decodeJSON(w, r, &request); err != nil {

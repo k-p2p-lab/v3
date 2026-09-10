@@ -174,7 +174,7 @@ func (s *Server) serve(ctx context.Context, listener, metricsListener net.Listen
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      3 * time.Minute,
+		WriteTimeout:      190 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 	var metricsServer *http.Server
@@ -518,6 +518,10 @@ func (s *Server) finishProcess(nodeID string, proc *process, runErr, cleanupErr 
 			current.node.Error = errors.Join(runErr, cleanupErr).Error()
 		}
 	}
+	if proc.exited && proc.cleanupErr == nil && proc.node.State == model.NodeStopped {
+		proc.node = heartbeatNodeStatus(proc)
+		proc.apiURL = ""
+	}
 	if proc.done != nil {
 		close(proc.done)
 	}
@@ -551,8 +555,10 @@ func (s *Server) stopNode(nodeID string) error {
 func (s *Server) stopAll() {
 	s.mu.RLock()
 	ids := make([]string, 0, len(s.processes))
-	for id := range s.processes {
-		ids = append(ids, id)
+	for id, proc := range s.processes {
+		if !proc.exited || proc.cleanupErr != nil {
+			ids = append(ids, id)
+		}
 	}
 	s.mu.RUnlock()
 	for _, id := range ids {
@@ -675,7 +681,7 @@ func cloneMeshPeers(peers map[string][]string) map[string][]string {
 // reservations even when it missed the entire lifetime. Successful exits no
 // longer have a live overlay; resending their last connections, scores and
 // resolved configuration makes churn history overflow the heartbeat body limit.
-// Full retained diagnostics remain available through nodes().
+// Successfully removed peers retain this compact record in memory as well.
 func heartbeatNodeStatus(proc *process) model.Node {
 	if !proc.exited || proc.cleanupErr != nil || proc.node.State != model.NodeStopped {
 		return cloneNodeStatus(proc.node)
@@ -690,7 +696,7 @@ func heartbeatNodeStatus(proc *process) model.Node {
 	node.OverlayObservedAt = time.Time{}
 	node.Metadata = make(map[string]string)
 	// Preserve lifecycle evidence and topic labels used by Controller metrics.
-	for _, key := range []string{"runtime", "stoppedAt", "stopRequestedAt", "topics", "topicsJSON", "pubsubEnabled", "topicMode"} {
+	for _, key := range []string{"runtime", "containerId", "containerCreatedAt", "containerStartedAt", "lifetimeBasis", "stoppedAt", "stopRequestedAt", "topics", "topicsJSON", "pubsubEnabled", "topicMode"} {
 		if value, exists := proc.node.Metadata[key]; exists {
 			node.Metadata[key] = value
 		}

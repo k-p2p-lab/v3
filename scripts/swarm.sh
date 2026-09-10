@@ -125,7 +125,7 @@ docker_timeout=${KPL_DOCKER_TIMEOUT:-60}
 image_pull_timeout=${KPL_IMAGE_PULL_TIMEOUT:-300}
 image_build_timeout=${KPL_IMAGE_BUILD_TIMEOUT:-1800}
 image_push_timeout=${KPL_IMAGE_PUSH_TIMEOUT:-600}
-controller_timeout=${KPL_CONTROLLER_STOP_TIMEOUT:-480}
+controller_timeout=${KPL_CONTROLLER_STOP_TIMEOUT:-660}
 agent_timeout=${KPL_AGENT_STOP_TIMEOUT:-240}
 for number in "$docker_timeout" "$image_pull_timeout" "$image_build_timeout" "$image_push_timeout" "$controller_timeout" "$agent_timeout" "$KPL_MIN_AGENTS"; do
     case "$number" in ''|0*|*[!0-9]*) fail 'Timeouts and KPL_MIN_AGENTS must be positive integers without leading zeros.' ;; esac
@@ -432,18 +432,26 @@ capture_tasks() {
         fi
     done
 }
+# Bound each CLI call by the remaining stop budget, including completed tasks.
+# A busy daemon must not add another full Docker timeout on every inspection.
+wait_dock() {
+    wait_remaining=$(( deadline - $(date +%s) ))
+    [ "$wait_remaining" -gt 0 ] || fail 'Timed out verifying task cleanup; stack retained for inspection.'
+    [ "$wait_remaining" -le "$docker_timeout" ] || wait_remaining=$docker_timeout
+    timeout -s TERM -k 5 "$wait_remaining" docker "$@"
+}
 wait_tasks() {
     wait_ids=$1
     deadline=$(( $(date +%s) + $2 ))
     for task_id in $wait_ids; do
         while :; do
-            record=$(dock inspect --type task --format "$task_format" "$task_id") || fail "Cannot inspect task $task_id; cleanup is unverified."
+            record=$(wait_dock inspect --type task --format "$task_format" "$task_id") || fail "Cannot inspect task $task_id; cleanup is unverified."
             task_node=${record%%|*}; rest=${record#*|}
             state=${rest%%|*}; rest=${rest#*|}
             container=${rest%%|*}; rest=${rest#*|}
             pid=${rest%%|*}; rest=${rest#*|}
             exit_code=${rest%%|*}; task_error=${rest#*|}
-            node_state=$(dock node inspect --format '{{.Status.State}}' "$task_node")
+            node_state=$(wait_dock node inspect --format '{{.Status.State}}' "$task_node")
             [ "$node_state" = ready ] || fail "Node $task_node became unavailable; task $task_id cleanup is unverified."
             case "$state" in
                 complete|shutdown)

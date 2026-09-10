@@ -51,7 +51,7 @@ The bootstrap response is an array of `{nodeId, peerId, addresses}` records (or 
 
 Repeated submissions reserve a separate run ID and result record for every iteration, sharing `batchId`, `iteration`, and `repetitions`. Runs execute sequentially; a failed or canceled iteration cancels the queued remainder. Stopping any member while its repetition batch is still active cancels that batch. For `repetitions > 1`, every iteration, including the last, fences and removes its Peers before finalization. Only a naturally successful single run may retain Peers when its YAML omits `stop-all`.
 
-The stop endpoint returns `202` once cancellation is requested, before cleanup completes. Observe `/api/v1/experiments` or the snapshot until the final state is recorded. A run with no remaining cancellation handle returns `404`. SSE sends an initial `event: snapshot`, subsequent full snapshots on state updates, and full snapshots every 15 seconds even without events; it does not provide event-ID replay. `/api/v1/events` contains at most the 300 most recent events across live Controller state.
+The stop endpoint returns `202` once cancellation is requested, before cleanup completes. Observe `/api/v1/experiments` or the snapshot until the final state is recorded. A run with no remaining cancellation handle returns `404`. SSE coalesces updates to at most one full snapshot per second, shares encoding across clients, and sends an initial `event: snapshot`, subsequent full snapshots on state updates, and full snapshots every 15 seconds even without events; it does not provide event-ID replay. `/api/v1/events` contains at most the 300 most recent events across live Controller state.
 
 From the repository root, replace `control-node:8080` with the Controller address printed by `sh scripts/swarm.sh access` and export the token printed by `sh scripts/swarm.sh credentials` as `KPL_API_TOKEN`:
 
@@ -112,6 +112,7 @@ These REST/JSON endpoints serve component communication. Registration, heartbeat
 | Agent → Controller | `POST` | `/api/v1/events/batch` | Forward up to 5000 events per batch |
 | Controller → Agent | `GET` | `/api/v1/status` | Refresh Agent and Peer state |
 | Controller → Agent | `POST` | `/api/v1/nodes` | Create a Peer from `CreateNodeRequest` |
+| Controller → Agent | `DELETE` | `/api/v1/nodes` | Fence all retained runs, remove remaining Peers and drain queued telemetry before returning `204`; used during Controller shutdown |
 | Controller → Agent | `DELETE` | `/api/v1/nodes/{nodeId}` | Request one Peer's shutdown |
 | Controller → Agent | `POST` | `/api/v1/nodes/{nodeId}/publish` | Proxy a publish request |
 | Peer → Agent | `POST` | `/api/v1/nodes/{nodeId}/status` | Report this Peer's latest status |

@@ -41,10 +41,13 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) serve(ctx context.Context, listener net.Listener) error {
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
+	// Agents must still be able to deliver final Peer events after run cancellation.
+	ingestCtx, cancelIngest := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelIngest()
 	server := &http.Server{
 		Addr:              s.config.Listen,
 		Handler:           s.Handler(runCtx),
-		BaseContext:       func(net.Listener) context.Context { return runCtx },
+		BaseContext:       func(net.Listener) context.Context { return ingestCtx },
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      0,
@@ -84,22 +87,25 @@ func (s *Server) serve(ctx context.Context, listener net.Listener) error {
 	}
 	s.cancelMu.Unlock()
 	cancelRun()
+	// First finish all producers and their generation fences. Then stop peers
+	// retained by completed experiments and flush every Agent while ingestion
+	// is still available. Swarm removes the Agent services only after we exit.
+	s.runs.Wait()
+	cleanupErr := s.cleanupAgents()
+	s.analysisWorkers.Wait()
+	<-analysisDone
+	cancelIngest()
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
 	shutdownErr := server.Shutdown(shutdownCtx)
 	cancelShutdown()
 	if shutdownErr != nil {
 		_ = server.Close()
 	}
-	// Scenario cancellation fences Agent creates, removes peers, and persists
-	// the final experiment state. Returning sooner would let main exit while
-	// those goroutines still own resources, especially after Linux SIGTERM.
-	s.runs.Wait()
-	s.analysisWorkers.Wait()
-	<-analysisDone
+
 	if errors.Is(err, http.ErrServerClosed) {
 		err = nil
 	}
-	return errors.Join(err, shutdownErr)
+	return errors.Join(err, cleanupErr, shutdownErr)
 }
 
 func (s *Server) Handler(ctx context.Context) http.Handler {
@@ -128,7 +134,16 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 	mux.HandleFunc("/api/v1/experiments/", s.handleExperimentAction)
 	mux.HandleFunc("/api/v1/analysis-jobs/", s.handleAnalysisJob(ctx))
 	mux.HandleFunc("/api/v1/batch-analysis-jobs/", s.handleBatchAnalysis(ctx))
-	mux.HandleFunc("/api/v1/stream", s.handleStream)
+	mux.HandleFunc("/api/v1/stream", func(w http.ResponseWriter, r *http.Request) {
+		streamCtx, cancel := context.WithCancel(r.Context())
+		defer cancel()
+		stop := context.AfterFunc(ctx, cancel)
+		defer stop()
+		if ctx.Err() != nil {
+			cancel()
+		}
+		s.handleStream(w, r.WithContext(streamCtx))
+	})
 	mux.Handle("/", http.FileServer(http.FS(webui.FS())))
 	return s.withMiddleware(mux)
 }
@@ -291,7 +306,7 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.state.snapshot().Agents)
+	writeJSON(w, http.StatusOK, s.state.inventory().Agents)
 }
 
 func (s *Server) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
@@ -334,7 +349,7 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.state.snapshot().Nodes)
+	writeJSON(w, http.StatusOK, s.state.inventory().Nodes)
 }
 
 func (s *Server) handleNetwork(w http.ResponseWriter, r *http.Request) {
@@ -430,7 +445,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.state.snapshot().Events)
+	writeJSON(w, http.StatusOK, s.state.inventory().Events)
 }
 
 func (s *Server) handleEventBatch(w http.ResponseWriter, r *http.Request) {
@@ -483,7 +498,7 @@ func (s *Server) handleExperiments(ctx context.Context) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			writeJSON(w, http.StatusOK, s.state.snapshot().Experiments)
+			writeJSON(w, http.StatusOK, s.state.inventory().Experiments)
 		case http.MethodPost:
 			// Cancel a slow upload immediately during shutdown; canceling a
 			// request context alone does not unblock a server-side body Read.
@@ -583,7 +598,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	flusher, ok := w.(http.Flusher)
+	_, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "streaming is unavailable")
 		return
@@ -593,16 +608,37 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	updates, unsubscribe := s.state.subscribe()
 	defer unsubscribe()
-	keepalive := time.NewTicker(15 * time.Second)
-	defer keepalive.Stop()
+	// Coalesce event notifications: topology/JSON work must not scale with
+	// RPC frequency or with the number of open dashboard tabs.
+	ticker := time.NewTicker(snapshotInterval)
+	defer ticker.Stop()
+	lastSent := time.Time{}
 	send := func() error {
-		data, err := json.Marshal(s.state.snapshot())
+		if err := r.Context().Err(); err != nil {
+			return err
+		}
+		data, err := s.streamSnapshot()
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(w, "event: snapshot\ndata: %s\n\n", data)
-		flusher.Flush()
-		return err
+		response := http.NewResponseController(w)
+		_ = response.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		stopWrite := context.AfterFunc(r.Context(), func() { _ = response.SetWriteDeadline(time.Now()) })
+		defer stopWrite()
+		if _, err := io.WriteString(w, "event: snapshot\ndata: "); err != nil {
+			return err
+		}
+		if _, err := w.Write(data); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, "\n\n"); err != nil {
+			return err
+		}
+		if err := response.Flush(); err != nil {
+			return err
+		}
+		lastSent = time.Now()
+		return nil
 	}
 	if err := send(); err != nil {
 		return
@@ -611,17 +647,36 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
-		case <-updates:
-			if err := send(); err != nil {
-				return
+		case <-ticker.C:
+			dirty := false
+			select {
+			case <-updates:
+				dirty = true
+			default:
 			}
-		case <-keepalive.C:
-			// Refresh time-dependent metrics even if telemetry stops arriving.
-			if err := send(); err != nil {
-				return
+			if dirty || time.Since(lastSent) >= 15*time.Second {
+				if err := send(); err != nil {
+					return
+				}
 			}
 		}
 	}
+}
+
+const snapshotInterval = time.Second
+
+func (s *Server) streamSnapshot() ([]byte, error) {
+	s.snapshotMu.Lock()
+	defer s.snapshotMu.Unlock()
+	if s.snapshotData != nil && time.Since(s.snapshotAt) < snapshotInterval {
+		return s.snapshotData, nil
+	}
+	data, err := json.Marshal(s.state.snapshot())
+	if err != nil {
+		return nil, err
+	}
+	s.snapshotData, s.snapshotAt = data, time.Now()
+	return data, nil
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {

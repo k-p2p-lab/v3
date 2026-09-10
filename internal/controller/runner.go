@@ -59,6 +59,9 @@ type Server struct {
 	scenarioSummaries      map[string][]scenarioSummaryCacheEntry
 	scenarioSummaryFlights map[string][]*scenarioSummaryFlight
 	scenarioRecordCheck    func([]byte) error
+	snapshotMu             sync.Mutex
+	snapshotData           []byte
+	snapshotAt             time.Time
 }
 
 func New(config ServerConfig, logger *slog.Logger) *Server {
@@ -1160,11 +1163,11 @@ func (s *Server) callAgent(ctx context.Context, baseURL, method, path string, in
 		req.Header.Set("Authorization", "Bearer "+s.config.Token)
 	}
 	client := s.client
-	if method == http.MethodDelete && strings.HasPrefix(path, "/api/v1/runs/") {
+	if method == http.MethodDelete && (strings.HasPrefix(path, "/api/v1/runs/") || path == "/api/v1/nodes") {
 		// Removing Docker namespaces/filesystems can exceed the ordinary 10s
 		// control request timeout. The scenario context still bounds cleanup.
 		cleanupClient := *s.client
-		cleanupClient.Timeout = 3 * time.Minute
+		cleanupClient.Timeout = 190 * time.Second
 		client = &cleanupClient
 	}
 	resp, err := client.Do(req)

@@ -271,7 +271,9 @@ Controller는 단일 인스턴스이며 공유 DB/leader election을 구현하�
 
 전체 철거에는 `sh scripts/swarm.sh remove`를 사용하십시오. Controller 정지만으로 종료되지 않는 Peer도 이후 Agent 종료 단계에서 정리합니다.
 
-SIGTERM을 받으면 Controller는 새 실험 수락을 중단하고 HTTP 연결, 실험 job, Peer 정리와 최종 상태 저장을 기다립니다. 기본 `jobShutdownTimeout: 3m`은 job 종료와 Peer 정리에 각각 적용되므로 stack은 Controller 종료 유예를 `7m`로 설정합니다. Agent에는 최대 175초의 Peer 정리, HTTP handler 종료와 제한된 telemetry drain을 포함하는 `4m`를 제공합니다. 시나리오의 `jobShutdownTimeout`을 늘리면 Controller 유예도 함께 늘리고 외부 서비스 관리자가 이 시간을 단축하지 않도록 하십시오.
+SIGTERM을 받으면 Controller는 새 실험 수락을 중단하고 HTTP 연결, 실험 job, Peer 정리와 최종 상태 저장을 기다립니다. 기본 `jobShutdownTimeout: 3m`은 job 종료와 Peer 정리에 각각 적용되므로 stack은 Controller 종료 유예를 `10m`로 설정합니다. Agent에는 최대 175초의 Peer 정리, HTTP handler 종료와 제한된 telemetry drain을 포함하는 `4m`를 제공합니다. 시나리오의 `jobShutdownTimeout`을 늘리면 Controller 유예도 함께 늘리고 외부 서비스 관리자가 이 시간을 단축하지 않도록 하십시오.
+
+Controller는 실행 취소 후에도 Agent 이벤트 수신을 유지하고, 완료된 실험이 남긴 Peer와 Agent 전송 큐까지 정리한 뒤 HTTP를 닫습니다. 이 최종 Agent 정리·전송에는 최대 190초를 추가로 허용합니다. `remove`의 기본 Controller 대기는 660초이며, 각 Docker 조회에도 남은 대기 예산을 적용합니다.
 
 ### 데이터 저장소와 재시작
 

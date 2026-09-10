@@ -136,6 +136,7 @@ case "$1 ${2:-}" in
             taskC)
                 node=control1; container=containerC
                 if [ -f "$s/controller-stopped" ]; then
+                    if [ "${KPL_TEST_SLOW_STOP_INSPECT:-0}" = 1 ]; then sleep 4; fi
                     state=shutdown; pid=0
                     case "${KPL_TEST_CONTROLLER_STOP:-clean}" in
                         failed) state=failed; code=1; issue=error ;;
@@ -289,6 +290,7 @@ reset_case() {
     export KPL_DOCKER_TIMEOUT=3 KPL_CONTROLLER_STOP_TIMEOUT=3 KPL_AGENT_STOP_TIMEOUT=3
     export KPL_TEST_REPO_ROOT=$root
     unset KPL_TEST_FOREIGN KPL_TEST_FOREIGN_STACK KPL_TEST_DOWN_NODE KPL_TEST_CONTROLLER_STOP KPL_TEST_AGENT_STOP KPL_TEST_EMPTY_STACK KPL_TEST_NO_NETWORK KPL_MIN_AGENTS KPL_TEST_FINAL_LIST_FAIL KPL_TEST_INSPECT_FAIL KPL_TEST_EMPTY_HISTORY KPL_TEST_OLD_FAILED KPL_TEST_PENDING_STATE KPL_TEST_PENDING_CONTAINER KPL_TEST_PULL_DIGEST KPL_TEST_PULL_FAULT KPL_IMAGE_PULL_TIMEOUT DOCKER_DEFAULT_PLATFORM
+    unset KPL_TEST_SLOW_STOP_INSPECT
     unset KPL_TEST_SELF_ID KPL_TEST_NODE_IDS KPL_TEST_LABEL_NODES KPL_TEST_NODE_LS_FAIL KPL_TEST_NODE_INSPECT_FAIL
     unset KPL_PEER_SUBNET KPL_IMAGE_BUILD_TIMEOUT KPL_IMAGE_PUSH_TIMEOUT KPL_TEST_BUILD_FAIL KPL_TEST_PUSH_FAIL KPL_TEST_EXPECT_CONTEXT DOCKER_CONTEXT KPL_TEST_NETWORK_SUBNET KPL_TEST_CONTROL_ADDR KPL_TEST_WORKER1_ADDR KPL_TEST_WORKER2_ADDR KPL_HTTP_PORT KPL_AGENT_METRICS_PORT PROMETHEUS_PORT GRAFANA_PORT
 }
@@ -329,6 +331,16 @@ for pending_state in new allocated shutdown; do
     run remove
     cmp "$scratch/expected" "$KPL_TEST_STATE/events"
 done
+
+# A busy daemon cannot make one stop inspection consume the full CLI timeout
+# after only one second remains in the Controller stop budget.
+reset_case
+export KPL_DOCKER_TIMEOUT=30 KPL_CONTROLLER_STOP_TIMEOUT=1 KPL_TEST_SLOW_STOP_INSPECT=1
+reject remove
+no_stack_removal
+grep -q 'Cannot inspect task taskC' "$KPL_TEST_STATE/output"
+grep -q -- '-s TERM -k 5 1 docker inspect --type task .* taskC$' "$KPL_TEST_STATE/timeouts"
+if grep -q '^exclude-\|^unlabel-' "$KPL_TEST_STATE/events"; then exit 1; fi
 
 # Only never-assigned new/pending/allocated/shutdown tasks are safe to skip. An unknown
 # process assignment or state must prevent proceeding to Agent shutdown.

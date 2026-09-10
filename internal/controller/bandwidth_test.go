@@ -155,7 +155,7 @@ func TestBandwidthPrometheusCountersFreshnessAndDeletion(t *testing.T) {
 	if got := read("kpl_p2p_stream_bits_per_second"); len(got) != 2 {
 		t.Fatalf("stale session fabricated current rate: %v", got)
 	}
-	if got := read("kpl_p2p_stream_bytes_total"); len(got) != 4 {
+	if got := read("kpl_p2p_stream_bytes_total"); !reflect.DeepEqual(got, []float64{110, 220}) {
 		t.Fatalf("stale counters disappeared: %v", got)
 	}
 	e = bandwidthEvent("s", 2, 10, 300, 500, true)

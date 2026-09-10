@@ -24,7 +24,7 @@ func TestControllerShutdownWaitsForCleanupAndFinalState(t *testing.T) {
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(releaseCleanup) }) }
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
+		if r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/runs/") {
 			close(cleanupEntered)
 			<-releaseCleanup
 			w.WriteHeader(http.StatusNoContent)

@@ -61,12 +61,12 @@ API는 기존 분석 응답에 `bandwidthTimeline`, `bandwidthBinSeconds`를 추
 | `kpl_p2p_protocol_stream_bytes_total` | Counter / `direction`, `protocol` |
 | `kpl_p2p_stream_bits_per_second` | Gauge / `direction` |
 | `kpl_p2p_protocol_stream_bits_per_second` | Gauge / `direction`, `protocol` |
-| `kpl_p2p_bandwidth_sample_timestamp_seconds` | Gauge / 최근 소스 표본 시각 |
-| `kpl_p2p_bandwidth_session_final` | Gauge / 종료 표본이면 1 |
+| `kpl_p2p_bandwidth_sample_timestamp_seconds` | Gauge / 그룹의 가장 최근 소스 표본 시각 |
+| `kpl_p2p_bandwidth_sessions` | Gauge / `state` (`open`, `final`)별 세션 수 |
 
-공통 라벨은 `run_id`, `agent_id`, `node_id`, `session_id`입니다. topic 귀속은 제공하지 않습니다. 하나의 GossipSub RPC/스트림에 여러 topic과 topic 없는 control 데이터가 섞일 수 있기 때문입니다.
+공통 라벨은 `run_id`, `agent_id`입니다. 내보내기 전에 세션별 누적량과 유효 전송률을 합산하여 Peer 교체가 Prometheus 시계열을 계속 늘리지 않도록 합니다. 노드·세션 상세 정보는 원본 로그와 저장 분석에 유지됩니다. topic 귀속은 제공하지 않습니다. 하나의 GossipSub RPC/스트림에 여러 topic과 topic 없는 control 데이터가 섞일 수 있기 때문입니다.
 
-Grafana의 **P2P stream bandwidth** 영역은 전체/프로토콜별 사용률, 누적량, 종료 표본 대기 세션 수를 표시합니다. Run/Agent 필터를 사용하며 Topic 필터는 적용하지 않습니다. 전송률 Gauge는 마지막 **소스 수집 간격**의 평균이므로 `rate()`를 다시 씌우지 않습니다. 비종료 소스 표본의 시각이 Controller 시각보다 15초 넘게 과거이거나 미래이면 현재 전송률 시리즈를 생략합니다. 종료 표본을 받은 세션은 현재 사용률 0을 내보냅니다. 누적 카운터는 유지합니다. 여러 실행 선택 시 범례로 실행을 구분합니다.
+Grafana의 **P2P stream bandwidth** 영역은 전체/프로토콜별 사용률, 누적량, 종료 표본 대기 세션 수를 표시합니다. Run/Agent 필터를 사용하며 Topic 필터는 적용하지 않습니다. 전송률 Gauge는 마지막 **소스 수집 간격**의 평균이므로 `rate()`를 다시 씌우지 않습니다. 비종료 소스 표본의 시각이 Controller 시각보다 15초 넘게 과거이거나 미래이면 집계 전송률에서 해당 세션을 제외합니다. 종료 표본을 받은 세션은 현재 사용률 0으로 합산합니다. 유효한 표본이나 종료된 세션이 하나도 없는 그룹은 전송률을 생략하며, 누적 카운터에는 종료된 세션의 바이트도 유지합니다. 여러 실행 선택 시 범례로 실행을 구분합니다.
 
 실시간 메모리 지표는 현재 Controller 실행 중 받은 세션에 대한 값입니다. Controller 재시작 시 과거 모든 로그를 자동으로 Prometheus 메모리에 적재하지 않습니다. 기존 Prometheus 저장 이력은 그 서버의 보존 정책을 따르며, 저장 결과 화면/ZIP이 재시작 후 전체 실험을 복원하는 경로입니다. 새 누적 샘플이 들어오면 해당 Peer 세션의 이전 바이트도 즉시 복구됩니다. 짧은 실험이 Prometheus scrape 사이에 끝나도 최종 누적량은 이후 scrape에 잡힐 수 있지만, 중간 전송률 파형은 저장 결과 분석에서 확인해야 합니다.
 

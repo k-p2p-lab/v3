@@ -76,7 +76,7 @@ func (c *runMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 		if runID == "" {
 			continue
 		}
-		result, samples := accumulator.summarize(runID, asOf)
+		result, samples := accumulator.liveSummary(runID, asOf)
 		definitions[runID] = result.Definition
 		metrics = append(metrics, result)
 		for _, sample := range samples {

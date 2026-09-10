@@ -18,7 +18,7 @@ services:
         published: ${KPL_HTTP_PORT:-8080}
         protocol: tcp
         mode: host
-    stop_grace_period: 7m
+    stop_grace_period: 10m
     deploy:
       labels:
         io.kpl.application: kp2plab-v3
@@ -102,7 +102,7 @@ services:
     configs:
       - {source: grafana-datasource, target: /etc/grafana/provisioning/datasources/prometheus.yaml}
       - {source: grafana-provider, target: /etc/grafana/provisioning/dashboards/kpl.yaml}
-      - {source: grafana-dashboard-bandwidth-v6, target: /var/lib/grafana/dashboards/kpl-experiments.json}
+      - {source: grafana-dashboard-bandwidth-v7, target: /var/lib/grafana/dashboards/kpl-experiments.json}
     volumes: [grafana-data:/var/lib/grafana]
     networks: [monitoring]
     ports:
@@ -134,5 +134,5 @@ configs:
     file: ./monitoring/grafana/provisioning/datasources/prometheus.yaml
   grafana-provider:
     file: ./monitoring/grafana/provisioning/dashboards/kpl.yaml
-  grafana-dashboard-bandwidth-v6:
+  grafana-dashboard-bandwidth-v7:
     file: ./monitoring/grafana/dashboards/kpl-experiments.json

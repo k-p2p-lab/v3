@@ -134,6 +134,10 @@ func (s *Server) waitRunContainers(ctx context.Context, runID string, generation
 func (s *Server) waitStopped(timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	return s.waitStoppedContext(ctx)
+}
+
+func (s *Server) waitStoppedContext(ctx context.Context) error {
 	s.mu.RLock()
 	pending := make([]*process, 0, len(s.processes))
 	for _, proc := range s.processes {

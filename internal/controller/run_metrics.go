@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/k-p2p-lab/v3/internal/model"
@@ -36,19 +37,29 @@ type messageMetric struct {
 // All access is protected by state.mu; deleting a result releases its index.
 type runMetricAccumulator struct {
 	research                         *researchAccumulator
-	seen                             map[string]struct{}
+	seen                             map[string]struct{} // Legacy, unsequenced event IDs only.
+	sequences                        map[measurementSessionKey]sequenceRanges
 	messages                         map[messageMetricKey]*messageMetric
 	control                          map[gossipSubControlKey]*model.GossipSubControlMetric
 	published, delivered, duplicates int
 	window                           sessionWindowAccumulator
 	bandwidth                        bandwidthAccumulator
 	onBandwidth                      func(bandwidthInterval)
+	// The state read lock permits concurrent dashboard/Prometheus readers.
+	summaryMu      sync.Mutex
+	revision       uint64
+	cachedRevision uint64
+	cachedAt       time.Time
+	cachedRun      string
+	cachedMetrics  model.Metrics
+	cachedSamples  []propagationSample
 }
 
 func newRunMetricAccumulator() *runMetricAccumulator {
 	return &runMetricAccumulator{
 		seen: make(map[string]struct{}), messages: make(map[messageMetricKey]*messageMetric),
-		control: make(map[gossipSubControlKey]*model.GossipSubControlMetric),
+		control:   make(map[gossipSubControlKey]*model.GossipSubControlMetric),
+		sequences: make(map[measurementSessionKey]sequenceRanges),
 	}
 }
 
@@ -65,6 +76,9 @@ func eventIdentity(event model.TraceEvent) string {
 }
 
 func (a *runMetricAccumulator) hasEvent(event model.TraceEvent) bool {
+	if event.SessionID != "" && event.Sequence > 0 {
+		return a.sequences[measurementSessionKey{event.NodeID, event.SessionID}].through(event.Sequence) != 0
+	}
 	id := eventIdentity(event)
 	_, exists := a.seen[id]
 	return id != "" && exists
@@ -76,9 +90,15 @@ func (a *runMetricAccumulator) observe(event model.TraceEvent) bool {
 	if a.hasEvent(event) {
 		return false
 	}
-	if id := eventIdentity(event); id != "" {
+	if event.SessionID != "" && event.Sequence > 0 {
+		key := measurementSessionKey{event.NodeID, event.SessionID}
+		ranges := a.sequences[key]
+		ranges.add(event.Sequence)
+		a.sequences[key] = ranges
+	} else if id := eventIdentity(event); id != "" {
 		a.seen[id] = struct{}{}
 	}
+	a.revision++
 	if a.research != nil {
 		a.research.observe(event)
 	}
@@ -210,6 +230,22 @@ type propagationSample struct {
 func (a *runMetricAccumulator) summarize(runID string, asOf ...time.Time) (model.Metrics, []propagationSample) {
 	metrics, samples, _ := a.summarizeContext(context.Background(), runID, asOf...)
 	return metrics, samples
+}
+
+// liveSummary shares expensive whole-run reconstruction between monitoring
+// readers. Offline exports still call summarizeContext for exact, uncached data.
+// A settled, unchanged run can reuse its result indefinitely; pending delivery
+// deadlines must be reevaluated as wall time advances, even with no new events.
+func (a *runMetricAccumulator) liveSummary(runID string, now time.Time) (model.Metrics, []propagationSample) {
+	a.summaryMu.Lock()
+	defer a.summaryMu.Unlock()
+	if !a.cachedAt.IsZero() && a.cachedRun == runID && !now.Before(a.cachedAt) &&
+		a.cachedRevision == a.revision && (now.Sub(a.cachedAt) < snapshotInterval || a.cachedMetrics.PendingPublications == 0) {
+		return a.cachedMetrics, a.cachedSamples
+	}
+	a.cachedMetrics, a.cachedSamples = a.summarize(runID, now)
+	a.cachedRevision, a.cachedAt, a.cachedRun = a.revision, now, runID
+	return a.cachedMetrics, a.cachedSamples
 }
 
 func (a *runMetricAccumulator) summarizeContext(ctx context.Context, runID string, asOf ...time.Time) (model.Metrics, []propagationSample, error) {

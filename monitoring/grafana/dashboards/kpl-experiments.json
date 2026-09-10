@@ -3732,7 +3732,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (run_id) (1 - kpl_p2p_bandwidth_session_final{run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\"})",
+          "expr": "sum by (run_id) (kpl_p2p_bandwidth_sessions{state=\"open\",run_id=~\"${run_id:regex}\",agent_id=~\"${agent:regex}\"})",
           "legendFormat": "{{run_id}}",
           "range": true,
           "instant": false,
