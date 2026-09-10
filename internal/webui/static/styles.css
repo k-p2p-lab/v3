@@ -406,7 +406,7 @@ dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
 
 
 
-.result-images-button { min-height: 2rem; padding: .3rem .65rem; border: 1px solid var(--line); border-radius: .4rem; color: var(--cyan); background: var(--surface-raised); font-size: .8rem; }
+.result-images-button { width: 10.5rem; flex-shrink: 0; font-variant-numeric: tabular-nums; min-height: 2rem; padding: .3rem .65rem; border: 1px solid var(--line); border-radius: .4rem; color: var(--cyan); background: var(--surface-raised); font-size: .8rem; }
 .result-images-dialog { width: min(76rem, calc(100% - 2rem)); }
 .result-images-shell { padding: 1.4rem; }
 .result-images-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: start; justify-content: space-between; gap: 1rem; padding: .5rem 0; background: var(--surface-raised); }
@@ -438,3 +438,12 @@ dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
 .research-table-wrap { max-height: 22rem; overflow: auto; margin: .8rem 0; }
 .research-table-wrap input:not([type=checkbox]) { min-width: 10rem; }
 .result-image figcaption { flex-wrap: wrap; }
+
+.saved-batches { display: grid; gap: .65rem; padding: 0 1.2rem 1rem; }
+.saved-batch { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .8rem; border: 1px solid var(--line); border-radius: .5rem; }
+.saved-batch > div { min-width: 0; overflow-wrap: anywhere; }
+.batch-images-button { width: 13rem; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.batch-analysis-summary { margin: 1rem 0; }
+.batch-analysis-summary summary { cursor: pointer; color: var(--cyan); }
+.batch-analysis-summary .table-wrap { max-height: 24rem; overflow: auto; }
+@media (max-width: 600px) { .saved-batch { flex-direction: column; align-items: stretch; } .batch-images-button { align-self: flex-start; } }

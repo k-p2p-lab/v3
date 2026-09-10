@@ -30,7 +30,8 @@ function element(value = '') {
     setAttribute(name, next) { this.attributes[name] = String(next); },
     getAttribute(name) { return this.attributes[name] ?? null; },
     focus() { this.focused = true; },
-    close(value) { this.closedWith = value ?? ''; },
+    showModal() { this.open = true; },
+    close(value) { this.open = false; this.closedWith = value ?? ''; },
     getBoundingClientRect() { return { height: this.boxHeight }; },
   };
 }
@@ -57,6 +58,7 @@ function fixture(fetch) {
   elements.set('.events-panel', element());
   elements.get('#scenarioText').value = 'version: 1\nname: current\n';
   elements.get('#runRepetitions').value = '1';
+  elements.get('#scenarioDialog').open = true;
   const closes = [element(), element()];
   const actions = new Map();
   const addAction = (attribute, id) => {
@@ -79,6 +81,7 @@ function fixture(fetch) {
     pendingScenarioDeleteId: null,
     scenarioLoadVersion: 0,
     scenarioSubmitting: false,
+    scenarioEditorVersion: 0,
     scenarioValidating: false,
     scenarioValidation: null,
     scenarioValidationVersion: 0,
@@ -293,7 +296,7 @@ test('repeated save clicks share one in-flight mutation', async () => {
   assert.equal(state.savedScenarios.length, 1);
 });
 
-test('running holds the common operation lock and disables every conflicting control', async () => {
+test('submitting locks conflicting controls but allows closing and reopening the editor', async () => {
   let calls = 0;
   let release;
   const pending = new Promise((resolve) => { release = resolve; });
@@ -312,7 +315,7 @@ test('running holds the common operation lock and disables every conflicting con
   for (const id of ['#scenarioName', '#scenarioText', '#apiToken', '#runRepetitions', '#runScenario', '#saveScenario', '#refreshScenarios', '#newScenario']) {
     assert.equal(elements.get(id).disabled, true, `${id} remained enabled`);
   }
-  assert.ok(closes.every((button) => button.disabled));
+  assert.ok(closes.every((button) => !button.disabled));
   await Promise.all([
     api.refreshSavedScenarios(),
     api.saveEditedScenario(false),
@@ -322,12 +325,16 @@ test('running holds the common operation lock and disables every conflicting con
   api.requestScenarioDeletion('saved');
   api.closeScenarioEditor();
   assert.equal(calls, 1);
-  assert.equal(elements.get('#scenarioDialog').closedWith, undefined);
+  assert.equal(elements.get('#scenarioDialog').open, false);
+  assert.equal(elements.get('#scenarioDialog').closedWith, 'cancel');
+  api.openScenarioEditor();
+  assert.equal(elements.get('#scenarioDialog').open, true);
+  assert.equal(calls, 1, 'reopening must not send a conflicting request');
 
   release();
   await run;
   assert.equal(state.scenarioSubmitting, false);
-  assert.equal(elements.get('#scenarioDialog').closedWith, '');
+  assert.equal(elements.get('#scenarioDialog').open, true, 'late submission must not close the reopened editor');
   assert.equal(elements.get('#runScenario').disabled, false);
   assert.ok(closes.every((button) => !button.disabled));
 });
@@ -573,4 +580,27 @@ test('validation handles blank input, server failures, malformed responses, and 
   assert.equal(timed.state.scenarioValidation.kind, 'error');
   assert.match(timed.elements.get('#scenarioValidationMessage').textContent, /timed out/);
   assert.equal(timed.elements.get('#validateScenario').disabled, false);
+});
+
+test('the editor closes immediately during a slow scenario list request', async () => {
+  let release;
+  const { api, state, elements, closes } = fixture(() => new Promise((resolve) => { release = resolve; }));
+  const refreshing = api.refreshSavedScenarios();
+  assert.equal(state.scenariosLoading, true);
+  assert.ok(closes.every((button) => !button.disabled));
+  api.closeScenarioEditor();
+  assert.equal(elements.get('#scenarioDialog').open, false);
+  assert.equal(state.scenariosLoading, true, 'closing must not cancel the pending operation');
+  release(response([]));
+  await refreshing;
+  assert.equal(state.scenariosLoading, false);
+  assert.equal(elements.get('#scenarioDialog').open, false);
+});
+
+test('a successful submission closes the original editor normally', async () => {
+  const { api, state, elements } = fixture(async () => response({ id: 'run-one', name: 'Scenario' }));
+  await api.submitScenarioRun();
+  assert.equal(elements.get('#scenarioDialog').open, false);
+  assert.equal(elements.get('#scenarioDialog').closedWith, '');
+  assert.equal(state.scenarioSubmitting, false);
 });

@@ -30,18 +30,19 @@ var (
 )
 
 type savedResult struct {
-	Analysis               *analysisJobStatus `json:"analysis,omitempty"`
-	ID                     string             `json:"id"`
-	Name                   string             `json:"name"`
-	State                  string             `json:"state"`
-	StartedAt              time.Time          `json:"startedAt"`
-	FinishedAt             time.Time          `json:"finishedAt"`
-	Active                 bool               `json:"active"`
-	BatchID                string             `json:"batchId,omitempty"`
-	Iteration              int                `json:"iteration,omitempty"`
-	Repetitions            int                `json:"repetitions,omitempty"`
-	DownloadBytes          *int64             `json:"downloadBytes,omitempty"`
-	DownloadSizeMaxAgeMS   *int64             `json:"downloadSizeMaxAgeMs,omitempty"`
+	BatchAnalysis          *batchAnalysisStatus `json:"batchAnalysis,omitempty"`
+	Analysis               *analysisJobStatus   `json:"analysis,omitempty"`
+	ID                     string               `json:"id"`
+	Name                   string               `json:"name"`
+	State                  string               `json:"state"`
+	StartedAt              time.Time            `json:"startedAt"`
+	FinishedAt             time.Time            `json:"finishedAt"`
+	Active                 bool                 `json:"active"`
+	BatchID                string               `json:"batchId,omitempty"`
+	Iteration              int                  `json:"iteration,omitempty"`
+	Repetitions            int                  `json:"repetitions,omitempty"`
+	DownloadBytes          *int64               `json:"downloadBytes,omitempty"`
+	DownloadSizeMaxAgeMS   *int64               `json:"downloadSizeMaxAgeMs,omitempty"`
 	storedState            string
 	downloadArchiveVersion resultArchiveVersion
 	downloadSizePending    bool
@@ -460,6 +461,31 @@ func (s *Server) handleResults(w http.ResponseWriter, r *http.Request) {
 		}
 		return results[i].StartedAt.After(results[j].StartedAt)
 	})
+	batchMembers := map[string][]savedResult{}
+	for _, result := range results {
+		if result.BatchID != "" {
+			batchMembers[result.BatchID] = append(batchMembers[result.BatchID], result)
+		}
+	}
+	batchStatuses := map[string]*batchAnalysisStatus{}
+	for i := range results {
+		id := results[i].BatchID
+		if id == "" || results[i].Repetitions < 2 {
+			continue
+		}
+		status, exists := batchStatuses[id]
+		if !exists {
+			job, err := s.batchAnalysisStatus(id)
+			if err == nil && job.State != "idle" {
+				if job.State == "completed" && job.Membership != batchMembership(batchMembers[id]) {
+					job.State = "idle"
+				}
+				status = &job
+			}
+			batchStatuses[id] = status
+		}
+		results[i].BatchAnalysis = status
+	}
 	s.extendPendingResultArchiveCache(results, time.Now().UTC())
 	writeJSON(w, http.StatusOK, results)
 }

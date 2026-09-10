@@ -6,7 +6,7 @@ const state = {
   savedScenarios: null, scenariosLoading: false, scenariosError: "", scenarioActionError: "",
   selectedScenarioId: null, scenarioLoadingId: null, scenarioSaving: false,
   scenarioValidating: false, scenarioValidation: null, scenarioValidationVersion: 0,
-  scenarioDeletingId: null, pendingScenarioDeleteId: null, scenarioLoadVersion: 0, scenarioSubmitting: false,
+  scenarioDeletingId: null, pendingScenarioDeleteId: null, scenarioLoadVersion: 0, scenarioSubmitting: false, scenarioEditorVersion: 0,
   resultSizeInflight: new Set(), resultSizeQueue: [], resultSizeActive: 0, resultSizeUnavailable: new Set(),
   resultSizeExpiryTimer: null, resultSizeExpiryAt: 0, resultSizeControllers: new Map(),
   agentNumbers: loadAgentNumbers(),
@@ -830,7 +830,6 @@ function renderSavedScenarios() {
       <div class="scenario-item-actions">${controls}</div>
     </li>`;
   }).join("");
-  for (const close of document.querySelectorAll("[data-scenario-close]")) close.disabled = busy;
 }
 
 async function refreshSavedScenarios() {
@@ -1033,27 +1032,61 @@ async function refreshSavedResults() {
     if (state.resultsRefreshPending) {
       state.resultsRefreshPending = false;
       refreshSavedResults();
-    } else if (refreshed && (state.savedResults || []).some(run => ["queued", "running"].includes(run.analysis?.state))) {
+    } else if (refreshed && (state.savedResults || []).some(run => ["queued", "running"].includes(run.analysis?.state) || ["queued", "running"].includes(run.batchAnalysis?.state))) {
       state.resultsRefreshTimer = setTimeout(refreshSavedResults, 3000);
     }
   }
 }
 
+function savedResultBatches(results) {
+  const groups = new Map();
+  for (const run of results) {
+    if (!run.batchId || !(run.repetitions > 1)) continue;
+    if (!groups.has(run.batchId)) groups.set(run.batchId, { id: run.batchId, name: run.name || run.batchId, runs: [], expected: run.repetitions });
+    const batch = groups.get(run.batchId);
+    batch.runs.push(run);
+    batch.expected = Math.max(batch.expected, run.repetitions);
+  }
+  return [...groups.values()].map(batch => ({ ...batch,
+    completed: batch.runs.filter(run => run.state === "completed").length,
+    active: batch.runs.some(isPendingRun),
+    job: batch.runs.find(run => run.batchAnalysis)?.batchAnalysis,
+  }));
+}
+
+function renderSavedBatches(results) {
+  const list = $("#savedBatchList");
+  if (!list) return;
+  const batches = savedResultBatches(results);
+  list.hidden = !batches.length;
+  setHTML(list, batches.map(batch => {
+    const job = batch.job;
+    const label = ["queued", "running"].includes(job?.state) ? `Batch mean · ${job.state === "queued" ? "Queued" : `${Math.floor(job.progress || 0)}%`}`
+      : job?.state === "completed" ? "Batch mean · Ready" : ["failed", "interrupted"].includes(job?.state) ? "Batch mean · Retry" : "Analyze batch mean";
+    const excluded = batch.runs.length - batch.completed;
+    const missing = Math.max(0, batch.expected - batch.runs.length);
+    const hint = batch.active ? "Available after all runs in this batch stop." : batch.completed < 2 ? "At least two completed runs are required." : "Analyze completed runs with equal weight; individual Images remain available below.";
+    return `<article class="saved-batch"><div><strong>${escapeHTML(batch.name)}</strong><span class="result-id">Batch ${escapeHTML(batch.id)}</span><span class="result-id">${batch.completed} / ${batch.expected} completed · ${batch.active ? "Batch still running" : `${excluded} excluded · ${missing} missing/unreadable`}</span></div><button type="button" class="secondary-button batch-images-button" data-batch-images="${escapeHTML(batch.id)}" title="${escapeHTML(hint)}" aria-label="${escapeHTML(`Analyze batch mean: ${batch.name}`)}" ${batch.active || batch.completed < 2 ? "disabled" : ""}>${label}</button></article>`;
+  }).join(""));
+}
+
 function renderSavedResults() {
   const results = state.savedResults || [];
+  renderSavedBatches(results);
   const status = $("#savedResultsStatus");
   const refresh = $("#refreshResults");
   refresh.disabled = state.resultsLoading;
-  refresh.textContent = state.resultsLoading ? "Refreshing…" : "Refresh";
+  setText(refresh, "Refresh");
+  refresh.setAttribute("aria-busy", String(state.resultsLoading));
   $("#savedResultsTable").setAttribute("aria-busy", String(state.resultsLoading));
   status.classList.toggle("error", Boolean(state.resultsError));
   status.setAttribute("role", state.resultsError ? "alert" : "status");
-  status.textContent = state.resultsLoading ? "Loading saved results…"
+  setText(status, state.resultsLoading && state.savedResults === null ? "Loading saved results…"
     : state.resultsError ? `Could not load saved results: ${state.resultsError} Use Refresh to try again.${results.length ? " Showing the last loaded list." : ""}`
-    : results.length ? "" : "No saved results yet.";
+    : results.length ? "" : "No saved results yet.");
   status.hidden = !status.textContent;
   $("#savedResultsTable").hidden = results.length === 0;
-  $("#savedResultsRows").innerHTML = results.map((run) => {
+  setHTML($("#savedResultsRows"), results.map((run) => {
     const stateHint = run.state === "interrupted" ? "Saved by a previous Controller; this run was not resumed."
       : run.state === "unreadable" ? "Saved metadata could not be read." : run.state;
     return `<tr>
@@ -1063,7 +1096,7 @@ function renderSavedResults() {
       <td>${escapeHTML(formatResultTime(run.finishedAt))}</td>
       <td><div class="result-actions">${resultImagesButton(run)}${resultDownloadLink(run)}${resultDownloadSize(run)}<button class="delete-result-button" type="button" data-delete-result="${escapeHTML(run.id)}" aria-label="${escapeHTML(`Delete saved result: ${run.name || run.id}`)}" title="${resultLocked(run) ? "Available after this run and its batch have stopped." : "Delete this run's saved result."}" ${resultLocked(run) || state.deletingResultId ? "disabled" : ""}>${state.deletingResultId === run.id ? "Deleting…" : "Delete"}</button></div></td>
     </tr>`;
-  }).join("");
+  }).join(""));
 }
 
 function requestResultDeletion(id) {
@@ -1560,6 +1593,7 @@ async function submitScenarioRun() {
     return;
   }
   saveToken($("#apiToken").value);
+  const editorVersion = state.scenarioEditorVersion;
   state.scenarioSubmitting = true;
   state.pendingScenarioDeleteId = null;
   state.scenarioActionError = "";
@@ -1571,7 +1605,7 @@ async function submitScenarioRun() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scenario: $("#scenarioText").value, repetitions }),
     }, "run");
-    $("#scenarioDialog").close();
+    if (state.scenarioEditorVersion === editorVersion && $("#scenarioDialog").open) $("#scenarioDialog").close();
     showToast(repetitions > 1 ? `Queued ${repetitions} runs: ${run.name}.` : `Submitted experiment: ${run.name}.`);
   } catch (caught) {
     error.textContent = caught.message;
@@ -1581,8 +1615,15 @@ async function submitScenarioRun() {
   }
 }
 
+function openScenarioEditor() {
+  state.scenarioEditorVersion++;
+  $("#scenarioDialog").showModal();
+  renderSavedScenarios();
+  refreshSavedScenarios();
+}
+
 function closeScenarioEditor() {
-  if (!scenarioOperationBusy()) $("#scenarioDialog").close("cancel");
+  $("#scenarioDialog").close("cancel");
 }
 
 function handleScenarioNameKeydown(event) {
@@ -1601,11 +1642,7 @@ function showToast(message) {
 $("#scenarioText").value = defaultScenario;
 $("#apiToken").value = token();
 $("#refreshResults").addEventListener("click", refreshSavedResults);
-$("#openScenario").addEventListener("click", () => {
-  $("#scenarioDialog").showModal();
-  renderSavedScenarios();
-  refreshSavedScenarios();
-});
+$("#openScenario").addEventListener("click", openScenarioEditor);
 $("#refreshScenarios").addEventListener("click", refreshSavedScenarios);
 $("#newScenario").addEventListener("click", startNewScenario);
 $("#saveScenario").addEventListener("click", () => saveEditedScenario(false));
@@ -1618,6 +1655,11 @@ $("#scenarioForm").addEventListener("submit", (event) => event.preventDefault())
 for (const close of document.querySelectorAll("[data-scenario-close]")) close.addEventListener("click", closeScenarioEditor);
 
 document.addEventListener("click", async (event) => {
+  const batchImagesButton = event.target.closest("[data-batch-images]");
+  if (batchImagesButton) {
+    if (!batchImagesButton.disabled) globalThis.KPLResultImages?.openBatch(batchImagesButton.dataset.batchImages);
+    return;
+  }
   const loadScenarioButton = event.target.closest("[data-load-scenario]");
   if (loadScenarioButton) {
     if (!loadScenarioButton.disabled) loadSavedScenario(loadScenarioButton.dataset.loadScenario);
@@ -1669,9 +1711,6 @@ document.addEventListener("click", async (event) => {
 });
 
 $("#confirmDeleteResult").addEventListener("click", confirmResultDeletion);
-$("#scenarioDialog").addEventListener("cancel", (event) => {
-  if (scenarioOperationBusy()) event.preventDefault();
-});
 $("#scenarioDialog").addEventListener("close", () => {
   if (!state.scenarioDeletingId) state.pendingScenarioDeleteId = null;
 });
@@ -1687,7 +1726,10 @@ $("#deleteResultDialog").addEventListener("close", () => {
 
 globalThis.KPLResultImages?.init({ api, saveToken, onJob: job => {
   const run = (state.savedResults || []).find(run => run.id === job.runId);
-  if (run) { run.analysis = job; renderSavedResults(); }
+  if (job.batchId) {
+    for (const member of state.savedResults || []) if (member.batchId === job.batchId) member.batchAnalysis = job;
+    renderSavedResults();
+  } else if (run) { run.analysis = job; renderSavedResults(); }
   if (!state.resultsRefreshTimer && !state.resultsLoading) state.resultsRefreshTimer = setTimeout(refreshSavedResults, 3000);
 } });
 setupTopologyControls();

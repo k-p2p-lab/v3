@@ -93,6 +93,8 @@ The three server analysis files are not included in **Download results** ZIPs. U
 
 Completed analysis survives Controller restart in the data volume. A new attempt replaces the current cache; download it first if an older analysis boundary must be retained. Accepted server calculations continue after closing the browser; image conversion and comparison calculations run when the view is reopened/recreated. A browser download is not a server-rendered image archive. Failed/interrupted/canceled jobs can be retried, as defined in the [background API](api.md#background-analysis). Deleting an eligible saved run removes these analysis files with its source records.
 
+Repetition **Analyze batch mean** jobs are stored separately in `<data-dir>/batch-analyses/{batchId}/job.json` and `result.json`. Their artifacts contain equal-run means, sample SDs, valid counts and compact inputs for reproducing overview charts. Individual-source deletion leaves an existing batch snapshot on disk; reanalysis after membership changes replaces the current batch files. Download analysis JSON or the mean PNG/CSV ZIP, and include both `runs` and `batch-analyses` in server backups. See [batch means](visualization.md#batch-mean-for-repetitions-of-one-experiment) for eligibility, exclusions and sample-count semantics.
+
 ## Metric definitions
 
 | Metric | Meaning |

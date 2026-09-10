@@ -52,6 +52,7 @@ type Server struct {
 	analysisSlots          chan struct{}
 	analysisJobMu          sync.Mutex
 	analysisJobs           map[string]*analysisJob
+	batchAnalysisJobs      map[string]*batchAnalysisJob
 	analysisWorkers        sync.WaitGroup
 	scenarioMu             sync.Mutex
 	scenarioCacheMu        sync.Mutex
@@ -87,6 +88,7 @@ func New(config ServerConfig, logger *slog.Logger) *Server {
 		resultArchiveSlots:     make(chan struct{}, resultArchiveMeasureLimit),
 		analysisSlots:          make(chan struct{}, 1),
 		analysisJobs:           make(map[string]*analysisJob),
+		batchAnalysisJobs:      make(map[string]*batchAnalysisJob),
 		scenarioSummaries:      make(map[string][]scenarioSummaryCacheEntry),
 		scenarioSummaryFlights: make(map[string][]*scenarioSummaryFlight),
 		scenarioRecordCheck: func(data []byte) error {

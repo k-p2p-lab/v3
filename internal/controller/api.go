@@ -127,6 +127,7 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 	mux.HandleFunc("/api/v1/results/", s.handleResultAction)
 	mux.HandleFunc("/api/v1/experiments/", s.handleExperimentAction)
 	mux.HandleFunc("/api/v1/analysis-jobs/", s.handleAnalysisJob(ctx))
+	mux.HandleFunc("/api/v1/batch-analysis-jobs/", s.handleBatchAnalysis(ctx))
 	mux.HandleFunc("/api/v1/stream", s.handleStream)
 	mux.Handle("/", http.FileServer(http.FS(webui.FS())))
 	return s.withMiddleware(mux)

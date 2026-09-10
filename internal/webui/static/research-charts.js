@@ -123,7 +123,7 @@
     }));
   }
   function graphPoints(a, protocol, group, key) {
-    const origin = Date.parse(a.observations?.[0]?.at);
+    const origin = Date.parse(a.timeOrigin || a.observations?.[0]?.at);
     return (a.observations || []).map((o) => {
       const l = o.groups
         ?.find((g) => g.group === group)
@@ -140,13 +140,14 @@
     });
   }
   function messageSeries(a, key) {
+    if (a.research?.overview) return a.research.overview.messageSeries?.[key] || [];
     const rows = (a.research?.messages || [])
       .filter(
         (m) => finite(m.metrics?.[key]?.average) && finite(Date.parse(m.at)),
       )
       .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
     if (!rows.length) return [];
-    const origin = Date.parse(rows[0].at),
+    const origin = Date.parse(a.timeOrigin || rows[0].at),
       chunk = Math.max(1, Math.ceil(rows.length / 360)),
       points = [];
     for (let i = 0; i < rows.length; i += chunk) {
@@ -164,7 +165,7 @@
   function controlPoints(a, key) {
     const bins = a.research?.controls || [],
       width = a.research?.controlBinSeconds || 5,
-      origin = Date.parse(bins[0]?.at),
+      origin = Date.parse(a.timeOrigin || bins[0]?.at),
       points = [];
     let end = 0;
     for (const b of bins) {
@@ -338,7 +339,7 @@
           note: "One point per message; large sets are grouped into at most 360 points. FRT bars show population SD within a message; grouped points show between-message sample SD. Eager/lazy counts are estimates; unknown_count reports unclassified receipts.",
         },
       );
-    const origins = { eager: 0, lazy: 0, unknown: 0 };
+    const origins = r.overview?.originCounts || { eager: 0, lazy: 0, unknown: 0 };
     for (const message of r.messages || [])
       for (const node of message.nodes || [])
         origins[node.source in origins ? node.source : "unknown"]++;
@@ -379,10 +380,10 @@
       [
         "mean-receivers-time",
         "Mean receiver count over time",
-        timeCurves,
+        r.overview ? [r.overview.receiversTime] : timeCurves,
         "Time since publication (s)",
       ],
-      ["mean-receivers-hop", "Mean receiver count over hop", hopCurves, "Hop"],
+      ["mean-receivers-hop", "Mean receiver count over hop", r.overview ? [r.overview.receiversHop] : hopCurves, "Hop"],
     ])
       add(
         id,
@@ -396,8 +397,8 @@
         },
       );
     for (const [id, curves, xLabel] of [
-      ["time", timeCurves, "Time since publication (s)"],
-      ["hop", hopCurves, "Hop"],
+      ["time", r.overview ? [r.overview.receiversTime] : timeCurves, "Time since publication (s)"],
+      ["hop", r.overview ? [r.overview.receiversHop] : hopCurves, "Hop"],
     ]) {
       const cumulative = averageCurves(curves);
       let previous = 0;
@@ -501,7 +502,7 @@
           xTicks: ["IHAVE", "IWANT", "IDONTWANT", "GRAFT", "PRUNE"],
         },
       );
-    const origin = Date.parse(a.observations?.[0]?.at),
+    const origin = Date.parse(a.timeOrigin || a.observations?.[0]?.at),
       observed = (read) =>
         groups.map((group) => ({
           name: group || "All peers",

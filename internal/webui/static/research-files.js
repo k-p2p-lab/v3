@@ -308,7 +308,7 @@
   function chartCSV(chart) {
     const quote = (v) => '"' + String(v ?? "").replace(/"/g, '""') + '"',
       rows = [
-        ["panel", "series", "x", "y", "y_sd", "x_sd", "color_value", "label"],
+        ["panel", "series", "x", "y", "y_sd", "x_sd", "color_value", "label", "n"],
       ];
     for (const panel of chart.panels || [chart])
       for (const s of panel.series || [])
@@ -322,6 +322,7 @@
             p.xError,
             p.colorValue,
             p.label,
+            p.n,
           ]);
     if (chart.tree) {
       rows.push([

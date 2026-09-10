@@ -45,6 +45,7 @@ type researchControlBin struct {
 }
 
 type researchAnalysis struct {
+	Overview            *researchOverview            `json:"overview,omitempty"`
 	OriginMethod        string                       `json:"originMethod"`
 	OriginWindowSeconds float64                      `json:"originWindowSeconds"`
 	MessageCount        int                          `json:"messageCount"`

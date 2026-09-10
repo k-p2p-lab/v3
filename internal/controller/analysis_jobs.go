@@ -181,6 +181,11 @@ func (s *Server) startAnalysisJob(ctx context.Context, id string, refresh bool) 
 			count++
 		}
 	}
+	for _, job := range s.batchAnalysisJobs {
+		if job.status.State == "queued" || job.status.State == "running" {
+			count++
+		}
+	}
 	if count >= analysisJobLimit {
 		return analysisJobStatus{}, errAnalysisQueueFull
 	}

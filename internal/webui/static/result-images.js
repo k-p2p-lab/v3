@@ -9,6 +9,7 @@
     typeof module !== "undefined" && module.exports
       ? require("./research-files.js")
       : root.KPLResearchFiles;
+  const batch = typeof module !== "undefined" && module.exports ? require("./batch-analysis.js") : root.KPLBatchAnalysis;
   const colors = [
     "#2563eb",
     "#c45c10",
@@ -85,7 +86,7 @@
       .filter((bin) => Number.isFinite(Date.parse(bin.at)))
       .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
     if (!bins.length) return [];
-    const origin = Date.parse(bins[0].at);
+    const origin = Date.parse(analysis.timeOrigin || bins[0].at);
     const points = [];
     let end = 0;
     for (const bin of bins) {
@@ -105,7 +106,7 @@
     const width = analysis.bandwidthBinSeconds;
     const bins = analysis.bandwidthTimeline || [];
     if (!(width > 0) || !bins.length) return [];
-    const origin = Date.parse(bins[0].at),
+    const origin = Date.parse(analysis.timeOrigin || bins[0].at),
       key = direction === "send" ? "sentBytes" : "receivedBytes";
     let total = 0,
       end = 0;
@@ -137,7 +138,7 @@
   function observationPoints(analysis, group, read) {
     const observations = analysis.observations || [];
     if (!observations.length) return [];
-    const origin = Date.parse(observations[0].at);
+    const origin = Date.parse(analysis.timeOrigin || observations[0].at);
     return observations.map((observation) => {
       const value = observation.groups?.find((item) => item.group === group);
       return {
@@ -643,6 +644,7 @@
     const $ = (id) => doc.querySelector(`#${id}`);
     const dialog = $("resultImagesDialog");
     let currentID = "",
+      currentBatch = false,
       controller = null,
       revision = 0,
       currentData = null,
@@ -706,6 +708,7 @@
         }
       }
       if (files && bundle.length && $("downloadAllResultImages")) {
+        if (extra?.summary) bundle.push({ name: `${id}-summary.csv`, data: batch.summaryCSV(extra.summary) });
         bundle.push({
           name: `${id}-chart-definitions.json`,
           data: JSON.stringify({ charts, ...(extra || {}) }),
@@ -780,16 +783,18 @@
         signal.removeEventListener("abort", abort);
       }
     }
-    async function open(id, { refresh = false, retry = false } = {}) {
-      if (!id || (currentID === id && controller)) return;
+    async function open(id, { refresh = false, retry = false, isBatch = false } = {}) {
+      if (!id || (currentID === id && currentBatch === isBatch && controller)) return;
       cancel();
       currentID = id;
+      currentBatch = isBatch;
+      if ($("batchAnalysisSummary")) $("batchAnalysisSummary").hidden = true;
       currentData = null;
       if ($("researchTools")) $("researchTools").hidden = true;
       const requestRevision = revision,
         view = new AbortController();
       controller = view;
-      const path = `/api/v1/analysis-jobs/${encodeURIComponent(id)}`;
+      const path = `/api/v1/${isBatch ? "batch-analysis-jobs" : "analysis-jobs"}/${encodeURIComponent(id)}`;
       $("resultImagesName").textContent = id;
       $("resultImagesDate").textContent = "";
       $("resultImagesProgress").hidden = true;
@@ -815,7 +820,7 @@
         while (true) {
           if (revision !== requestRevision) return;
           if (
-            job.runId !== id ||
+            (isBatch ? job.batchId : job.runId) !== id ||
             ![
               "queued",
               "running",
@@ -831,13 +836,12 @@
           onJob(job);
           $("resultImagesDate").textContent =
             `Requested ${timeLabel(job.createdAt)} · Snapshot ${timeLabel(job.snapshotAt)}`;
-          status(jobDescription(job));
+          status(isBatch && pendingJob(job) ? `${job.completedRuns || 0}/${job.totalRuns} runs complete · ${jobDescription(job)}` : jobDescription(job));
           const progress = $("resultImagesProgress");
           progress.hidden = !pendingJob(job);
           if (
             job.state === "running" &&
-            ["events.jsonl", "observations.jsonl"].includes(job.phase) &&
-            job.totalBytes > 0
+            (isBatch || ["events.jsonl", "observations.jsonl"].includes(job.phase) && job.totalBytes > 0)
           )
             progress.value = Math.max(0, Math.min(100, job.progress));
           else progress.removeAttribute("value");
@@ -853,20 +857,30 @@
         const resultPath = `${path}/result?jobId=${encodeURIComponent(job.id)}`;
         const download = $("downloadResultAnalysis");
         download.href = resultPath;
-        download.download = `${id}-analysis.json`;
+        download.download = `${id}${isBatch ? "-batch" : ""}-analysis.json`;
         download.hidden = false;
         $("refreshResultImages").hidden = false;
         const data = await request(resultPath, {}, view.signal);
-        validateResponse(data, id);
+        if (isBatch) batch.validate(data, id); else validateResponse(data, id);
         if (data.analysisId !== job.id)
           throw new Error("The saved analysis changed. Reopen this result.");
         if (revision !== requestRevision) return;
-        $("resultImagesName").textContent = data.result.name || id;
-        $("resultImagesDate").textContent =
-          `${data.result.state} · Snapshot ${timeLabel(data.asOf)}`;
-        currentData = data;
-        researchTools?.setData(data);
-        await prepareImages(buildCharts(data), id, view, requestRevision);
+        if (isBatch) {
+          $("resultImagesName").textContent = `${data.name || id} · Batch mean`;
+          $("resultImagesDate").textContent = `${batch.description(data)} · Computed ${timeLabel(data.asOf)}`;
+          const summary = $("batchAnalysisSummary");
+          if (summary) {
+            summary.hidden = false;
+            summary.innerHTML = `<summary>Mean metrics and contributing run counts</summary><p class="dialog-help">Equal run weight. Mean, between-run sample SD, and contributing runs (n). Missing evidence is excluded. P95 is the mean of each run's P95.</p><div class="table-wrap"><table><thead><tr><th>Metric</th><th>Mean</th><th>Sample SD</th><th>n / runs</th></tr></thead><tbody>${Object.entries(data.summary).sort(([a],[b]) => a.localeCompare(b)).map(([key, stat]) => `<tr><th scope="row">${escape(batch.label(key))}</th><td>${number(stat.average)}</td><td>${number(stat.deviation)}</td><td>${number(stat.count)} / ${data.runs.length}</td></tr>`).join("")}</tbody></table></div>`;
+          }
+          await prepareImages(batch.build(data, buildCharts), `${id}-batch-mean`, view, requestRevision, { summary: data.summary, batchId: id, aggregation: data.aggregation, includedRunIds: data.runs.map(a => a.result.id), excluded: data.excluded, missingRuns: data.missingRuns });
+        } else {
+          $("resultImagesName").textContent = data.result.name || id;
+          $("resultImagesDate").textContent = `${data.result.state} · Snapshot ${timeLabel(data.asOf)}`;
+          currentData = data;
+          researchTools?.setData(data);
+          await prepareImages(buildCharts(data), id, view, requestRevision);
+        }
       } catch (error) {
         if (revision === requestRevision) {
           status(
@@ -889,13 +903,14 @@
     $("retryResultImages").addEventListener("click", () => {
       if (!$("resultImagesAuth").hidden)
         saveToken($("resultImagesToken").value);
-      void open(currentID, { retry: true });
+      void open(currentID, { retry: true, isBatch: currentBatch });
     });
     $("refreshResultImages").addEventListener("click", () => {
-      void open(currentID, { refresh: true });
+      void open(currentID, { refresh: true, isBatch: currentBatch });
     });
     return {
       open,
+      openBatch: (id) => open(id, { isBatch: true }),
       remove: (id) => {
         if (currentID === id) {
           cancel();
@@ -921,6 +936,7 @@
       ui = createUI(options);
     },
     open: (id) => ui?.open(id),
+    openBatch: (id) => ui?.openBatch(id),
     remove: (id) => ui?.remove(id),
   };
   if (typeof module !== "undefined" && module.exports)

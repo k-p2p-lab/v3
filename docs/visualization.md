@@ -16,6 +16,18 @@ Accepted server jobs continue after closing the window/browser. At most 32 queue
 
 Open **Message images, repeated runs and v2 comparisons**, select a message, and choose **Message images** for its latency, hop, duplicate and first-reception path images. Missing evidence and undefined statistics appear as N/A; full node IDs and membership remain in analysis JSON.
 
+## Batch mean for repetitions of one experiment
+
+Submit **Run experiment → Runs** with two or more repetitions. **Saved results** shows a batch card above the individual run rows. Each run's **Images** remains independent. After every member stops, choose **Analyze batch mean**. The Controller selects completed runs with exactly the same `batchId`; an identical scenario name in another submission does not join the batch. At least two completed runs are required. Failed, canceled and interrupted runs are excluded, and missing/unreadable members are counted against the requested repetitions. The card and completed view show inclusion counts. A completed run with zero observed receipts remains eligible.
+
+The batch job processes each run's current saved logs separately, sharing the bounded worker queue with individual jobs. It never joins node/message identities across runs or replaces individual analysis artifacts. Close the window or browser and reopen the batch card to reconnect or download the persisted result. **Analyze latest snapshot** regenerates the batch. A change in saved membership invalidates its current cache; a log-only change requires explicit refresh. Malformed logs fail the job rather than silently dropping a selected run. Runs with eligible main metrics using different measurement definitions also fail instead of averaging incompatible populations.
+
+**Mean metrics and contributing run counts** lists each metric's arithmetic mean, between-run sample SD and valid run count. Every valid run has equal weight, regardless of its message/sample count. Undefined values are excluded, rather than replaced with zero. P95 is the mean of the individual run P95 values, not the percentile of pooled receipts. Total sent/received bytes and throughput use collected libp2p bandwidth evidence.
+
+Overview images retain graph, score, activity, propagation, control and bandwidth views. Time series align on each run's start; line charts interpolate within observed segments and step charts hold within recorded intervals. Missing gaps and time beyond a series' last observation are excluded, so pointwise `n` can vary. Display grids contain at most 720 line/step points. CDFs average run distributions on a common axis; discrete distributions retain their whole support. Latency histograms use 30 common bins with uniform allocation within each source bin: counts are conserved, while within-bin locations are approximate. Fitted density curves are averaged without a pooled refit. Individual message trees remain in the run's **Images** view.
+
+The PNG/CSV ZIP includes the averaged chart definitions, included/excluded run metadata and a `*-summary.csv` containing all summary means, sample SDs and counts. Chart CSV adds `n` for the contributing runs at each point. **Download analysis JSON** contains persisted means and compact per-run inputs that reproduce the overview; full message/node paths remain in individual analysis JSON. PNG conversion and curve averaging run in the browser after server computation completes.
+
 ## Comparing runs
 
 1. **Load saved results**, select runs, and assign **Series** and **Case** labels. Identical labels define repeats; low-reachability runs are retained.

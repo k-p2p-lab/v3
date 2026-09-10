@@ -384,3 +384,29 @@ test("corrupt artifacts and PNG errors stay retryable without discarding saved a
   assert.equal(element("retryResultImages").hidden, false);
   assert.equal(element("downloadResultAnalysis").hidden, false);
 });
+
+test('batch and individual analyses use separate jobs even when batch ID equals the first run ID', async () => {
+  let releaseIndividual;
+  const first = sample('run'), second = sample('other');
+  for (const data of [first, second]) data.result.batchId = 'run';
+  const calls = [];
+  const job = { batchId: 'run', id: 'batch-job', analysisVersion: 3, state: 'completed' };
+  const batchData = { version: 1, aggregation: 'equal-run-mean-v1', analysisId: job.id, batchId: 'run', expectedRuns: 2, missingRuns: 0, excluded: [], summary: { 'metrics.averageLatencyMs': { average: 15, deviation: 0, count: 2 } }, runs: [first, second] };
+  const { ui, element } = fixture(async (path, options) => {
+    calls.push({ path, method: options.method || 'GET' });
+    if (path === '/api/v1/analysis-jobs/run') return new Promise(resolve => { releaseIndividual = resolve; });
+    if (path === '/api/v1/batch-analysis-jobs/run') return job;
+    if (path === '/api/v1/batch-analysis-jobs/run/result?jobId=batch-job') return batchData;
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  const individual = ui.open('run');
+  await ui.openBatch('run');
+  releaseIndividual({ runId: 'run', id: 'individual-job', state: 'completed', analysisVersion: 3 });
+  await individual;
+  assert.match(element('resultImagesName').textContent, /Batch mean/);
+  assert.equal(element('batchAnalysisSummary').hidden, false);
+  assert.match(element('batchAnalysisSummary').innerHTML, /contributing run counts/);
+  assert.equal(element('downloadResultAnalysis').href, '/api/v1/batch-analysis-jobs/run/result?jobId=batch-job');
+  assert.match(element('downloadAllResultImages').download, /batch-mean-images.zip$/);
+  assert.equal(calls.filter(call => call.method === 'POST').length, 0);
+});

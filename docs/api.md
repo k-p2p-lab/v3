@@ -31,6 +31,8 @@ The Controller exposes the following public and operational endpoints. When `KPL
 | `GET` / `POST` | `/api/v1/analysis-jobs/{id}` | Inspect / submit background analysis. Duplicate requests reuse work; `?refresh=1` requests a new snapshot |
 | `GET` / `HEAD` | `/api/v1/analysis-jobs/{id}/result?jobId={jobId}` | Download persisted analysis JSON. Unfinished or mismatched attempts return `409` |
 | `GET` / `HEAD` | `/api/v1/analysis-jobs/{id}/summary?jobId={jobId}` | Compact comparison artifact with aggregates, distributions and fits; omits per-message paths and source timelines |
+| `GET` / `POST` | `/api/v1/batch-analysis-jobs/{batchId}` | Inspect / submit equal-run batch analysis; `?refresh=1` regenerates from current logs |
+| `GET` / `HEAD` | `/api/v1/batch-analysis-jobs/{batchId}/result?jobId={jobId}` | Download persisted means and compact per-run overview inputs |
 | `GET` / `HEAD` | `/api/v1/experiments/{id}/download` | Download the scenario, metadata, events, optional observations and derived metrics as ZIP, or measure its size without a response body |
 | `POST` | `/api/v1/experiments` | Run YAML once, or JSON `{scenario, repetitions}` for 1–100 sequential runs |
 | `POST` | `/api/v1/experiments/{id}/stop` | Cancel a running experiment, then perform bounded job shutdown and generation-fenced Peer cleanup |
@@ -88,6 +90,16 @@ Requests reuse an existing queued/running job even with `?refresh=1`. A current 
 After completion, `GET` or `HEAD` `/api/v1/analysis-jobs/{id}/result?jobId={jobId}` serves the full JSON; `/summary?jobId={jobId}` serves the comparison artifact. Supplying `jobId` guards against downloading a different attempt; omission selects the current completed attempt. An unfinished/mismatched attempt returns `409`, a missing run `404`, and malformed/unreadable stored data normally `422`. The compact artifact sets `observations`, `timeline`, `bandwidthTimeline` and `research.messages` to empty arrays while preserving `messageCount`, metrics, aggregates, distributions and fits. It cannot supply per-message paths or original timelines. Both responses carry `analysisId`, `analysisVersion`, and the source `asOf` boundary.
 
 `GET /api/v1/experiments/{id}/analysis` remains a synchronous compatibility route with a two-minute request timeout. It computes a response without creating a persisted background job. Use the job API for long analysis and later downloads. The [metric guide](experiment-metrics.md#saved-result-research-metrics) owns research definitions; [monitoring](monitoring.md#analysis-and-image-retention) owns saved files, and [visualization](visualization.md) describes the browser workflow.
+
+## Repetition batch analysis
+
+`POST /api/v1/batch-analysis-jobs/{batchId}` analyzes completed runs from the exact submission batch. All batch members must finish execution/cleanup and at least two must be completed. Active batches return `409`; insufficient completed runs or inconsistent metadata return `422`; an unknown batch returns `404`. Authentication, duplicate admission, retry and restart behavior follow individual analysis. Individual and batch jobs share the 32-job admission bound; up to 100 repetitions are processed sequentially within one batch job.
+
+Status identifies the batch with `batchId` (`runId` is empty) and adds selected `runIds`, `completedRuns`, `totalRuns`, `expectedRuns`, and a `membership` signature. `progress` weights each run equally; byte fields describe the current run. `snapshotAt` is the most recently captured run boundary; `runs[].asOf` records each source boundary in the artifact. Membership/state changes make status GET expose the previous completed cache as `idle`, and a new POST recomputes it. Log-only changes require `?refresh=1`.
+
+The artifact has `version: 1`, `analysisVersion: 3`, `aggregation: "equal-run-mean-v1"`, batch/attempt identities, `expectedRuns`, `missingRuns`, `excluded`, `runs`, and `summary`. Summary entries under `metrics.*`, `research.*`, `bandwidth.sentBytes` and `bandwidth.receivedBytes` contain `average`, `deviation` (between-run sample SD), `median`, and `count` (valid runs). An undefined mean or single-run SD is `null`. Compact `runs` preserve graph metrics, observations, bandwidth, distributions, and message time series/receiver curves/origin counts in `research.overview`; raw message/node paths are omitted. See [batch means](visualization.md#batch-mean-for-repetitions-of-one-experiment) for chart alignment and distribution semantics.
+
+Files are persisted as `<data-dir>/batch-analyses/{batchId}/job.json` and `result.json`. Closing a view or restarting the server does not remove a completed result. Download with an explicit `jobId` selects that completed snapshot, returning `409` if replaced by another attempt. Deleting an individual source does not remove the existing batch snapshot files. Reanalysis replaces the current files with the changed selection; download an older result before refreshing if it must be retained.
 
 ## Internal cluster endpoints
 

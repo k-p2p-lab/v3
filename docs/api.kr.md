@@ -31,6 +31,8 @@ Controller는 아래 공개 및 운영 엔드포인트를 제공합니다. `KPL_
 | `GET` / `POST` | `/api/v1/analysis-jobs/{id}` | 백그라운드 분석 상태 조회 / 접수. 중복 요청 재사용, `?refresh=1`로 새 snapshot 분석 |
 | `GET` / `HEAD` | `/api/v1/analysis-jobs/{id}/result?jobId={jobId}` | 서버에 보관된 완료 분석 JSON 다운로드. 작업 미완료·다른 attempt는 `409` |
 | `GET` / `HEAD` | `/api/v1/analysis-jobs/{id}/summary?jobId={jobId}` | 비교용 경량 분석 JSON. 메시지별 경로와 원본 시계열을 제외하고 집계·분포·적합 결과를 반환 |
+| `GET` / `POST` | `/api/v1/batch-analysis-jobs/{batchId}` | 동일 반복 실험의 통합 평균 작업 상태 조회 / 시작. `?refresh=1`은 새 로그 경계로 갱신 |
+| `GET` / `HEAD` | `/api/v1/batch-analysis-jobs/{batchId}/result?jobId={jobId}` | 저장된 통합 평균과 개요용 run별 입력 다운로드 |
 | `GET` / `HEAD` | `/api/v1/experiments/{id}/download` | 시나리오·메타데이터·이벤트·선택적 관측 파일·파생 지표를 ZIP으로 다운로드하거나 응답 본문 없이 크기 계산 |
 | `POST` | `/api/v1/experiments` | YAML 1회 실행 또는 JSON `{scenario, repetitions}`로 1~100회 순차 실행 |
 | `POST` | `/api/v1/experiments/{id}/stop` | 실행을 취소한 뒤 제한 시간 내 job 종료와 generation-fenced Peer cleanup 수행 |
@@ -88,6 +90,16 @@ typed 대역폭 표본을 포함한 원시 이벤트는 `<data-dir>/runs/<run-id
 완료 후 `GET` 또는 `HEAD` `/api/v1/analysis-jobs/{id}/result?jobId={jobId}`는 전체 JSON, `/summary?jobId={jobId}`는 비교용 자료를 반환합니다. `jobId`를 지정하면 다른 분석 시도를 내려받지 않도록 확인하며 생략하면 현재 완료 시도를 선택합니다. 미완료·시도 불일치는 `409`, 실행 부재는 `404`, 잘못되거나 읽을 수 없는 저장 자료는 보통 `422`입니다. 경량 응답은 `observations`, `timeline`, `bandwidthTimeline`, `research.messages`를 빈 배열로 두고 `messageCount`·지표·집계·분포·적합 결과를 유지합니다. 개별 메시지 경로나 원본 시계열 용도로 사용할 수 없습니다. 두 응답 모두 `analysisId`, `analysisVersion`, 원본 경계 `asOf`를 포함합니다.
 
 `GET /api/v1/experiments/{id}/analysis`는 2분 요청 제한의 동기 호환 경로입니다. 보존되는 백그라운드 작업을 만들지 않고 응답을 계산합니다. 긴 분석과 나중 다운로드에는 job API를 사용하십시오. 연구 정의는 [지표 가이드](experiment-metrics.kr.md#저장-결과-연구-지표), 보존 파일은 [모니터링](monitoring.kr.md#분석-파일과-이미지-보존), 브라우저 조작은 [시각화](visualization.kr.md)에서 관리합니다.
+
+## 반복 실험 통합 분석
+
+`POST /api/v1/batch-analysis-jobs/{batchId}`는 실행 제출에 기록된 동일 배치의 완료 run을 분석합니다. 모든 배치 구성원의 실행·정리 완료와 최소 2개의 완료 run이 필요하며, 실행 중이면 `409`, 유효 완료 run 부족·메타데이터 불일치는 `422`, 배치가 없으면 `404`입니다. 인증·중복 접수·재시도·재시작 처리는 개별 분석과 같고, 개별·배치 작업이 합쳐서 최대 32개의 대기·실행 작업을 공유합니다. 최대 100회 반복을 하나의 배치 작업으로 순차 처리합니다.
+
+상태의 배치 식별자는 `batchId`이며 `runId`는 비어 있습니다. 선택한 `runIds`, `completedRuns`, `totalRuns`, `expectedRuns`, 구성원 서명 `membership`도 제공합니다. `progress`는 run별 동일 가중 진행률이고 바이트 필드는 현재 처리 중인 run에 해당합니다. `snapshotAt`은 가장 최근에 캡처한 run의 경계이며 결과의 각 `runs[].asOf`로 개별 경계를 확인합니다. 구성원·완료 상태 변경 시 상태 조회는 기존 완료 캐시를 `idle`로 표시하고 새 POST가 재계산합니다. 로그 내용만 변경되면 `?refresh=1`을 사용합니다.
+
+결과는 `version: 1`, `analysisVersion: 3`, `aggregation: "equal-run-mean-v1"`, 배치·시도 ID, `expectedRuns`, `missingRuns`, `excluded`, `runs`, `summary`를 제공합니다. `summary`는 `metrics.*`, `research.*`, `bandwidth.sentBytes`, `bandwidth.receivedBytes`별 `average`, `deviation`(run 간 표본 SD), `median`, `count`(유효 run 수)입니다. 결측 평균은 `null`, 유효 run 1개의 SD도 `null`입니다. `runs`는 그래프 지표·관측·대역폭·분포와 메시지 시계열/수신 곡선/기원 수를 담은 `research.overview`를 보존하고 원시 메시지·노드 경로를 생략합니다. 평균 차트의 축 정렬·분포 규칙은 [통합 평균 사용법](visualization.kr.md#같은-실험의-반복-run-통합-평균)을 참고하십시오.
+
+완료 파일은 `<data-dir>/batch-analyses/{batchId}/job.json`, `result.json`에 저장됩니다. 창 종료와 서버 재시작 후 재사용할 수 있습니다. 명시적인 `jobId` 다운로드는 해당 완료 스냅샷에 고정되며 다른 시도로 교체됐으면 `409`입니다. 개별 원본 삭제는 기존 통합 스냅샷 파일을 지우지 않습니다. 변경된 구성으로 다시 분석하면 현재 파일을 교체하므로 이전 결과가 필요하면 먼저 다운로드하십시오.
 
 ## 내부 cluster endpoint
 
