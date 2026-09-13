@@ -35,7 +35,7 @@ function fixture(results) {
 }
 
 test('analysis polling preserves the visible list and refresh label while the request is pending', async () => {
-  const run = { id: 'analyzing', state: 'completed', downloadBytes: 1024, analysis: { state: 'running', progress: 9 } };
+  const run = { id: 'analyzing', state: 'completed', sourceBytes: 1024, analysis: { state: 'running', progress: 9 } };
   const { api, state, element, timers, resolve } = fixture([run]);
   const rows = element('#savedResultsRows'), writes = rows.writes;
   const refreshing = api.refreshSavedResults();

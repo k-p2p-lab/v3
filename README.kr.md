@@ -17,7 +17,7 @@ K-P2PLab v3는 하나 이상의 Linux 호스트에 구성된 Docker Swarm에서 
 - Agent 영역과 topic 필터를 제공하는 실시간 Kademlia, GossipSub GRAFT 및 transport 토폴로지
 - churn을 고려한 도달률, 지연, 중복, coverage와 관측 품질 지표
 - 재사용 가능한 시나리오 라이브러리, 반복 실행, 결과 보존, ZIP 내보내기와 삭제
-- 백그라운드 결과 분석, v2 연구 비교·대역폭 시각화와 PNG/CSV/ZIP 다운로드
+- 개별 run·반복 run 동일 가중 평균의 백그라운드 분석, v2 연구 비교·대역폭 시각화와 PNG/CSV/ZIP 다운로드
 - 프로토콜별 libp2p 스트림 전송률·누적 바이트 실측과 수집 품질 표시
 
 ## 사전 요구사항

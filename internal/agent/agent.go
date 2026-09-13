@@ -46,14 +46,15 @@ type Config struct {
 }
 
 type process struct {
-	node        model.Node
-	apiURL      string
-	configPath  string
-	cancel      context.CancelFunc
-	exited      bool
-	containerID string
-	done        chan struct{}
-	cleanupErr  error
+	node                  model.Node
+	apiURL                string
+	configPath            string
+	cancel                context.CancelFunc
+	exited                bool
+	containerID           string
+	done                  chan struct{}
+	cleanupErr            error
+	heartbeatAcknowledged bool
 	// Peer source time is distinct from node.LastSeen, which is the Agent's
 	// receipt time. Only timestamps from this process are compared for order.
 	peerStatusObservedAt time.Time
@@ -66,6 +67,7 @@ type Server struct {
 	docker          *dockerRuntime
 	startedAt       time.Time
 	mu              sync.RWMutex
+	heartbeatMu     sync.Mutex
 	processes       map[string]*process
 	runFences       map[string]uint64
 	shuttingDown    bool
@@ -287,20 +289,20 @@ func (s *Server) controlLoop(ctx context.Context) {
 	}
 }
 
-func (s *Server) register(ctx context.Context) error {
-	return s.postJSON(ctx, "/api/v1/agents/register", s.snapshot().Agent, nil)
-}
-
-func (s *Server) heartbeat(ctx context.Context) error {
-	return s.postJSON(ctx, "/api/v1/agents/heartbeat", s.snapshot(), nil)
-}
-
 // Capture node states, occupied capacity and observation time under one lock.
 // The Controller can compare heartbeat and status responses even when those
 // requests cross in flight or an Agent task has restarted on the same host.
 func (s *Server) snapshot() model.AgentHeartbeat {
+	return s.snapshotWithHistory(true)
+}
+
+func (s *Server) snapshotWithHistory(includeAcknowledged bool) model.AgentHeartbeat {
 	hostname, _ := os.Hostname()
 	s.mu.RLock()
+	capacity := len(s.processes)
+	if !includeAcknowledged {
+		capacity = min(capacity, max(0, s.config.Capacity))
+	}
 	h := model.AgentHeartbeat{
 		Agent: model.Agent{
 			ID:          s.config.ID,
@@ -316,9 +318,12 @@ func (s *Server) snapshot() model.AgentHeartbeat {
 			StartedAt:   s.startedAt,
 			LastSeen:    time.Now().UTC(),
 		},
-		Nodes: make([]model.Node, 0, len(s.processes)),
+		Nodes: make([]model.Node, 0, capacity),
 	}
 	for _, proc := range s.processes {
+		if !includeAcknowledged && proc.heartbeatAcknowledged && processSuccessfullyStopped(proc) {
+			continue
+		}
 		h.Nodes = append(h.Nodes, heartbeatNodeStatus(proc))
 	}
 	s.mu.RUnlock()
@@ -761,6 +766,12 @@ func (s *Server) closeTelemetry() {
 
 func (s *Server) flushEvents(ctx context.Context) {
 	s.eventsMu.Lock()
+	// Cleanup handlers can drain while controlLoop is forwarding a batch. Keep
+	// a single request in flight so retries remain ahead of subsequent events.
+	if s.eventsInFlight > 0 {
+		s.eventsMu.Unlock()
+		return
+	}
 	s.admitTerminationsLocked()
 	if len(s.events) == 0 {
 		s.eventsMu.Unlock()
@@ -791,7 +802,7 @@ func (s *Server) flushEvents(ctx context.Context) {
 func (s *Server) drainEvents(ctx context.Context) error {
 	for ctx.Err() == nil {
 		s.eventsMu.Lock()
-		remaining := len(s.events) + len(s.terminations)
+		remaining := len(s.events) + s.eventsInFlight + len(s.terminations)
 		s.eventsMu.Unlock()
 		if remaining == 0 {
 			return nil
@@ -803,7 +814,7 @@ func (s *Server) drainEvents(ctx context.Context) error {
 		}
 	}
 	s.eventsMu.Lock()
-	remaining := len(s.events) + len(s.terminations)
+	remaining := len(s.events) + s.eventsInFlight + len(s.terminations)
 	s.eventsMu.Unlock()
 	if remaining > 0 {
 		s.logger.Warn("telemetry drain incomplete", "events", remaining, "error", ctx.Err())

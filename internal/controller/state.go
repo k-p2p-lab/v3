@@ -123,7 +123,9 @@ func (s *state) heartbeat(h model.AgentHeartbeat) error {
 		return fmt.Errorf("agent %q heartbeat does not match its registered instance", h.Agent.ID)
 	}
 	reportedAt := h.Agent.LastSeen
-	if last := s.agentSnapshots[h.Agent.ID]; !reportedAt.IsZero() && !last.IsZero() && !reportedAt.After(last) {
+	last := s.agentSnapshots[h.Agent.ID]
+	stale := !reportedAt.IsZero() && !last.IsZero() && reportedAt.Before(last)
+	if !h.Partial && !reportedAt.IsZero() && !last.IsZero() && !reportedAt.After(last) {
 		s.mu.Unlock()
 		return nil
 	}
@@ -138,7 +140,20 @@ func (s *state) heartbeat(h model.AgentHeartbeat) error {
 		}
 		seen[node.ID] = struct{}{}
 	}
-	if !reportedAt.IsZero() {
+	if stale {
+		// A newer full status can cross an older partial batch. Successful
+		// terminal records are immutable, so acknowledge them even if the
+		// newer snapshot did not contain a peer that lived entirely between
+		// reports. Never apply older active states or physical occupancy.
+		terminal := make([]model.Node, 0, len(h.Nodes))
+		for _, node := range h.Nodes {
+			if node.State == model.NodeStopped {
+				terminal = append(terminal, node)
+			}
+		}
+		h.Nodes = terminal
+	}
+	if !stale && !reportedAt.IsZero() {
 		s.agentSnapshots[h.Agent.ID] = reportedAt
 	}
 	h.Agent.URL = firstNonEmpty(h.Agent.URL, previous.URL)
@@ -156,6 +171,7 @@ func (s *state) heartbeat(h model.AgentHeartbeat) error {
 	h.Agent.State = model.AgentOnline
 	reportedOccupied := max(0, h.Agent.ActiveNodes)
 	observedActive := 0
+	releasedReservations := 0
 	for _, node := range h.Nodes {
 		// Both input timestamps use the Agent's clock. Preserve LastSeen for
 		// status/creation merges, but normalize its age for topology freshness.
@@ -184,9 +200,20 @@ func (s *state) heartbeat(h model.AgentHeartbeat) error {
 		s.nodes[node.ID] = node
 		if s.reservations[node.ID] == h.Agent.ID {
 			delete(s.reservations, node.ID)
+			releasedReservations++
 		}
 		if node.State != model.NodeStopping && node.State != model.NodeStopped && node.State != model.NodeFailed {
 			observedActive++
+		}
+	}
+	if h.Partial {
+		// Other chunks and previously acknowledged records remain part of
+		// this Agent's inventory. Omission cannot free their capacity.
+		observedActive = 0
+		for _, node := range s.nodes {
+			if node.AgentID == h.Agent.ID && s.reservations[node.ID] != h.Agent.ID && node.State != model.NodeStopping && node.State != model.NodeStopped && node.State != model.NodeFailed {
+				observedActive++
+			}
 		}
 	}
 	// Docker cleanup may still occupy capacity after a node stops being
@@ -201,7 +228,7 @@ func (s *state) heartbeat(h model.AgentHeartbeat) error {
 		if node.AgentID != h.Agent.ID {
 			continue
 		}
-		if _, found := seen[id]; !found && node.State != model.NodeStopped {
+		if _, found := seen[id]; !h.Partial && !found && node.State != model.NodeStopped {
 			if s.reservations[id] == h.Agent.ID {
 				continue
 			}
@@ -209,6 +236,10 @@ func (s *state) heartbeat(h model.AgentHeartbeat) error {
 			node.LastSeen = now
 			s.nodes[id] = node
 		}
+	}
+	if stale {
+		h.Agent = previous
+		h.Agent.ActiveNodes = max(0, previous.ActiveNodes-releasedReservations)
 	}
 	s.agents[h.Agent.ID] = h.Agent
 	s.mu.Unlock()

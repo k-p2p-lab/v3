@@ -73,26 +73,53 @@ func (s *Server) analysisDirectory(id string) (*os.Root, error) {
 	return root, err
 }
 
-func writeAnalysisJSON(root *os.Root, name string, value any) error {
+// Large artifacts are prepared without holding Controller locks. A caller must
+// validate the live job and deletion fence again before publishing the file.
+type stagedAnalysisJSON struct {
+	root *os.Root
+	temp string
+}
+
+func (staged *stagedAnalysisJSON) discard() { _ = staged.root.Remove(staged.temp) }
+func (staged *stagedAnalysisJSON) publish(name string) error {
+	// Rename replaces a link rather than following it.
+	return staged.root.Rename(staged.temp, name)
+}
+
+func stageAnalysisJSON(ctx context.Context, root *os.Root, value any) (*stagedAnalysisJSON, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
-		return err
+		return nil, err
 	}
-	temp := ".analysis-" + hex.EncodeToString(nonce[:]) + ".tmp"
-	file, err := root.OpenFile(temp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	staged := &stagedAnalysisJSON{root: root, temp: ".analysis-" + hex.EncodeToString(nonce[:]) + ".tmp"}
+	file, err := root.OpenFile(staged.temp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer root.Remove(temp)
-	if err = json.NewEncoder(file).Encode(value); err == nil {
+	if err = json.NewEncoder(resultContextWriter{ctx: ctx, writer: file}).Encode(value); err == nil {
+		err = ctx.Err()
+	}
+	if err == nil {
 		err = file.Sync()
 	}
-	err = errors.Join(err, file.Close())
+	err = errors.Join(err, file.Close(), ctx.Err())
+	if err != nil {
+		staged.discard()
+		return nil, err
+	}
+	return staged, nil
+}
+
+func writeAnalysisJSON(root *os.Root, name string, value any) error {
+	staged, err := stageAnalysisJSON(context.Background(), root, value)
 	if err != nil {
 		return err
 	}
-	// Rename replaces a link rather than following it.
-	return root.Rename(temp, name)
+	defer staged.discard()
+	return staged.publish(name)
 }
 
 func (s *Server) persistAnalysisJob(status analysisJobStatus) error {
@@ -279,21 +306,6 @@ func (s *Server) runAnalysisJob(ctx context.Context, job *analysisJob) {
 		}
 		report("saving", 0)
 		analysis.AnalysisID = job.status.ID
-		s.analysisJobMu.Lock()
-		defer s.analysisJobMu.Unlock()
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		s.state.persistMu.Lock()
-		defer s.state.persistMu.Unlock()
-		root, err := s.analysisDirectory(job.status.RunID)
-		if err != nil {
-			return err
-		}
-		defer root.Close()
-		if err := writeAnalysisJSON(root, analysisResultFile, analysis); err != nil {
-			return err
-		}
 		compact := analysis
 		compact.Observations = []analysisObservation{}
 		compact.Timeline = []analysisBin{}
@@ -304,19 +316,7 @@ func (s *Server) runAnalysisJob(ctx context.Context, job *analysisJob) {
 			research.Messages = []researchMessage{}
 			compact.Research = &research
 		}
-		if err := writeAnalysisJSON(root, analysisSummaryFile, compact); err != nil {
-			return err
-		}
-		completed := job.status
-		completed.State, completed.Phase, completed.Progress = "completed", "completed", 100
-		completed.ProcessedBytes = total
-		completed.FinishedAt, completed.UpdatedAt = time.Now().UTC(), time.Now().UTC()
-		completed.ResultURL = "/api/v1/analysis-jobs/" + completed.RunID + "/result?jobId=" + completed.ID
-		if err := writeAnalysisJSON(root, analysisJobFile, completed); err != nil {
-			return err
-		}
-		job.status = completed
-		return nil
+		return s.saveAnalysisJob(ctx, job, analysis, compact)
 	}()
 	s.analysisJobMu.Lock()
 	defer s.analysisJobMu.Unlock()
@@ -334,6 +334,70 @@ func (s *Server) runAnalysisJob(ctx context.Context, job *analysisJob) {
 			}
 		}
 	}
+}
+
+// Only directory pinning and publication hold shared locks; JSON encoding and
+// fsync may take much longer than telemetry and status requests can wait.
+func (s *Server) saveAnalysisJob(ctx context.Context, job *analysisJob, analysis, summary any) error {
+	root, err := func() (*os.Root, error) {
+		s.analysisJobMu.Lock()
+		defer s.analysisJobMu.Unlock()
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if s.analysisJobs[job.status.RunID] != job {
+			return nil, context.Canceled
+		}
+		s.state.persistMu.Lock()
+		defer s.state.persistMu.Unlock()
+		return s.analysisDirectory(job.status.RunID)
+	}()
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	artifact, err := stageAnalysisJSON(ctx, root, analysis)
+	if err != nil {
+		return err
+	}
+	defer artifact.discard()
+	compact, err := stageAnalysisJSON(ctx, root, summary)
+	if err != nil {
+		return err
+	}
+	defer compact.discard()
+
+	s.analysisJobMu.Lock()
+	defer s.analysisJobMu.Unlock()
+	s.state.persistMu.Lock()
+	defer s.state.persistMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.analysisJobs[job.status.RunID] != job {
+		return context.Canceled
+	}
+	current, err := s.analysisDirectory(job.status.RunID)
+	if err != nil {
+		return err
+	}
+	defer current.Close()
+	if err := artifact.publish(analysisResultFile); err != nil {
+		return err
+	}
+	if err := compact.publish(analysisSummaryFile); err != nil {
+		return err
+	}
+	completed := job.status
+	completed.State, completed.Phase, completed.Progress = "completed", "completed", 100
+	completed.ProcessedBytes = completed.TotalBytes
+	completed.FinishedAt, completed.UpdatedAt = time.Now().UTC(), time.Now().UTC()
+	completed.ResultURL = "/api/v1/analysis-jobs/" + completed.RunID + "/result?jobId=" + completed.ID
+	if err := writeAnalysisJSON(root, analysisJobFile, completed); err != nil {
+		return err
+	}
+	job.status = completed
+	return nil
 }
 
 func (s *Server) handleAnalysisJob(ctx context.Context) http.HandlerFunc {

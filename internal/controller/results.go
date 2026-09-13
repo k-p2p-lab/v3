@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"sort"
@@ -41,6 +42,7 @@ type savedResult struct {
 	BatchID                string               `json:"batchId,omitempty"`
 	Iteration              int                  `json:"iteration,omitempty"`
 	Repetitions            int                  `json:"repetitions,omitempty"`
+	SourceBytes            *int64               `json:"sourceBytes,omitempty"`
 	DownloadBytes          *int64               `json:"downloadBytes,omitempty"`
 	DownloadSizeMaxAgeMS   *int64               `json:"downloadSizeMaxAgeMs,omitempty"`
 	storedState            string
@@ -422,8 +424,8 @@ func (s *Server) handleResults(w http.ResponseWriter, r *http.Request) {
 			}
 			if err != nil {
 				s.logger.Warn("read saved result metadata", "run", id, "error", err)
-				result = savedResult{ID: id, Name: id, State: "unreadable"}
-			} else if !result.Active && result.State != "queued" {
+				result = savedResult{ID: id, Name: id, State: "unreadable", SourceBytes: result.SourceBytes}
+			} else if !result.Active && result.State != "queued" && s.hasPreparedResultArchive(id) {
 				snapshot, snapshotErr := s.captureResultFiles(id, false)
 				if snapshotErr == nil {
 					archiveInfo, ready := s.cachedResultArchiveInfo(snapshot, time.Now().UTC())
@@ -524,6 +526,38 @@ func (s *Server) extendPendingResultArchiveCache(results []savedResult, now time
 	}
 }
 
+// Only persisted source inputs count here. Derived analysis caches, generated
+// ZIP entries and filesystem allocation overhead are not original result data.
+var resultSourceFiles = [...]string{"scenario.yaml", "experiment.json", "events.jsonl", "observations.jsonl"}
+
+func resultSourceBytes(root *os.Root) (*int64, error) {
+	var total int64
+	for _, name := range resultSourceFiles {
+		info, err := root.Lstat(name)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("%s is not a regular source file", name)
+		}
+		if info.Size() < 0 || info.Size() > math.MaxInt64-total {
+			return nil, errors.New("source file size is out of range")
+		}
+		total += info.Size()
+	}
+	return &total, nil
+}
+
+func (s *Server) hasPreparedResultArchive(id string) bool {
+	s.resultArchiveMu.Lock()
+	defer s.resultArchiveMu.Unlock()
+	_, found := s.resultArchives[id]
+	return found
+}
+
 func (s *Server) readSavedResult(runs *os.Root, id string) (savedResult, error) {
 	s.state.persistMu.Lock()
 	deleted, err := s.state.resultDeletedLocked(id)
@@ -536,17 +570,26 @@ func (s *Server) readSavedResult(runs *os.Root, id string) (savedResult, error) 
 	}
 	root, err := openResultDirectory(runs, id)
 	var file resultFile
+	var sourceBytes *int64
 	if err == nil {
+		var sizeErr error
+		sourceBytes, sizeErr = resultSourceBytes(root)
+		if sizeErr != nil {
+			s.logger.Warn("stat saved result sources", "run", id, "error", sizeErr)
+		}
 		file, err = openResultFile(root, "experiment.json")
 		_ = root.Close()
 	}
 	active := s.resultActive(id)
 	s.state.persistMu.Unlock()
 	if err != nil {
-		return savedResult{}, err
+		return savedResult{SourceBytes: sourceBytes}, err
 	}
 	defer file.file.Close()
-	return readResultMetadata(file, id, active)
+	result, err := readResultMetadata(file, id, active)
+	// Never trust a size supplied by experiment.json; stat the current inputs.
+	result.SourceBytes = sourceBytes
+	return result, err
 }
 
 func (s *Server) captureResult(id string) (*resultSnapshot, error) {
@@ -589,7 +632,7 @@ func (s *Server) captureResultFiles(id string, download bool) (*resultSnapshot, 
 			return err
 		}
 		defer root.Close()
-		for _, name := range []string{"scenario.yaml", "experiment.json", "events.jsonl", "observations.jsonl"} {
+		for _, name := range resultSourceFiles {
 			file, err := openResultFile(root, name)
 			if err != nil && !((name == "events.jsonl" || name == "observations.jsonl") && errors.Is(err, os.ErrNotExist)) {
 				return fmt.Errorf("open %s: %w", name, err)
@@ -912,7 +955,7 @@ func (snapshot *resultSnapshot) writeZIPMeasured(ctx context.Context, output io.
 			break
 		}
 	}
-	metrics, err := summarizeRunEvents(snapshot.result.ID, resultContextReader{ctx: ctx, reader: eventLog}, snapshot.exportedAt)
+	metrics, err := summarizeRunEventsContext(ctx, snapshot.result.ID, eventLog, snapshot.exportedAt)
 	if err != nil {
 		return fmt.Errorf("summarize saved events: %w", err)
 	}

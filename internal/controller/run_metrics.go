@@ -395,11 +395,21 @@ func (a *runMetricAccumulator) summarizeLegacyContext(ctx context.Context, runID
 // archive. No current topology, Controller uptime, or event arrival order is
 // required. Legacy events without a cohort retain counts but have no ratio.
 func summarizeRunEvents(runID string, reader io.Reader, asOf ...time.Time) (model.Metrics, error) {
+	return summarizeRunEventsContext(context.Background(), runID, reader, asOf...)
+}
+
+func summarizeRunEventsContext(ctx context.Context, runID string, reader io.Reader, asOf ...time.Time) (model.Metrics, error) {
+	if err := ctx.Err(); err != nil {
+		return model.Metrics{}, err
+	}
 	a := newRunMetricAccumulator()
-	scanner := bufio.NewScanner(reader)
+	scanner := bufio.NewScanner(resultContextReader{ctx: ctx, reader: reader})
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	line := 0
 	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return model.Metrics{}, err
+		}
 		line++
 		var event model.TraceEvent
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
@@ -412,8 +422,8 @@ func summarizeRunEvents(runID string, reader io.Reader, asOf ...time.Time) (mode
 	if err := scanner.Err(); err != nil {
 		return model.Metrics{}, fmt.Errorf("read event log: %w", err)
 	}
-	metrics, _ := a.summarize(runID, asOf...)
-	return metrics, nil
+	metrics, _, err := a.summarizeContext(ctx, runID, asOf...)
+	return metrics, err
 }
 
 func calculateMetrics(_ []model.Node, experiments []model.Experiment, events []model.TraceEvent) model.Metrics {

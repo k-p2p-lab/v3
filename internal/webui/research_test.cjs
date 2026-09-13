@@ -336,3 +336,23 @@ test("origin plots and CSV retain unknown estimates and per-link evidence", () =
   assert.match(csv, /estimated_link_source/);
   assert.match(csv, /push and pull evidence conflict/);
 });
+
+test('peak normalization scales imported standard deviations in the same units as their means', () => {
+  const { curves } = F.parseImport('{"x":[1,2],"y":[10,20],"yerr":[1,4]}', 'errors.json');
+  curves.push({ name: 'second', xLabel: 'x', yLabel: 'frt', points: [{ x: 1, y: 100, error: 10, xError: 2 }] });
+  const original = JSON.stringify(curves);
+  const [raw, normalized] = F.curveCharts(curves);
+  assert.equal(raw.series[0].points[1].error, 4);
+  assert.equal(normalized.series[0].points[0].y, .5);
+  assert.equal(normalized.series[0].points[0].error, .05);
+  assert.equal(normalized.series[0].points[1].y, 1);
+  assert.equal(normalized.series[0].points[1].error, .2);
+  assert.equal(normalized.series[1].points[0].error, .1);
+  assert.equal(normalized.series[1].points[0].xError, 2);
+  assert.equal(JSON.stringify(curves), original, 'normalizing changed the imported source data');
+  const csv = F.csvRows(F.chartCSV(normalized));
+  assert.equal(csv[1][4], '0.05');
+  const unavailable = F.curveCharts([{ name: 'zero', points: [{ x: 0, y: 0, error: 1 }] }])[1];
+  assert.equal(unavailable.series[0].points[0].y, null);
+  assert.equal(unavailable.series[0].points[0].error, null);
+});

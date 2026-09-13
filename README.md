@@ -17,7 +17,7 @@ English is the default language for code, the UI, and documentation. Korean docu
 - Live Kademlia, GossipSub GRAFT, and transport topology with Agent sectors and topic filters
 - Churn-aware delivery, latency, duplicate, coverage, and observation-quality metrics
 - Reusable scenario library plus repeat runs, persisted results, ZIP export, and deletion
-- Background analysis, v2 research comparisons, bandwidth images and PNG/CSV/ZIP downloads
+- Background analysis for individual runs and equal-run repetition averages, v2 research comparisons, bandwidth images and PNG/CSV/ZIP downloads
 - Measured libp2p stream throughput and cumulative bytes by protocol, with collection-quality indicators
 
 ## Prerequisites

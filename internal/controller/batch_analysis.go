@@ -350,29 +350,10 @@ func (s *Server) runBatchAnalysis(ctx context.Context, job *batchAnalysisJob, se
 		result.Summary = batchSummary(result.Runs)
 		result.AsOf = time.Now().UTC()
 		s.analysisJobMu.Lock()
-		defer s.analysisJobMu.Unlock()
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		root, err := s.batchAnalysisDirectory(result.BatchID, false)
-		if err != nil {
-			return err
-		}
-		defer root.Close()
-		if err := writeAnalysisJSON(root, batchResultFile, result); err != nil {
-			return err
-		}
-		status := job.status
-		status.State, status.Phase, status.Progress = "completed", "completed", 100
-		status.CompletedRuns = len(selected)
-		status.ProcessedBytes = status.TotalBytes
-		status.FinishedAt, status.UpdatedAt = time.Now().UTC(), time.Now().UTC()
-		status.ResultURL = "/api/v1/batch-analysis-jobs/" + status.BatchID + "/result?jobId=" + status.ID
-		if err := s.persistBatchAnalysis(status); err != nil {
-			return err
-		}
-		job.status = status
-		return nil
+		job.status.Phase, job.status.CompletedRuns = "saving", len(selected)
+		job.status.UpdatedAt = time.Now().UTC()
+		s.analysisJobMu.Unlock()
+		return s.saveBatchAnalysis(ctx, job, result)
 	}()
 	s.analysisJobMu.Lock()
 	defer s.analysisJobMu.Unlock()
@@ -384,11 +365,71 @@ func (s *Server) runBatchAnalysis(ctx context.Context, job *batchAnalysisJob, se
 			job.status.State, job.status.Error = "interrupted", "Batch analysis was interrupted. Retry to start again."
 		}
 		job.status.FinishedAt, job.status.UpdatedAt = time.Now().UTC(), time.Now().UTC()
-		if err := s.persistBatchAnalysis(job.status); err != nil {
-			s.logger.Error("persist batch analysis failure", "batch", job.status.BatchID, "error", err)
+		if s.batchAnalysisJobs[job.status.BatchID] == job {
+			if err := s.persistBatchAnalysis(job.status); err != nil {
+				s.logger.Error("persist batch analysis failure", "batch", job.status.BatchID, "error", err)
+			}
 		}
 	}
 }
+func (s *Server) saveBatchAnalysis(ctx context.Context, job *batchAnalysisJob, result any) error {
+	root, err := func() (*os.Root, error) {
+		s.analysisJobMu.Lock()
+		defer s.analysisJobMu.Unlock()
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if s.batchAnalysisJobs[job.status.BatchID] != job {
+			return nil, context.Canceled
+		}
+		return s.batchAnalysisDirectory(job.status.BatchID, false)
+	}()
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	artifact, err := stageAnalysisJSON(ctx, root, result)
+	if err != nil {
+		return err
+	}
+	defer artifact.discard()
+
+	s.analysisJobMu.Lock()
+	defer s.analysisJobMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.batchAnalysisJobs[job.status.BatchID] != job {
+		return context.Canceled
+	}
+	// Deletion also takes analysisJobMu, so membership stays stable through
+	// publication even if a member was removed while the large file was saved.
+	members, err := s.batchMembers(ctx, job.status.BatchID)
+	if err != nil {
+		return err
+	}
+	if batchMembership(members) != job.status.Membership {
+		return errors.New("saved batch members changed during analysis; retry to capture the current batch")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := artifact.publish(batchResultFile); err != nil {
+		return err
+	}
+	status := job.status
+	status.State, status.Phase, status.Progress = "completed", "completed", 100
+	status.CompletedRuns = status.TotalRuns
+	status.ProcessedBytes = status.TotalBytes
+	status.FinishedAt, status.UpdatedAt = time.Now().UTC(), time.Now().UTC()
+	status.ResultURL = "/api/v1/batch-analysis-jobs/" + status.BatchID + "/result?jobId=" + status.ID
+	if err := s.persistBatchAnalysis(status); err != nil {
+		return err
+	}
+	job.status = status
+	return nil
+}
+
 func (s *Server) handleBatchAnalysis(ctx context.Context) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/batch-analysis-jobs/"), "/")

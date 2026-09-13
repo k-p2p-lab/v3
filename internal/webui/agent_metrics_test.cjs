@@ -48,3 +48,28 @@ test('Agent metrics links escape labels and open safely in a new tab', () => {
   assert.equal(sandbox.agentMetricsLink({ id: 'agent-a' }), '');
   assert.equal(sandbox.agentMetricsLink({ id: 'agent-a', metricsUrl: 'javascript:alert(1)' }), '');
 });
+
+test('available slots count only online Agents and clamp occupied capacity at zero', () => {
+  const elements = new Map();
+  const context = {};
+  vm.createContext(context);
+  vm.runInContext(functions, context);
+  context.$ = selector => {
+    if (!elements.has(selector)) elements.set(selector, { textContent: '' });
+    return elements.get(selector);
+  };
+  for (const name of ['rememberAgents', 'renderRuns', 'renderAgents', 'renderEvents', 'syncDetailPanelHeight', 'renderTopology']) context[name] = () => {};
+  context.filterTopologyEdges = () => [];
+  const agents = [
+    { id: 'available', state: 'online', capacity: 10, activeNodes: 4 },
+    { id: 'full', state: 'online', capacity: 5, activeNodes: 8 },
+    { id: 'offline', state: 'offline', capacity: 100, activeNodes: 1 },
+  ];
+  context.render({ generatedAt: '2026-09-12T00:00:00Z', agents });
+  assert.equal(elements.get('#agentMetric').textContent, '2 / 3');
+  assert.equal(elements.get('#capacityMetric').textContent, 'Available slots: 6');
+  agents[0].state = 'offline';
+  agents[1].state = 'offline';
+  context.render({ generatedAt: '2026-09-12T00:00:01Z', agents });
+  assert.equal(elements.get('#capacityMetric').textContent, 'Available slots: 0');
+});

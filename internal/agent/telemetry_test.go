@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -85,5 +87,97 @@ func TestTelemetryDrainTimeoutIsAnErrorAndClosedAdmissionNeverAcknowledges(t *te
 	defer cancel()
 	if err := s.drainEvents(ctx); !errors.Is(err, context.DeadlineExceeded) || len(s.events) != 1 {
 		t.Fatalf("drain falsely reported success or discarded retry data: %v", err)
+	}
+}
+
+func TestTelemetryDrainWaitsForInFlightAcknowledgmentAndRetry(t *testing.T) {
+	for _, retryFirst := range []bool{false, true} {
+		t.Run(map[bool]string{false: "acknowledged", true: "retried"}[retryFirst], func(t *testing.T) {
+			started, release := make(chan struct{}), make(chan struct{})
+			var attempts atomic.Int32
+			var releaseOnce sync.Once
+			unblock := func() { releaseOnce.Do(func() { close(release) }) }
+			controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if attempts.Add(1) == 1 {
+					close(started)
+					<-release
+					if retryFirst {
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
+				}
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			defer controller.Close()
+			defer unblock()
+			s := &Server{config: Config{ID: "agent", ControllerURL: controller.URL}, client: controller.Client(), logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+			s.enqueueEvents(model.EventBatch{Events: []model.TraceEvent{{EventID: "last-event"}}})
+			flushed := make(chan struct{})
+			go func() { s.flushEvents(context.Background()); close(flushed) }()
+			<-started
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			drained := make(chan error, 1)
+			go func() { drained <- s.drainEvents(ctx) }()
+			select {
+			case err := <-drained:
+				t.Fatalf("drain finished before Controller acknowledged the in-flight event: %v", err)
+			case <-time.After(100 * time.Millisecond):
+			}
+			unblock()
+			<-flushed
+			if err := <-drained; err != nil {
+				t.Fatal(err)
+			}
+			wantAttempts := int32(1)
+			if retryFirst {
+				wantAttempts++
+			}
+			if attempts.Load() != wantAttempts || len(s.events) != 0 || s.eventsInFlight != 0 {
+				t.Fatalf("incomplete drain: attempts=%d queued=%d inFlight=%d", attempts.Load(), len(s.events), s.eventsInFlight)
+			}
+		})
+	}
+}
+
+func TestTelemetryDrainTimeoutCountsInFlightEvents(t *testing.T) {
+	s := &Server{eventsInFlight: 1, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := s.drainEvents(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("in-flight telemetry falsely reported as drained: %v", err)
+	}
+}
+
+func TestConcurrentTelemetryFlushDoesNotOvertakePendingBatch(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	var attempts atomic.Int32
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) == 1 {
+			close(started)
+			<-release
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer controller.Close()
+	defer unblock()
+	s := &Server{config: Config{ID: "agent", ControllerURL: controller.URL}, client: controller.Client(), logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	s.enqueueEvents(model.EventBatch{Events: []model.TraceEvent{{EventID: "first"}}})
+	flushed := make(chan struct{})
+	go func() { s.flushEvents(context.Background()); close(flushed) }()
+	<-started
+	s.enqueueEvents(model.EventBatch{Events: []model.TraceEvent{{EventID: "second"}}})
+	s.flushEvents(context.Background())
+	if attempts.Load() != 1 {
+		t.Fatal("concurrent flush overtook a pending batch before its retry outcome")
+	}
+	unblock()
+	<-flushed
+	if len(s.events) != 2 || s.events[0].EventID != "first" || s.events[1].EventID != "second" {
+		t.Fatalf("failed in-flight batch was not retained in source order: %+v", s.events)
 	}
 }

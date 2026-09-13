@@ -8,13 +8,13 @@ The Dashboard shows a full-width interactive topology with equally sized, wedge-
 
 Peers settle gradually within their Agent's sector. Visible links apply spring-like forces, while repulsion and collision handling spread nearby Peers apart. Peers stay inside their assigned sector as they move. Changes to Peers or visible relationships restart the layout briefly; it stops when settled instead of adding continuous random movement. Placement is a display aid and does not change protocol behavior or experiment results.
 
-Use the independent checkboxes above the graph:
+All three layers start turned off. Use the independent checkboxes above the graph, in this order:
 
 | Layer | Default | Line | Meaning |
 |---|---|---|---|
-| **Kademlia** | On | Thin cyan dashed | A Peer lists the other Peer in its current DHT routing table. |
-| **GossipSub mesh** | On | Thicker orange solid | A Peer reports accepted GRAFT mesh membership for the selected topic(s). |
 | **Transport** | Off | Thin muted gray | An active libp2p transport connection reported by a Peer. |
+| **Kademlia** | Off | Thin cyan dashed | A Peer lists the other Peer in its current DHT routing table. |
+| **GossipSub mesh** | Off | Thicker orange solid | A Peer reports accepted GRAFT mesh membership for the selected topic(s). |
 
 Turning off a layer hides its lines and updates the layout forces to use the remaining visible relationships; it does not disable that protocol or change the experiment. **GossipSub topic** filters mesh relationships while preserving the other layers. Changing these filters can reposition Peers within their sectors. In **All topics**, a pair's mesh relations are combined into one visual line, with the topic evidence retained in the details. The summary's **Transport links** counts unique transport pairs, not the sum of all three layers.
 
@@ -48,7 +48,11 @@ The registry supplies addresses and configured topic participation; it does not 
 
 Peers send status about every two seconds; Agents forward their current snapshots. Network, scheduling, and status failures add delay. Stopping, stopped, starting, and failed endpoints have no displayed relationship lines. Stopping/stopped Peer circles are hidden; starting Peers appear in amber as **Starting**, and failed Peers remain visible as **Issue**.
 
-After successful container cleanup, Agent heartbeats retain the Peer identity, terminal state, lifecycle timestamps, and topic labels while omitting its old connections, routing/mesh memberships, scores, and bulky configuration metadata. This keeps accumulated churn history from overwhelming the status request with obsolete overlay data. The Agent’s node inspection endpoint retains the full record; active Peers and cleanup failures still send full diagnostics. Controller snapshots reflect these exits even when no Dashboard is connected. Late heartbeats and create responses cannot turn a stopped Peer back into starting/ready/failed, and reopening the Dashboard uses this current snapshot.
+After successful container cleanup, the Agent keeps a compact record with the Peer identity, terminal state, lifecycle timestamps, and topic labels. It releases old connections, routing/mesh memberships, scores, and bulky configuration metadata from memory. Full Agent status and node inspection still include the compact terminal record; active Peers and failed processes retain full diagnostics.
+
+Periodic heartbeats send active/failed Peers and successful exits that the Controller has not yet acknowledged, splitting large reports into bounded JSON batches. After acknowledgement, a successful exit is omitted from subsequent periodic reports but remains in the full inventory. Re-registration resets these acknowledgements so retained history is reported again after a Controller restart. The Controller does not treat omission from a partial heartbeat as an exit; see the [heartbeat contract](api.md#internal-cluster-endpoints).
+
+Controller snapshots reflect these exits even when no Dashboard is connected. Late heartbeats and create responses cannot turn a stopped Peer back into starting/ready/failed, and reopening the Dashboard uses this current snapshot.
 
 Offline Agents and Peer status older than ten seconds are excluded from lines. To avoid comparing clocks on different servers, the Controller derives Peer-report age from two timestamps produced by the same Agent, then advances that age on its own clock after receiving the heartbeat. This is the age reported by the Agent plus time since receipt, not a bound on time spent in transit. Missing legacy timestamps cannot establish that age. `OverlayObservedAt` identifies a supported overlay snapshot; it is the Peer's clock and is not compared directly with browser/Controller time to declare staleness.
 

@@ -44,7 +44,7 @@ PNG/CSV ZIP에는 평균 차트 정의, 포함·제외 run 정보와 전체 요�
 
 ## v2 자료와 정의
 
-Import에서 v2 `metrics.jsonl`, 전파 tree JSON/JSONL, 중복 시간 map, `x_case/y/yerr`·`x/y` JSON, 숫자 CSV, v3 분석 JSON을 읽습니다. 파일당 최대 32MiB이며 브라우저 안에서 처리합니다. `x_case/y/yerr`를 읽기 전에 해당 Metric을 선택하십시오. CSV overlay는 단위가 같은 파일끼리 사용합니다. Peak-normalized overlay는 각 곡선 최대를 1로 바꾸므로 원래 확률/횟수가 아닙니다. **v2 fixed historical / ER reference images**는 v2 코드에 들어 있던 고정 참고자료이며 선택한 실험의 관측값이 아닙니다.
+Import에서 v2 `metrics.jsonl`, 전파 tree JSON/JSONL, 중복 시간 map, `x_case/y/yerr`·`x/y` JSON, 숫자 CSV, v3 분석 JSON을 읽습니다. 파일당 최대 32MiB이며 브라우저 안에서 처리합니다. `x_case/y/yerr`를 읽기 전에 해당 Metric을 선택하십시오. CSV overlay는 단위가 같은 파일끼리 사용합니다. Peak-normalized overlay는 각 곡선과 제공된 오차 막대를 그 곡선의 양수 최댓값으로 함께 나눕니다. 양수 최댓값이 없는 곡선은 정규화 값을 표시하지 않습니다. 이 값은 원래 확률/횟수가 아닙니다. **v2 fixed historical / ER reference images**는 v2 코드에 들어 있던 고정 참고자료이며 선택한 실험의 관측값이 아닙니다.
 
 ## 지표와 수집 근거 확인
 

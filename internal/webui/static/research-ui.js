@@ -133,8 +133,10 @@
           for (const file of event.target.files || []) {
             if (file.size > 32 * 1024 * 1024)
               throw new Error(`${file.name} exceeds 32 MiB.`);
+            const text = await file.text();
+            if (signal.aborted) return;
             const parsed = F.parseImport(
-              await file.text(),
+              text,
               file.name,
               $("researchMetric").value,
             );
@@ -149,6 +151,7 @@
         }),
     );
     $("clearResearchImports").addEventListener("click", () => {
+      stop();
       imports = [];
       curves = [];
       $("researchFiles").value = "";

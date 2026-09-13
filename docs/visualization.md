@@ -41,7 +41,7 @@ One repeat has no sample SD. Error propagation assumes independent errors; same-
 
 ## v2 inputs and interpretation
 
-Import v2 metric JSONL, propagation trees, duplicate-time maps, `x_case/y/yerr` or `x/y` JSON, numeric CSV, and v3 analysis JSON locally in the browser (32MiB/file). Select the appropriate Metric before importing v2 x/y summary data. Overlay files must share units. Peak normalization changes the original probability/count meaning. The fixed historical/ER reference button renders the data stored in v2's reference script, not selected-run measurements.
+Import v2 metric JSONL, propagation trees, duplicate-time maps, `x_case/y/yerr` or `x/y` JSON, numeric CSV, and v3 analysis JSON locally in the browser (32MiB/file). Select the appropriate Metric before importing v2 x/y summary data. Overlay files must share units. Peak normalization divides each curve and its supplied error bars by that curve's positive maximum; a curve with no positive maximum has no normalized values. It changes the original probability/count meaning. The fixed historical/ER reference button renders the data stored in v2's reference script, not selected-run measurements.
 
 ## Check definitions and collection evidence
 

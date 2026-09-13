@@ -78,6 +78,8 @@ type EventBatch struct {
 type AgentHeartbeat struct {
 	Agent Agent  `json:"agent"`
 	Nodes []Node `json:"nodes"`
+	// Partial reports update only the included nodes; omission is not an exit.
+	Partial bool `json:"partial,omitempty"`
 }
 
 type CreateNodeRequest struct {

@@ -153,7 +153,7 @@ func TestTopologyInspectorAndControlsStayInsideTopologyPanel(t *testing.T) {
 			t.Fatal("Peer inspector must not appear inside saved results")
 		}
 	}
-	for id, checked := range map[string]bool{"showkademlia": true, "showgossipsub": true, "showtransport": false} {
+	for id, checked := range map[string]bool{"showkademlia": false, "showgossipsub": false, "showtransport": false} {
 		node := byID[id]
 		if node == nil || node.Data != "input" {
 			t.Fatalf("missing layer input %q", id)

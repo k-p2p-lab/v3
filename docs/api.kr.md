@@ -68,7 +68,9 @@ typed 대역폭 표본을 포함한 원시 이벤트는 `<data-dir>/runs/<run-id
 
 대시보드의 **Download results**로 실험 결과를 ZIP으로 받을 수 있습니다. **Saved results**에는 이전 Controller 실행에서 보존된 결과도 표시되며, **Refresh**로 목록을 다시 읽습니다. 실행 중 실험의 **Download snapshot**은 다운로드 시작 시점까지 저장된 기록을 담습니다. 최근 300개 이벤트 버퍼와 별개로 저장된 전체 이벤트 로그를 내보냅니다. 파일 구성과 수집 한계는 [실험 결과 다운로드](monitoring.kr.md#실험-결과-다운로드)를 참고하십시오.
 
-`DELETE /api/v1/results/{id}`는 삭제 성공 시 `204`, 결과가 없으면 `404`, 실행·배치가 활성 상태이거나 실제 `GET` 다운로드가 결과를 사용 중이면 `409`를 반환합니다. 자동 `HEAD` 크기 계산과 목록 조회는 다운로드 충돌로 처리하지 않습니다.
+`GET /api/v1/results`의 `sourceBytes`는 마지막 조회 시점에 저장된 시나리오·실험 메타데이터·이벤트·관측 원본 파일의 압축 전 바이트 합계입니다. 실행·대기 중 결과에도 제공하며 로그 본문을 읽거나 ZIP을 생성하지 않습니다. 분석 캐시와 생성 이미지는 제외합니다. 안전하게 파일 크기를 조회할 수 없을 때만 생략합니다. 화면은 이 값을 사용하며 자동 ZIP 크기 측정을 요청하지 않습니다.
+
+`DELETE /api/v1/results/{id}`는 삭제 성공 시 `204`, 결과가 없으면 `404`, 실행·배치가 활성 상태이거나 실제 `GET` 다운로드가 결과를 사용 중이면 `409`를 반환합니다. 직접 요청한 `HEAD` 크기 계산과 목록 조회는 다운로드 충돌로 처리하지 않습니다.
 
 ## 백그라운드 분석
 
@@ -85,6 +87,8 @@ typed 대역폭 표본을 포함한 원시 이벤트는 `<data-dir>/runs/<run-id
 | `snapshotAt` | POST 접수 시점이 아니라 worker가 분석 슬롯을 얻은 뒤 잡은 원본 경계 |
 | `error`, `resultUrl` | 실패 내용 또는 시도 ID가 포함된 완료 전체 분석 URL |
 
+단일·통합 분석은 `phase: saving` 동안에도 `running` 상태이며, 결과 파일을 저장하는 중에 상태 조회·실험 이벤트 수신·중단 요청 처리를 계속할 수 있습니다. 완료 결과를 게시하기 전에 현재 분석 시도인지와 취소 여부를 다시 확인하고, 개별 분석은 원본 삭제 여부도 확인합니다.
+
 기존 대기·실행 작업은 `?refresh=1`이어도 재사용합니다. 현재 버전의 완료 결과는 refresh 때 새로 계산하고, 오래된 `analysisVersion`의 완료 결과는 POST 때 재생성합니다. GET 상태 조회만으로는 갱신하지 않습니다. **Images**가 이 버전 검사를 자동 수행합니다. 새 분석은 새 경계를 사용하며 과거에 없던 메타정보는 여전히 복원되지 않습니다.
 
 완료 후 `GET` 또는 `HEAD` `/api/v1/analysis-jobs/{id}/result?jobId={jobId}`는 전체 JSON, `/summary?jobId={jobId}`는 비교용 자료를 반환합니다. `jobId`를 지정하면 다른 분석 시도를 내려받지 않도록 확인하며 생략하면 현재 완료 시도를 선택합니다. 미완료·시도 불일치는 `409`, 실행 부재는 `404`, 잘못되거나 읽을 수 없는 저장 자료는 보통 `422`입니다. 경량 응답은 `observations`, `timeline`, `bandwidthTimeline`, `research.messages`를 빈 배열로 두고 `messageCount`·지표·집계·분포·적합 결과를 유지합니다. 개별 메시지 경로나 원본 시계열 용도로 사용할 수 없습니다. 두 응답 모두 `analysisId`, `analysisVersion`, 원본 경계 `asOf`를 포함합니다.
@@ -95,7 +99,7 @@ typed 대역폭 표본을 포함한 원시 이벤트는 `<data-dir>/runs/<run-id
 
 `POST /api/v1/batch-analysis-jobs/{batchId}`는 실행 제출에 기록된 동일 배치의 완료 run을 분석합니다. 모든 배치 구성원의 실행·정리 완료와 최소 2개의 완료 run이 필요하며, 실행 중이면 `409`, 유효 완료 run 부족·메타데이터 불일치는 `422`, 배치가 없으면 `404`입니다. 인증·중복 접수·재시도·재시작 처리는 개별 분석과 같고, 개별·배치 작업이 합쳐서 최대 32개의 대기·실행 작업을 공유합니다. 최대 100회 반복을 하나의 배치 작업으로 순차 처리합니다.
 
-상태의 배치 식별자는 `batchId`이며 `runId`는 비어 있습니다. 선택한 `runIds`, `completedRuns`, `totalRuns`, `expectedRuns`, 구성원 서명 `membership`도 제공합니다. `progress`는 run별 동일 가중 진행률이고 바이트 필드는 현재 처리 중인 run에 해당합니다. `snapshotAt`은 가장 최근에 캡처한 run의 경계이며 결과의 각 `runs[].asOf`로 개별 경계를 확인합니다. 구성원·완료 상태 변경 시 상태 조회는 기존 완료 캐시를 `idle`로 표시하고 새 POST가 재계산합니다. 로그 내용만 변경되면 `?refresh=1`을 사용합니다.
+상태의 배치 식별자는 `batchId`이며 `runId`는 비어 있습니다. 선택한 `runIds`, `completedRuns`, `totalRuns`, `expectedRuns`, 구성원 서명 `membership`도 제공합니다. `progress`는 run별 동일 가중 진행률이고 바이트 필드는 현재 처리 중인 run에 해당합니다. `snapshotAt`은 가장 최근에 캡처한 run의 경계이며 결과의 각 `runs[].asOf`로 개별 경계를 확인합니다. 구성원·완료 상태 변경 시 상태 조회는 기존 완료 캐시를 `idle`로 표시하고 새 POST가 재계산합니다. 로그 내용만 변경되면 `?refresh=1`을 사용합니다. 계산·저장 중 배치 구성원이 바뀌면 이전 구성으로 완료 결과를 게시하지 않고 작업을 실패 처리합니다. 현재 구성원으로 다시 분석하려면 재시도하십시오.
 
 결과는 `version: 1`, `analysisVersion: 3`, `aggregation: "equal-run-mean-v1"`, 배치·시도 ID, `expectedRuns`, `missingRuns`, `excluded`, `runs`, `summary`를 제공합니다. `summary`는 `metrics.*`, `research.*`, `bandwidth.sentBytes`, `bandwidth.receivedBytes`별 `average`, `deviation`(run 간 표본 SD), `median`, `count`(유효 run 수)입니다. 결측 평균은 `null`, 유효 run 1개의 SD도 `null`입니다. `runs`는 그래프 지표·관측·대역폭·분포와 메시지 시계열/수신 곡선/기원 수를 담은 `research.overview`를 보존하고 원시 메시지·노드 경로를 생략합니다. 평균 차트의 축 정렬·분포 규칙은 [통합 평균 사용법](visualization.kr.md#같은-실험의-반복-run-통합-평균)을 참고하십시오.
 
@@ -119,7 +123,11 @@ typed 대역폭 표본을 포함한 원시 이벤트는 `<data-dir>/runs/<run-id
 | Peer → Agent | `POST` | `/api/v1/telemetry` | telemetry batch 제출 |
 | Agent → Peer | `GET` / `POST` | `/health` / `/publish` | Peer HTTP API로 readiness 확인 또는 publish |
 
+정기 Agent heartbeat는 `partial: true`를 사용하며 Peer 기록을 JSON 본문 최대 10 MiB씩 나누어 보냅니다. Peer 기록 하나가 한도를 넘으면 Agent는 해당 노드 ID가 포함된 오류를 보고하고 그 기록을 수신 미확인 상태로 유지합니다. 실행 중이거나 실패한 Peer와 Controller 수신 확인을 기다리는 정상 종료 Peer를 포함합니다. 수신 확인된 정상 종료 기록은 이후 정기 보고에서 생략하고 재등록 뒤 다시 전송합니다. 부분 보고에서 빠진 노드를 종료하거나 그 capacity를 해제하지 않습니다. `GET /api/v1/status`와 `partial`이 없거나 false인 heartbeat는 정상 종료 축약 기록을 포함한 전체 인벤토리 계약을 유지합니다. Agent는 전체 인벤토리를 메모리에 보존하고 명시적 상태 조회에 제공합니다.
+
 telemetry 요청은 이벤트 5000개와 JSON 본문 10 MiB로 제한됩니다. Peer와 Agent는 이스케이프와 envelope를 포함한 인코딩 바이트 수로 batch를 나누며, 재시도에도 원본 순서와 이벤트 식별자를 유지합니다. 수락된 앞부분은 제거한 후 나머지를 전송합니다. 두 수신자는 admission 전에 모든 이벤트를 검사합니다. 단일 이벤트가 인코딩된 10 MiB batch에 들어갈 수 없으면 `413`을 반환하며 해당 요청의 이벤트는 하나도 수락하지 않습니다. Agent는 자신의 식별자로 정규화한 뒤 검사합니다. Controller에 직접 제출한 이벤트도 이 검사를 거치므로 저장 분석에서 읽을 수 없는 과대 로그 행을 만들지 않습니다.
+
+Agent 정상 종료 또는 `DELETE /api/v1/nodes`의 telemetry drain은 마지막 Peer 이벤트를 포함해 대기 큐와 이미 전송 중인 batch 모두 Controller의 수신 확인을 받을 때까지 기다립니다. 실패한 batch는 순서를 유지해 재시도하며, 제한 시간 내 수신 확인을 완료하지 못하면 drain 실패를 보고합니다.
 
 JSON 본문에는 값 하나만 있어야 합니다. 본문 한도 내의 후행 공백은 허용하며, 두 번째 JSON 값·후행 쓰레기 데이터·디코더 본문 한도 초과는 `400`을 반환합니다. Controller/Agent의 일반 JSON handler는 10 MiB, Peer `/publish`는 1 MiB 한도를 사용합니다. 시나리오 요청 envelope에는 위에서 설명한 별도 한도가 적용됩니다. Peer 내부에서 생성된 이벤트가 JSON으로 인코딩되지 않거나 단일 batch 한도를 넘으면 로그와 `telemetry_drop`에 유실 수를 남기고, 소스 sequence의 빈 번호를 유지한 채 후속 이벤트를 전송합니다. 네트워크 실패 시에는 대기 중인 batch를 보존해 재시도합니다.
 

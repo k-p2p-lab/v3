@@ -296,7 +296,13 @@
         return {
           name: c.name,
           points: peak
-            ? c.points.map((p) => ({ ...p, y: max > 0 ? p.y / max : null }))
+            ? c.points.map((p) => ({
+                ...p,
+                y: max > 0 ? p.y / max : null,
+                ...(finite(p.error)
+                  ? { error: max > 0 ? Math.abs(p.error) / max : null }
+                  : {}),
+              }))
             : c.points,
         };
       }),

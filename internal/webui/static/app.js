@@ -7,15 +7,13 @@ const state = {
   selectedScenarioId: null, scenarioLoadingId: null, scenarioSaving: false,
   scenarioValidating: false, scenarioValidation: null, scenarioValidationVersion: 0,
   scenarioDeletingId: null, pendingScenarioDeleteId: null, scenarioLoadVersion: 0, scenarioSubmitting: false, scenarioEditorVersion: 0,
-  resultSizeInflight: new Set(), resultSizeQueue: [], resultSizeActive: 0, resultSizeUnavailable: new Set(),
-  resultSizeExpiryTimer: null, resultSizeExpiryAt: 0, resultSizeControllers: new Map(),
   agentNumbers: loadAgentNumbers(),
   pendingStops: new Set(), deletedResultIDs: new Set(),
   pendingDelete: null, deletingResultId: null, apiToken: null,
   detailPanelObserver: null,
   topology: {
     layout: {},
-    filters: { kademlia: true, gossipsub: true, transport: false, topic: "" },
+    filters: { transport: false, kademlia: false, gossipsub: false, topic: "" },
     selected: null, hovered: null, graph: null,
     camera: { x: 0, y: 0, scale: 1 }, autoFit: true, drag: null,
     motion: { enabled: true, reduced: false, overridden: false, frame: null, lastFrame: 0 },
@@ -410,7 +408,7 @@ function render(snapshot) {
     : "Run metrics: No run selected");
   rememberAgents([...agents.map((agent) => agent.id), ...nodes.map((node) => node.agentId)]);
   const online = agents.filter((agent) => agent.state === "online").length;
-  const capacity = agents.reduce((sum, agent) => sum + Math.max(0, agent.capacity - agent.activeNodes), 0);
+  const capacity = agents.filter((agent) => agent.state === "online").reduce((sum, agent) => sum + Math.max(0, agent.capacity - agent.activeNodes), 0);
   const ready = nodes.filter((node) => node.state === "ready").length;
   setText($("#agentMetric"), `${online} / ${agents.length}`);
   setText($("#capacityMetric"), `Available slots: ${formatNumber(capacity)}`);
@@ -460,7 +458,7 @@ function renderRuns(runs) {
     const progress = run.totalPhases ? Math.round((run.phase / run.totalPhases) * 100) : 0;
     const stopping = state.pendingStops.has(run.batchId || run.id);
     const stop = isPendingRun(run) ? `<button class="stop-button" data-stop-run="${escapeHTML(run.id)}" type="button" title="Stop this run and cancel the remaining queued runs in its batch." ${stopping ? "disabled" : ""}>${stopping ? "Stopping…" : run.repetitions > 1 ? "Stop batch" : "Stop"}</button>` : "";
-    const downloadSize = runDownloadSize(run);
+    const sourceSize = runSourceSize(run);
     return `<article class="run-item">
       <div class="run-title"><strong title="${escapeHTML(run.name)}">${escapeHTML(run.name)}</strong><span class="status-pill ${escapeHTML(run.state)}">${escapeHTML(run.state)}</span></div>
       <div class="run-meta"><span>${escapeHTML(run.state === "queued" ? "Waiting to start" : run.phaseName || `seed ${run.seed}`)}</span>${stop}</div>
@@ -468,7 +466,7 @@ function renderRuns(runs) {
       <div class="run-meta"><span>Jobs: ${formatNumber(run.activeJobs || 0)} active · ${formatNumber(run.completedJobs || 0)} completed · ${formatNumber(run.failedJobs || 0)} failed · ${formatNumber(run.canceledJobs || 0)} canceled</span></div>
       <div class="progress-track" aria-label="${progress}% complete"><i style="width:${Math.min(100, progress)}%"></i></div>
       ${run.error ? `<div class="run-meta"><span>${escapeHTML(run.error)}</span></div>` : ""}
-      <div class="run-actions">${resultDownloadLink(run)}${downloadSize}</div>
+      <div class="run-actions">${resultDownloadLink(run)}${sourceSize}</div>
     </article>`;
   }).join(""));
 }
@@ -500,194 +498,22 @@ function resultDownloadLink(run) {
   return `<a class="download-link" href="${escapeHTML(path)}" download="${escapeHTML(`${run.id}.zip`)}" target="_blank" rel="noopener" title="${title}" aria-label="${escapeHTML(`${label}: ${run.name || run.id}`)}">${label}</a>`;
 }
 
-function resultDownloadSize(run) {
-  if (run.state === "unreadable") return "";
-  if (isPendingRun(run)) {
-    return '<span class="download-size live" title="This run is active; the ZIP size is determined when the download snapshot is created.">Live ZIP · size determined at download</span>';
-  }
-  const size = hasFreshResultDownloadSize(run) ? formatBytes(run.downloadBytes) : "";
-  if (size) return `<span class="download-size" title="Size measured at last refresh; later events may change it.">ZIP · ${escapeHTML(size)}</span>`;
-  return state.resultSizeUnavailable.has(run.id)
-    ? '<span class="download-size" title="Size was not available at the last refresh.">Size unavailable</span>'
-    : '<span class="download-size" title="Reading the exact size from the download endpoint.">Calculating ZIP size…</span>';
+function resultSourceSize(run) {
+  const bytes = run?.sourceBytes;
+  const size = Number.isSafeInteger(bytes) && bytes >= 0 ? (bytes === 0 ? "0 B" : formatBytes(bytes)) : "";
+  if (!size) return '<span class="download-size" title="Source file sizes could not be read at the last refresh.">Source · —</span>';
+  const live = isPendingRun(run);
+  return `<span class="download-size${live ? " live" : ""}" title="Uncompressed source files at the last refresh: scenario, experiment metadata, events and observations. Excludes generated analysis files.${live ? " This run is still recording." : ""}">${live ? "Live source" : "Source"} · ${escapeHTML(size)}</span>`;
 }
 
-function runDownloadSize(run) {
-  if (isPendingRun(run)) return resultDownloadSize(run);
+function runSourceSize(run) {
   const saved = (state.savedResults || []).find((result) => result.id === run.id);
-  return saved ? resultDownloadSize(saved) : "";
+  return saved ? resultSourceSize({...saved, state: run.state, active: isPendingRun(run)}) : "";
 }
 
-function resultSizeExpiryFromMaxAge(value, now = Date.now(), allowString = false) {
-  const candidate = allowString && typeof value === "string" && /^\d+$/.test(value.trim()) ? Number(value.trim()) : value;
-  if (typeof candidate !== "number" || !Number.isSafeInteger(candidate) || candidate <= 0) return 0;
-  const expiry = now + candidate;
-  return Number.isSafeInteger(expiry) && expiry > now ? expiry : 0;
-}
-
-function materializeResultDownloadSizeExpiry(run, now = Date.now()) {
-  if (!run || !Object.prototype.hasOwnProperty.call(run, "downloadSizeMaxAgeMs")) return true;
-  const expiry = resultSizeExpiryFromMaxAge(run.downloadSizeMaxAgeMs, now);
-  delete run.downloadSizeMaxAgeMs;
-  if (!formatBytes(run.downloadBytes) || !expiry) {
-    delete run.downloadBytes;
-    delete run.downloadSizeExpiresAtMs;
-    return false;
-  }
-  run.downloadSizeExpiresAtMs = expiry;
-  return true;
-}
-
-function hasFreshResultDownloadSize(run, now = Date.now()) {
-  if (!formatBytes(run?.downloadBytes)) return false;
-  if (run.downloadSizeExpiresAtMs === undefined || run.downloadSizeExpiresAtMs === null) return true;
-  return Number.isSafeInteger(run.downloadSizeExpiresAtMs) && run.downloadSizeExpiresAtMs > now;
-}
-
-function needsResultDownloadSize(run) {
-  return Boolean(run?.id && run.state !== "unreadable" && !isPendingRun(run) && !hasFreshResultDownloadSize(run));
-}
-
-function parseResultDownloadSizeHeaders(headers, now = Date.now()) {
-  const rawBytes = headers.get("Content-Length");
-  if (typeof rawBytes !== "string" || !/^\d+$/.test(rawBytes.trim())) throw new Error("Download size response has no valid Content-Length.");
-  const downloadBytes = Number(rawBytes);
-  if (!Number.isSafeInteger(downloadBytes) || downloadBytes <= 0) throw new Error("Download size is outside the supported range.");
-  const rawMaxAge = headers.get("X-KPL-Result-Size-Max-Age-Ms");
-  if (rawMaxAge === null || rawMaxAge === undefined) return { downloadBytes };
-  const expiry = resultSizeExpiryFromMaxAge(rawMaxAge, now, true);
-  if (!expiry) throw new Error("Download size response has no valid positive max-age.");
-  return { downloadBytes, downloadSizeExpiresAtMs: expiry };
-}
-
-function resultSizePaused(id) {
-  return state.pendingDelete?.id === id || state.deletingResultId === id || Boolean(state.deletedResultIDs?.has(id));
-}
-
-async function fetchResultDownloadBytes(id) {
-  const controller = new AbortController();
-  (state.resultSizeControllers ??= new Map()).set(id, controller);
-  const timeout = setTimeout(() => controller.abort(), 30000);
-  try {
-    const path = `/api/v1/experiments/${encodeURIComponent(id)}/download`;
-    const response = await fetch(path, { method: "HEAD", cache: "no-store", signal: controller.signal });
-    if (!response.ok) throw new Error(`Download size request failed with status ${response.status}.`);
-    return parseResultDownloadSizeHeaders(response.headers);
-  } finally {
-    clearTimeout(timeout);
-    if (state.resultSizeControllers.get(id) === controller) state.resultSizeControllers.delete(id);
-  }
-}
-
-function renderResultSizeViews() {
+function renderResultViews() {
   renderSavedResults();
   if (state.snapshot) renderRuns(state.snapshot.experiments || []);
-}
-
-async function resolveResultDownloadSize(id, requestedRun) {
-  let canceledForDeletion = false;
-  try {
-    const measured = await fetchResultDownloadBytes(id);
-    const run = (state.savedResults || []).find((result) => result.id === id);
-    if (run === requestedRun && !resultSizePaused(id)) {
-      if (needsResultDownloadSize(run)) {
-        run.downloadBytes = measured.downloadBytes;
-        if (measured.downloadSizeExpiresAtMs) run.downloadSizeExpiresAtMs = measured.downloadSizeExpiresAtMs;
-        else delete run.downloadSizeExpiresAtMs;
-      }
-      state.resultSizeUnavailable.delete(id);
-    }
-  } catch (error) {
-    canceledForDeletion = error === "result-deletion";
-    const run = (state.savedResults || []).find((result) => result.id === id);
-    if (!canceledForDeletion && run === requestedRun && !resultSizePaused(id) && needsResultDownloadSize(run)) state.resultSizeUnavailable.add(id);
-  } finally {
-    state.resultSizeActive--;
-    state.resultSizeInflight.delete(id);
-    const current = (state.savedResults || []).find((result) => result.id === id);
-    if (current !== requestedRun || canceledForDeletion) enqueueResultDownloadSize(current);
-    renderResultSizeViews();
-    pumpResultSizeQueue();
-    scheduleResultSizeExpiry();
-  }
-}
-
-function pumpResultSizeQueue() {
-  while (state.resultSizeActive < 2 && state.resultSizeQueue.length) {
-    const id = state.resultSizeQueue.shift();
-    const run = (state.savedResults || []).find((result) => result.id === id);
-    if (!needsResultDownloadSize(run) || resultSizePaused(id)) {
-      state.resultSizeInflight.delete(id);
-      continue;
-    }
-    state.resultSizeActive++;
-    void resolveResultDownloadSize(id, run);
-  }
-}
-
-function enqueueResultDownloadSize(run) {
-  if (!needsResultDownloadSize(run) || resultSizePaused(run.id) || state.resultSizeInflight.has(run.id)) return;
-  state.resultSizeUnavailable.delete(run.id);
-  state.resultSizeInflight.add(run.id);
-  state.resultSizeQueue.push(run.id);
-}
-
-function discardExpiredResultDownloadSize(run, now = Date.now()) {
-  if (!formatBytes(run?.downloadBytes) || run.downloadSizeExpiresAtMs === undefined || run.downloadSizeExpiresAtMs === null) return false;
-  if (Number.isSafeInteger(run.downloadSizeExpiresAtMs) && run.downloadSizeExpiresAtMs > now) return false;
-  delete run.downloadBytes;
-  delete run.downloadSizeExpiresAtMs;
-  return true;
-}
-
-function expireResultDownloadSizes() {
-  state.resultSizeExpiryTimer = null;
-  state.resultSizeExpiryAt = 0;
-  const now = Date.now();
-  for (const run of state.savedResults || []) {
-    if (run.state === "unreadable" || isPendingRun(run)) continue;
-    if (!discardExpiredResultDownloadSize(run, now)) continue;
-    state.resultSizeUnavailable.delete(run.id);
-    enqueueResultDownloadSize(run);
-  }
-  renderResultSizeViews();
-  pumpResultSizeQueue();
-  scheduleResultSizeExpiry();
-}
-
-function scheduleResultSizeExpiry() {
-  const now = Date.now();
-  let earliest = 0;
-  for (const run of state.savedResults || []) {
-    if (run.state === "unreadable" || isPendingRun(run)) continue;
-    if (!hasFreshResultDownloadSize(run, now)) continue;
-    const expiry = run.downloadSizeExpiresAtMs;
-    if (expiry && (!earliest || expiry < earliest)) earliest = expiry;
-  }
-  if (state.resultSizeExpiryTimer && state.resultSizeExpiryAt === earliest) return;
-  if (state.resultSizeExpiryTimer) clearTimeout(state.resultSizeExpiryTimer);
-  state.resultSizeExpiryTimer = null;
-  state.resultSizeExpiryAt = 0;
-  if (!earliest) return;
-  state.resultSizeExpiryAt = earliest;
-  const delay = Math.min(Math.max(1, earliest - now), 2147483647);
-  state.resultSizeExpiryTimer = setTimeout(expireResultDownloadSizes, delay);
-}
-
-function queueResultDownloadSizes(results) {
-  const currentIDs = new Set(results.map((run) => run.id));
-  for (const id of state.resultSizeUnavailable) if (!currentIDs.has(id)) state.resultSizeUnavailable.delete(id);
-  for (const run of results) {
-    materializeResultDownloadSizeExpiry(run);
-    discardExpiredResultDownloadSize(run);
-    if (!needsResultDownloadSize(run)) {
-      state.resultSizeUnavailable.delete(run.id);
-      continue;
-    }
-    enqueueResultDownloadSize(run);
-  }
-  pumpResultSizeQueue();
-  scheduleResultSizeExpiry();
 }
 
 function formatResultTime(value) {
@@ -1027,8 +853,7 @@ async function refreshSavedResults() {
   } finally {
     clearTimeout(timeout);
     state.resultsLoading = false;
-    if (refreshed) queueResultDownloadSizes(state.savedResults || []);
-    renderResultSizeViews();
+    renderResultViews();
     if (state.resultsRefreshPending) {
       state.resultsRefreshPending = false;
       refreshSavedResults();
@@ -1094,7 +919,7 @@ function renderSavedResults() {
       <td><span class="status-pill ${escapeHTML(run.state)}" title="${escapeHTML(stateHint)}">${escapeHTML(run.state)}</span></td>
       <td>${escapeHTML(formatResultTime(run.startedAt))}</td>
       <td>${escapeHTML(formatResultTime(run.finishedAt))}</td>
-      <td><div class="result-actions">${resultImagesButton(run)}${resultDownloadLink(run)}${resultDownloadSize(run)}<button class="delete-result-button" type="button" data-delete-result="${escapeHTML(run.id)}" aria-label="${escapeHTML(`Delete saved result: ${run.name || run.id}`)}" title="${resultLocked(run) ? "Available after this run and its batch have stopped." : "Delete this run's saved result."}" ${resultLocked(run) || state.deletingResultId ? "disabled" : ""}>${state.deletingResultId === run.id ? "Deleting…" : "Delete"}</button></div></td>
+      <td><div class="result-actions">${resultImagesButton(run)}${resultDownloadLink(run)}${resultSourceSize(run)}<button class="delete-result-button" type="button" data-delete-result="${escapeHTML(run.id)}" aria-label="${escapeHTML(`Delete saved result: ${run.name || run.id}`)}" title="${resultLocked(run) ? "Available after this run and its batch have stopped." : "Delete this run's saved result."}" ${resultLocked(run) || state.deletingResultId ? "disabled" : ""}>${state.deletingResultId === run.id ? "Deleting…" : "Delete"}</button></div></td>
     </tr>`;
   }).join(""));
 }
@@ -1104,7 +929,6 @@ function requestResultDeletion(id) {
   const run = (state.savedResults || []).find((result) => result.id === id);
   if (!run || resultLocked(run)) return;
   state.pendingDelete = run;
-  state.resultSizeControllers?.get(id)?.abort("result-deletion");
   $("#deleteResultName").textContent = run.name || run.id;
   $("#deleteResultID").textContent = run.id;
   $("#deleteApiToken").value = token();
@@ -1157,7 +981,7 @@ async function confirmResultDeletion() {
     $("#confirmDeleteResult").disabled = false;
     $("#confirmDeleteResult").textContent = "Delete result";
     $("#cancelDeleteResult").disabled = false;
-    renderResultSizeViews();
+    renderResultViews();
     // A slow list refresh must not keep the deletion dialog locked.
     void refreshSavedResults();
   }
@@ -1524,7 +1348,7 @@ function setupTopologyControls() {
     else startTopologyMotion();
   });
   window.addEventListener("pagehide", stopTopologyMotion);
-  for (const protocol of ["kademlia", "gossipsub", "transport"]) {
+  for (const protocol of ["transport", "kademlia", "gossipsub"]) {
     $(`#show${protocol}`).addEventListener("change", (event) => {
       state.topology.filters[protocol] = event.target.checked;
       if (state.snapshot) renderTopology(state.snapshot.nodes || [], state.snapshot.edges || []);
@@ -1720,7 +1544,6 @@ $("#deleteResultDialog").addEventListener("cancel", (event) => {
 $("#deleteResultDialog").addEventListener("close", () => {
   if (!state.deletingResultId) {
     state.pendingDelete = null;
-    queueResultDownloadSizes(state.savedResults || []);
   }
 });
 

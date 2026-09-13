@@ -267,9 +267,11 @@ Agent update/rollback은 `stop-first`입니다. `start-first`로 바꾸면 같�
 
 노드 drain은 Swarm 서비스 task에 적용됩니다. v3 Peer는 standalone 컨테이너이므로 Swarm이 직접 이전하지 않습니다. 정상 Agent 종료에서 Peer를 정리하고, 비정상 종료 후에는 동일 Agent ID·Peer network name으로 같은 노드에서 재시작할 때 잔존 컨테이너를 회수합니다. 노드 재가입, stack/service 이름 변경 또는 네트워크 이름 변경 시 이전 소유 범위의 잔존 Peer는 해당 서버에서 label을 확인해 별도로 정리해야 합니다. 전체 호스트 정지·네트워크 단절을 다른 서버의 Peer 재생성으로 숨기지 않습니다.
 
-Controller는 단일 인스턴스이며 공유 DB/leader election을 구현하지 않았습니다. `replicas: 1`을 유지하십시오. control 노드 장애 시 자동으로 빈 로컬 volume을 쓰는 다른 노드로 이동하지 않으며, 백업 복원과 새 Node ID 지정이 필요합니다. Controller는 실시간 실험 상태·counter를 시작 시 메모리에 복원하거나 실행 중 실험을 자동 재개하지 않습니다. 보존된 파일은 재시작 후에도 대시보드의 **Saved results**와 [결과 다운로드 API](monitoring.kr.md#실험-결과-다운로드)에서 받을 수 있습니다. 이전에 실행 중이었던 기록은 `interrupted`로 표시하지만 Peer 정리를 확인한 상태는 아닙니다. Controller crash만으로 Agent의 Peer가 종료되지는 않습니다. 계획된 업데이트 전 시나리오의 `stop-all` 또는 활성 run 취소로 정리하고 잔존 Peer를 확인하십시오. 이미 completed이지만 `stop-all`을 생략한 run의 Peer는 Controller 종료만으로 정리되지 않습니다.
+Controller는 단일 인스턴스이며 공유 DB/leader election을 구현하지 않았습니다. `replicas: 1`을 유지하십시오. control 노드 장애 시 자동으로 빈 로컬 volume을 쓰는 다른 노드로 이동하지 않으며, 백업 복원과 새 Node ID 지정이 필요합니다. Controller는 실시간 실험 상태·counter를 시작 시 메모리에 복원하거나 실행 중 실험을 자동 재개하지 않습니다. 보존된 파일은 재시작 후에도 대시보드의 **Saved results**와 [결과 다운로드 API](monitoring.kr.md#실험-결과-다운로드)에서 받을 수 있습니다. 이전에 실행 중이었던 기록은 `interrupted`로 표시하지만 Peer 정리를 확인한 상태는 아닙니다.
 
-전체 철거에는 `sh scripts/swarm.sh remove`를 사용하십시오. Controller 정지만으로 종료되지 않는 Peer도 이후 Agent 종료 단계에서 정리합니다.
+Controller crash만으로 Agent의 Peer가 종료되지는 않습니다. 정상 Controller 종료는 활성 run을 취소한 뒤 등록된 Agent에 남은 Peer 제거를 요청하며, `stop-all`을 생략한 완료된 단일 run의 Peer도 포함합니다. 계획된 업데이트 전에는 활성 run을 완료하거나 취소하고 이 정리가 끝날 때까지 기다리십시오. Agent에 연결할 수 없거나 정리가 실패하면 종료 오류를 보고하므로 해당 호스트의 잔존 컨테이너를 확인해야 합니다.
+
+전체 철거에는 `sh scripts/swarm.sh remove`를 사용하십시오. Controller 정상 종료를 확인한 뒤 Agent를 정지하고, Agent 정상 종료까지 확인한 뒤 stack을 제거합니다. Controller 정리 오류가 발생하면 확인을 위해 절차를 중단하며 Agent 단계로 진행하지 않습니다.
 
 SIGTERM을 받으면 Controller는 새 실험 수락을 중단하고 HTTP 연결, 실험 job, Peer 정리와 최종 상태 저장을 기다립니다. 기본 `jobShutdownTimeout: 3m`은 job 종료와 Peer 정리에 각각 적용되므로 stack은 Controller 종료 유예를 `10m`로 설정합니다. Agent에는 최대 175초의 Peer 정리, HTTP handler 종료와 제한된 telemetry drain을 포함하는 `4m`를 제공합니다. 시나리오의 `jobShutdownTimeout`을 늘리면 Controller 유예도 함께 늘리고 외부 서비스 관리자가 이 시간을 단축하지 않도록 하십시오.
 

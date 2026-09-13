@@ -122,9 +122,9 @@
         <div class="topology-toolbar">
           <fieldset class="topology-layers" aria-label="Visible relationship layers">
             <legend>Layers</legend>
-            <label title="Reported Kademlia routing table membership; this does not require an active transport connection."><input type="checkbox" id="showkademlia" checked><i class="link-key kademlia" aria-hidden="true"></i>Kademlia</label>
-            <label title="Reported GossipSub GRAFT mesh membership by topic."><input type="checkbox" id="showgossipsub" checked><i class="link-key gossipsub" aria-hidden="true"></i>GossipSub mesh</label>
             <label title="Reported libp2p transport connections. Older Peers may report only this layer."><input type="checkbox" id="showtransport"><i class="link-key transport" aria-hidden="true"></i>Transport</label>
+            <label title="Reported Kademlia routing table membership; this does not require an active transport connection."><input type="checkbox" id="showkademlia"><i class="link-key kademlia" aria-hidden="true"></i>Kademlia</label>
+            <label title="Reported GossipSub GRAFT mesh membership by topic."><input type="checkbox" id="showgossipsub"><i class="link-key gossipsub" aria-hidden="true"></i>GossipSub mesh</label>
           </fieldset>
           <label class="topology-topic" for="topologyTopic">GossipSub topic<select id="topologyTopic"><option value="">All topics</option></select></label>
           <div class="topology-camera" role="group" aria-label="Topology view controls">
@@ -203,7 +203,7 @@
         </div>
         <button class="secondary-button" id="refreshResults" type="button">Refresh</button>
       </header>
-      <p class="results-help">Results saved on this Controller remain available after a restart. Interrupted runs are not resumed. Downloads from running experiments are snapshots.</p>
+      <p class="results-help">Results saved on this Controller remain available after a restart. Interrupted runs are not resumed. Downloads from running experiments are snapshots. Source sizes show the uncompressed original files at the last refresh.</p>
       <p class="results-status" id="savedResultsStatus" role="status" aria-live="polite">Loading saved results…</p>
       <div id="savedBatchList" class="saved-batches" aria-label="Repeated experiment analysis" hidden></div>
       <div class="table-wrap" id="savedResultsTable" hidden>
