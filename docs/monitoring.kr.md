@@ -56,7 +56,7 @@ Prometheus는 Controller와 Agent의 `/metrics`를 5초마다 수집합니다. C
 
 ## 실험 결과 다운로드
 
-대시보드의 실험 항목이나 **Saved results**에서 **Download results**를 선택합니다. 저장 목록은 Controller의 데이터 디렉터리를 읽으므로 Controller 재시작 후에도 결과에 접근할 수 있습니다. 백업 파일을 복원한 뒤에는 **Refresh**로 목록을 갱신합니다. 실행 중 실험에는 **Download snapshot**이 표시됩니다. 용량은 마지막 목록 조회 시점의 압축 전 원본 파일 합계인 **Source**로 바로 표시합니다. 실행·대기 중 결과도 **Live source**로 표시하며 새로고침하면 갱신됩니다. ZIP 다운로드 크기와는 다를 수 있습니다.
+대시보드의 실험 항목이나 **Saved results**에서 **Download results**를 선택합니다. 반복 run은 [시리즈 헤더](visualization.kr.md#같은-실험의-반복-run-통합-평균)를 펼쳐 각 run의 다운로드·분석·삭제를 사용합니다. 저장 목록은 Controller의 데이터 디렉터리를 읽으므로 Controller 재시작 후에도 결과에 접근할 수 있습니다. 백업 파일을 복원한 뒤에는 **Refresh**로 목록을 갱신합니다. 실행 중 실험에는 **Download snapshot**이 표시됩니다. 용량은 마지막 목록 조회 시점의 압축 전 원본 파일 합계인 **Source**로 바로 표시합니다. 실행·대기 중 결과도 **Live source**로 표시하며 새로고침하면 갱신됩니다. ZIP 다운로드 크기와는 다를 수 있습니다.
 
 ZIP에는 다음 파일이 들어 있습니다.
 

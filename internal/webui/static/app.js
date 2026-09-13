@@ -516,7 +516,7 @@ function resultDownloadLink(run) {
   const path = `/api/v1/experiments/${encodeURIComponent(run.id)}/download`;
   const title = active ? "Download a ZIP snapshot of the scenario, metadata, and events recorded so far."
     : "Download the saved scenario, metadata, and events as a ZIP file.";
-  return `<a class="download-link" href="${escapeHTML(path)}" download="${escapeHTML(`${run.id}.zip`)}" target="_blank" rel="noopener" title="${title}" aria-label="${escapeHTML(`${label}: ${run.name || run.id}`)}">${label}</a>`;
+  return `<a class="download-link" data-result-download="${escapeHTML(run.id)}" href="${escapeHTML(path)}" download="${escapeHTML(`${run.id}.zip`)}" target="_blank" rel="noopener" title="${title}" aria-label="${escapeHTML(`${label}: ${run.name || run.id}`)}">${label}</a>`;
 }
 
 function resultSourceSize(run) {
@@ -887,38 +887,106 @@ async function refreshSavedResults() {
 function savedResultBatches(results) {
   const groups = new Map();
   for (const run of results) {
-    if (!run.batchId || !(run.repetitions > 1)) continue;
-    if (!groups.has(run.batchId)) groups.set(run.batchId, { id: run.batchId, name: run.name || run.batchId, runs: [], expected: run.repetitions });
+    if (!run.batchId) continue;
+    if (!groups.has(run.batchId)) groups.set(run.batchId, { id: run.batchId, name: run.name || run.batchId, runs: [], expected: 1 });
     const batch = groups.get(run.batchId);
     batch.runs.push(run);
-    batch.expected = Math.max(batch.expected, run.repetitions);
+    batch.expected = Math.max(batch.expected, run.repetitions || 1);
   }
-  return [...groups.values()].map(batch => ({ ...batch,
+  return [...groups.values()].filter(batch => batch.expected > 1).map(batch => ({ ...batch,
     completed: batch.runs.filter(run => run.state === "completed").length,
     active: batch.runs.some(isPendingRun),
     job: batch.runs.find(run => run.batchAnalysis)?.batchAnalysis,
   }));
 }
 
-function renderSavedBatches(results) {
-  const list = $("#savedBatchList");
-  if (!list) return;
-  const batches = savedResultBatches(results);
-  list.hidden = !batches.length;
-  setHTML(list, batches.map(batch => {
-    const job = batch.job;
-    const label = ["queued", "running"].includes(job?.state) ? `Batch mean · ${job.state === "queued" ? "Queued" : `${Math.floor(job.progress || 0)}%`}`
-      : job?.state === "completed" ? "Batch mean · Ready" : ["failed", "interrupted"].includes(job?.state) ? "Batch mean · Retry" : "Analyze batch mean";
-    const excluded = batch.runs.length - batch.completed;
-    const missing = Math.max(0, batch.expected - batch.runs.length);
-    const hint = batch.active ? "Available after all runs in this batch stop." : batch.completed < 2 ? "At least two completed runs are required." : "Analyze completed runs with equal weight; individual Images remain available below.";
-    return `<article class="saved-batch"><div><strong>${escapeHTML(batch.name)}</strong><span class="result-id">Batch ${escapeHTML(batch.id)}</span><span class="result-id">${batch.completed} / ${batch.expected} completed · ${batch.active ? "Batch still running" : `${excluded} excluded · ${missing} missing/unreadable`}</span></div><button type="button" class="secondary-button batch-images-button" data-batch-images="${escapeHTML(batch.id)}" title="${escapeHTML(hint)}" aria-label="${escapeHTML(`Analyze batch mean: ${batch.name}`)}" ${batch.active || batch.completed < 2 ? "disabled" : ""}>${label}</button></article>`;
-  }).join(""));
+function savedResultTable(runs, key, label = "Saved experiment results") {
+  return `<div class="table-wrap" data-result-table="${escapeHTML(key)}"><table aria-label="${escapeHTML(label)}">
+    <thead><tr><th scope="col">Experiment / ID</th><th scope="col">State</th><th scope="col">Started (local)</th><th scope="col">Finished (local)</th><th scope="col">Actions</th></tr></thead>
+    <tbody>${runs.map(savedResultRow).join("")}</tbody>
+  </table></div>`;
+}
+
+function savedResultBatch(batch) {
+  const job = batch.job;
+  const label = ["queued", "running"].includes(job?.state) ? `Batch mean · ${job.state === "queued" ? "Queued" : `${Math.floor(job.progress || 0)}%`}`
+    : job?.state === "completed" ? "Batch mean · Ready" : ["failed", "interrupted"].includes(job?.state) ? "Batch mean · Retry" : "Analyze batch mean";
+  const excluded = batch.runs.length - batch.completed;
+  const missing = Math.max(0, batch.expected - batch.runs.length);
+  const hint = batch.active ? "Available after all runs in this batch stop." : batch.completed < 2 ? "At least two completed runs are required." : "Analyze completed runs with equal weight; expand this series for individual Images.";
+  return `<details class="saved-batch" data-result-batch="${escapeHTML(batch.id)}">
+    <summary data-result-batch-toggle="${escapeHTML(batch.id)}">
+      <svg class="saved-batch-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m7 5 5 5-5 5"/></svg>
+      <span class="saved-batch-heading"><strong>${escapeHTML(batch.name)}</strong><span class="result-id">Batch ${escapeHTML(batch.id)}</span><span class="result-id">${batch.runs.length} ${batch.runs.length === 1 ? "run" : "runs"} · ${batch.completed} / ${batch.expected} completed · ${batch.active ? "Batch still running" : `${excluded} excluded · ${missing} missing/unreadable`}</span></span>
+      <span class="saved-batch-disclosure" aria-hidden="true"><span class="saved-batch-show">Show runs</span><span class="saved-batch-hide">Hide runs</span></span>
+      <button type="button" class="secondary-button batch-images-button" data-batch-images="${escapeHTML(batch.id)}" title="${escapeHTML(hint)}" aria-label="${escapeHTML(`Analyze batch mean: ${batch.name}`)}" ${batch.active || batch.completed < 2 ? "disabled" : ""}>${label}</button>
+    </summary>
+    ${savedResultTable(batch.runs, `batch:${batch.id}`, `Runs in ${batch.name} · ${batch.id}`)}
+  </details>`;
+}
+
+function savedResultsMarkup(results) {
+  const batches = new Map(savedResultBatches(results).map(batch => [batch.id, batch]));
+  const shown = new Set(), sections = [];
+  let individual = [], previousBatch = "";
+  const flushIndividual = () => {
+    if (!individual.length) return;
+    sections.push(savedResultTable(individual, `individual:${previousBatch}`));
+    individual = [];
+  };
+  // Keep the archive order; each batch occupies its first run's position.
+  for (const run of results) {
+    const batch = batches.get(run.batchId);
+    if (!batch) { individual.push(run); continue; }
+    if (shown.has(batch.id)) continue;
+    flushIndividual();
+    sections.push(savedResultBatch(batch));
+    shown.add(batch.id);
+    previousBatch = batch.id;
+  }
+  flushIndividual();
+  return sections.join("");
+}
+
+function savedResultFocus(control) {
+  const attribute = ["data-result-batch-toggle", "data-batch-images", "data-result-images", "data-result-download", "data-delete-result"].find(name => control?.hasAttribute(name));
+  return attribute ? { attribute, id: control.getAttribute(attribute), batch: control.closest("details[data-result-batch]")?.dataset.resultBatch } : null;
+}
+
+function restoreSavedResultFocus(focus) {
+  if (!focus) return;
+  const list = $("#savedResultsRows");
+  const target = [...list.querySelectorAll(`[${focus.attribute}]`)].find(element => element.getAttribute(focus.attribute) === focus.id);
+  const summary = [...list.querySelectorAll("[data-result-batch-toggle]")].find(element => element.dataset.resultBatchToggle === focus.batch);
+  const candidates = [target, summary, $("#refreshResults"), $('[data-panel-toggle="results"]')];
+  candidates.find(element => element && !element.disabled && element.getClientRects().length)?.focus({ preventScroll: true });
+}
+
+function rememberResultDialogFocus(dialog, control) {
+  if (!$("#savedResultsRows").contains(control)) return;
+  const focus = savedResultFocus(control);
+  // A job update can replace the opener while its modal is displayed.
+  $(dialog).addEventListener("close", () => restoreSavedResultFocus(focus), { once: true });
+}
+
+function updateSavedResultsList(markup) {
+  const list = $("#savedResultsRows");
+  if (renderedHTML.get(list) === markup) return;
+  // Polling and analysis progress may change the markup while a series is open.
+  // Restore its native disclosure, keyboard focus and horizontal table position
+  // synchronously, before the browser paints the updated list.
+  const open = new Set([...list.querySelectorAll("details[data-result-batch][open]")].map(details => details.dataset.resultBatch));
+  const scroll = new Map([...list.querySelectorAll("[data-result-table]")].map(table => [table.dataset.resultTable, table.scrollLeft]));
+  const focused = list.contains(document.activeElement) ? document.activeElement : null;
+  const focus = savedResultFocus(focused);
+  setHTML(list, markup);
+  for (const details of list.querySelectorAll("details[data-result-batch]")) details.open = open.has(details.dataset.resultBatch);
+  for (const table of list.querySelectorAll("[data-result-table]")) table.scrollLeft = scroll.get(table.dataset.resultTable) || 0;
+  restoreSavedResultFocus(focus);
 }
 
 function renderSavedResults() {
   const results = state.savedResults || [];
-  renderSavedBatches(results);
   const status = $("#savedResultsStatus");
   const refresh = $("#refreshResults");
   refresh.disabled = state.resultsLoading;
@@ -932,17 +1000,19 @@ function renderSavedResults() {
     : results.length ? "" : "No saved results yet.");
   status.hidden = !status.textContent;
   $("#savedResultsTable").hidden = results.length === 0;
-  setHTML($("#savedResultsRows"), results.map((run) => {
-    const stateHint = run.state === "interrupted" ? "Saved by a previous Controller; this run was not resumed."
-      : run.state === "unreadable" ? "Saved metadata could not be read." : run.state;
-    return `<tr>
-      <td class="result-name"><strong>${escapeHTML(run.name || run.id)}</strong><span class="result-id">${escapeHTML(run.id)}</span>${run.repetitions > 1 ? `<span class="result-id">Run ${formatNumber(run.iteration)} of ${formatNumber(run.repetitions)}</span>` : ""}</td>
-      <td><span class="status-pill ${escapeHTML(run.state)}" title="${escapeHTML(stateHint)}">${escapeHTML(run.state)}</span></td>
-      <td>${escapeHTML(formatResultTime(run.startedAt))}</td>
-      <td>${escapeHTML(formatResultTime(run.finishedAt))}</td>
-      <td><div class="result-actions">${resultImagesButton(run)}${resultDownloadLink(run)}${resultSourceSize(run)}<button class="delete-result-button" type="button" data-delete-result="${escapeHTML(run.id)}" aria-label="${escapeHTML(`Delete saved result: ${run.name || run.id}`)}" title="${resultLocked(run) ? "Available after this run and its batch have stopped." : "Delete this run's saved result."}" ${resultLocked(run) || state.deletingResultId ? "disabled" : ""}>${state.deletingResultId === run.id ? "Deleting…" : "Delete"}</button></div></td>
-    </tr>`;
-  }).join(""));
+  updateSavedResultsList(savedResultsMarkup(results));
+}
+
+function savedResultRow(run) {
+  const stateHint = run.state === "interrupted" ? "Saved by a previous Controller; this run was not resumed."
+    : run.state === "unreadable" ? "Saved metadata could not be read." : run.state;
+  return `<tr>
+    <td class="result-name"><strong>${escapeHTML(run.name || run.id)}</strong><span class="result-id">${escapeHTML(run.id)}</span>${run.repetitions > 1 ? `<span class="result-id">Run ${formatNumber(run.iteration)} of ${formatNumber(run.repetitions)}</span>` : ""}</td>
+    <td><span class="status-pill ${escapeHTML(run.state)}" title="${escapeHTML(stateHint)}">${escapeHTML(run.state)}</span></td>
+    <td>${escapeHTML(formatResultTime(run.startedAt))}</td>
+    <td>${escapeHTML(formatResultTime(run.finishedAt))}</td>
+    <td><div class="result-actions">${resultImagesButton(run)}${resultDownloadLink(run)}${resultSourceSize(run)}<button class="delete-result-button" type="button" data-delete-result="${escapeHTML(run.id)}" aria-label="${escapeHTML(`Delete saved result: ${run.name || run.id}`)}" title="${resultLocked(run) ? "Available after this run and its batch have stopped." : "Delete this run's saved result."}" ${resultLocked(run) || state.deletingResultId ? "disabled" : ""}>${state.deletingResultId === run.id ? "Deleting…" : "Delete"}</button></div></td>
+  </tr>`;
 }
 
 function requestResultDeletion(id) {
@@ -1507,7 +1577,11 @@ for (const close of document.querySelectorAll("[data-scenario-close]")) close.ad
 document.addEventListener("click", async (event) => {
   const batchImagesButton = event.target.closest("[data-batch-images]");
   if (batchImagesButton) {
-    if (!batchImagesButton.disabled) globalThis.KPLResultImages?.openBatch(batchImagesButton.dataset.batchImages);
+    event.preventDefault(); // Analyze without toggling the surrounding summary.
+    if (!batchImagesButton.disabled) {
+      rememberResultDialogFocus("#resultImagesDialog", batchImagesButton);
+      globalThis.KPLResultImages?.openBatch(batchImagesButton.dataset.batchImages);
+    }
     return;
   }
   const loadScenarioButton = event.target.closest("[data-load-scenario]");
@@ -1532,12 +1606,18 @@ document.addEventListener("click", async (event) => {
   }
   const imagesButton = event.target.closest("[data-result-images]");
   if (imagesButton) {
-    if (!imagesButton.disabled) void globalThis.KPLResultImages?.open(imagesButton.dataset.resultImages);
+    if (!imagesButton.disabled) {
+      rememberResultDialogFocus("#resultImagesDialog", imagesButton);
+      void globalThis.KPLResultImages?.open(imagesButton.dataset.resultImages);
+    }
     return;
   }
   const deleteButton = event.target.closest("[data-delete-result]");
   if (deleteButton) {
-    if (!deleteButton.disabled) requestResultDeletion(deleteButton.dataset.deleteResult);
+    if (!deleteButton.disabled) {
+      rememberResultDialogFocus("#deleteResultDialog", deleteButton);
+      requestResultDeletion(deleteButton.dataset.deleteResult);
+    }
     return;
   }
   const button = event.target.closest("[data-stop-run]");

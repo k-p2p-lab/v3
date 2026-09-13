@@ -479,11 +479,29 @@ dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
 .research-table-wrap input:not([type=checkbox]) { min-width: 10rem; }
 .result-image figcaption { flex-wrap: wrap; }
 
-.saved-batches { display: grid; gap: .65rem; padding: 0 1.2rem 1rem; }
-.saved-batch { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .8rem; border: 1px solid var(--line); border-radius: .5rem; }
-.saved-batch > div { min-width: 0; overflow-wrap: anywhere; }
+.saved-results-list { display: grid; gap: .65rem; padding: 0 1.2rem 1rem; }
+.saved-results-list > * { min-width: 0; }
+.saved-batch { border: 1px solid var(--line); border-radius: .65rem; background: rgba(7, 16, 24, .25); }
+.saved-batch > summary { display: flex; align-items: center; gap: .85rem; padding: .85rem 1rem; list-style: none; cursor: pointer; border-radius: .65rem; }
+.saved-batch > summary::-webkit-details-marker { display: none; }
+.saved-batch > summary:hover { background: rgba(57, 214, 208, .035); }
+.saved-batch > summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: -2px; }
+.saved-batch-heading { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: .86rem; }
+.saved-batch-heading strong { font-weight: 650; }
+.saved-batch-chevron { flex: 0 0 1.1rem; width: 1.1rem; height: 1.1rem; fill: none; stroke: var(--muted); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.saved-batch[open] > summary .saved-batch-chevron { transform: rotate(90deg); }
+.saved-batch-disclosure { color: var(--muted); font-size: .72rem; white-space: nowrap; }
+.saved-batch-hide, .saved-batch[open] > summary .saved-batch-show { display: none; }
+.saved-batch[open] > summary .saved-batch-hide { display: inline; }
+.saved-batch > .table-wrap { border-top: 1px solid var(--line-soft); border-radius: 0 0 .65rem .65rem; }
 .batch-images-button { width: 13rem; flex-shrink: 0; font-variant-numeric: tabular-nums; }
 .batch-analysis-summary { margin: 1rem 0; }
 .batch-analysis-summary summary { cursor: pointer; color: var(--cyan); }
 .batch-analysis-summary .table-wrap { max-height: 24rem; overflow: auto; }
-@media (max-width: 600px) { .saved-batch { flex-direction: column; align-items: stretch; } .batch-images-button { align-self: flex-start; } }
+@media (max-width: 760px) {
+  .saved-results-list { padding-inline: .65rem; }
+  .saved-batch > summary { flex-wrap: wrap; gap: .65rem; padding: .85rem; }
+  .saved-batch-heading { flex-basis: calc(100% - 2rem); }
+  .saved-batch-disclosure { margin-left: 1.75rem; }
+  .saved-batch .batch-images-button { width: auto; max-width: 100%; margin-left: auto; font-size: .72rem; }
+}

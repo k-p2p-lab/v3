@@ -311,14 +311,10 @@
         <button class="panel-toggle" type="button" aria-expanded="true" aria-controls="panel-results-body" data-panel-toggle="results"><span class="panel-toggle-label">Collapse</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 12 5-5 5 5"/></svg></button>
       </header>
       <div class="panel-body" id="panel-results-body">
-        <p class="results-help">Results saved on this Controller remain available after a restart. Interrupted runs are not resumed. Downloads from running experiments are snapshots. Source sizes show the uncompressed original files at the last refresh.</p>
+        <p class="results-help">Results saved on this Controller remain available after a restart. Interrupted runs are not resumed. Downloads from running experiments are snapshots. Source sizes show the uncompressed original files at the last refresh. Expand a repeated series to view its individual runs.</p>
         <p class="results-status" id="savedResultsStatus" role="status" aria-live="polite">Loading saved results…</p>
-        <div id="savedBatchList" class="saved-batches" aria-label="Repeated experiment analysis" hidden></div>
-        <div class="table-wrap" id="savedResultsTable" hidden>
-          <table aria-label="Saved experiment results">
-            <thead><tr><th>Experiment / ID</th><th>State</th><th>Started (local)</th><th>Finished (local)</th><th>Actions</th></tr></thead>
-            <tbody id="savedResultsRows"></tbody>
-          </table>
+        <div id="savedResultsTable" hidden>
+          <div id="savedResultsRows" class="saved-results-list"></div>
         </div>
       </div>
     </section>

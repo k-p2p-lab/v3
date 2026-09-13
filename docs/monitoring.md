@@ -56,7 +56,7 @@ Prometheus scrapes `/metrics` on the Controller and Agents every 5 seconds. The 
 
 ## Download experiment results
 
-In the Dashboard, choose **Download results** on an experiment or in **Saved results**. The saved list reads the Controller's data directory, so results remain accessible after a Controller restart. Use **Refresh** after restoring files from a backup. Running experiments offer **Download snapshot**. Sizes immediately show **Source**, the sum of uncompressed original files at the last list refresh. Running and queued results show **Live source**; refresh the list to update it. This value can differ from the downloaded ZIP size.
+In the Dashboard, choose **Download results** on an experiment or in **Saved results**. For repeated runs, expand the [series header](visualization.md#batch-mean-for-repetitions-of-one-experiment) to access each run's download, analysis and deletion controls. The saved list reads the Controller's data directory, so results remain accessible after a Controller restart. Use **Refresh** after restoring files from a backup. Running experiments offer **Download snapshot**. Sizes immediately show **Source**, the sum of uncompressed original files at the last list refresh. Running and queued results show **Live source**; refresh the list to update it. This value can differ from the downloaded ZIP size.
 
 Each ZIP contains:
 

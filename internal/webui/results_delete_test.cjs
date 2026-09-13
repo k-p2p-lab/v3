@@ -11,6 +11,7 @@ function fixture(extra = {}) {
   const element = selector => {
     if (!elements.has(selector)) elements.set(selector, {
       textContent:'', innerHTML:'', value:'', disabled:false, hidden:false, open:false,
+      querySelectorAll(){return [];}, contains(){return false;},
       classList:{toggle(){}}, setAttribute(){},
       showModal(){this.open=true;}, close(){this.open=false;},
     });

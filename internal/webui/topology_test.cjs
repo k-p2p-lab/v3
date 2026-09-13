@@ -145,13 +145,13 @@ test('result refresh displays source bytes immediately without ZIP requests or e
   const elements = new Map(), timers = new Map();
   let nextTimer=0, heads=0, requests=0;
   const element = id => {
-    if (!elements.has(id)) elements.set(id, {classList:{toggle(){}},setAttribute(){},textContent:'',innerHTML:'',hidden:false,disabled:false});
+    if (!elements.has(id)) elements.set(id, {querySelectorAll(){return [];},contains(){return false;},classList:{toggle(){}},setAttribute(){},textContent:'',innerHTML:'',hidden:false,disabled:false});
     return elements.get(id);
   };
   const run = {id:'done',name:'Completed run',state:'completed',phase:1,totalPhases:1,seed:7};
   const state = {savedResults:null,resultsLoading:false,resultsError:'',resultsRefreshTimer:null,resultsRefreshPending:false,
     deletedResultIDs:new Set(),snapshot:{experiments:[run]},runStates:null,pendingStops:new Set(),deletingResultId:null};
-  const api = context({state,$:element,AbortController,
+  const api = context({state,$:element,document:{activeElement:null},AbortController,
     setTimeout:(fn,delay)=>{const id=++nextTimer;timers.set(id,{fn,delay});return id;},clearTimeout:id=>timers.delete(id),
     fetch:()=>{heads++;throw new Error('unexpected ZIP request');}});
   api.api = async path => {assert.equal(path,'/api/v1/results');requests++;return [{...run,sourceBytes:requests*1536}];};
