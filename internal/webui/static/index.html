@@ -29,75 +29,169 @@
   </header>
 
   <main>
-    <p class="metrics-scope" id="messageMetricsScope" title="Message and bandwidth metrics refer to this run. Agent and Peer counts describe the cluster.">Run metrics: No run selected</p>
-    <section class="metric-grid" aria-label="Cluster metrics">
-      <article class="metric-card accent-cyan">
-        <span>Online Agents</span>
-        <strong id="agentMetric">0 / 0</strong>
-        <small id="capacityMetric">Available slots: 0</small>
-      </article>
-      <article class="metric-card accent-green">
-        <span>Ready Peers</span>
-        <strong id="peerMetric">0</strong>
-        <small id="connectionMetric">Transport links: 0</small>
-      </article>
-      <article class="metric-card accent-amber" title="First on-time application delivery at a continuously subscribed remote session. Raw messages have no latency sample.">
-        <span>Propagation latency P95</span>
-        <strong id="latencyMetric">N/A</strong>
-        <small id="averageLatencyMetric">No eligible latency samples</small>
-      </article>
-      <article class="metric-card accent-violet" title="On-time deliveries / receiver sessions subscribed throughout the configured window. Departures are excluded from both counts, even after an early receipt.">
-        <span id="reachLabel">Continuous-session delivery</span>
-        <strong id="reachMetric">N/A</strong>
-        <small id="deliveryMetric">On time: 0 / 0 stable pairs</small>
-        <small id="measurementProgress">Windows: N/A · Mature: 0 · Pending: 0</small>
-        <small id="eventTotalsMetric">Published: 0 · Delivered: 0</small>
-      </article>
-      <article class="metric-card accent-cyan" title="Observed additional PubSub copies within the delivery window, divided by on-time deliveries at continuously subscribed remote sessions. This is an observed count; missing telemetry may undercount duplicates.">
-        <span>Avg duplicates / delivery</span>
-        <strong id="duplicateMetric">N/A</strong>
-        <small id="duplicateSamplesMetric">Eligible duplicates: 0 · Delivered pairs: 0</small>
-        <small id="duplicateTotalMetric">All duplicate events: 0</small>
-      </article>
-    </section>
-
-    <section class="bandwidth-grid" aria-label="P2P bandwidth metrics" aria-describedby="bandwidthScope">
-      <article class="metric-card accent-cyan" title="Sum of recent source interval-average send rates for this run. Transport overhead and HTTP management traffic are excluded.">
-        <span>P2P B/W · Send</span>
-        <strong id="bandwidthSendMetric">N/A</strong>
-        <small id="bandwidthSendTotal">Total sent: N/A</small>
-      </article>
-      <article class="metric-card accent-green" title="Sum of recent source interval-average receive rates for this run. Send and receive count opposite endpoints separately.">
-        <span>P2P B/W · Receive</span>
-        <strong id="bandwidthReceiveMetric">N/A</strong>
-        <small id="bandwidthReceiveTotal">Total received: N/A</small>
-      </article>
-      <article class="metric-card accent-amber" title="Only sessions that reported bandwidth can be counted. Missing final samples leave an unknown tail; absent peers are not included in these counts.">
-        <span>B/W measurement</span>
-        <strong id="bandwidthQualityMetric">N/A</strong>
-        <small id="bandwidthSessionsMetric">No bandwidth samples</small>
-        <small id="bandwidthSampleMetric">Last sample: N/A</small>
-        <small id="bandwidthRejectedMetric">Rejected samples: 0</small>
-      </article>
-    </section>
-    <p class="metrics-scope bandwidth-scope" id="bandwidthScope">P2P stream usage for the run above. Rates use recent source intervals; totals retain all accepted samples. Missing rates are N/A. Link capacity and HTTP management traffic are excluded.</p>
-
-    <section class="measurement-summary" id="measurementSummary" aria-label="Churn measurement context">
-      <article title="On-time delivery bounds among receiver sessions proved alive when publication began, including sessions that departed before the deadline.">
-        <span>Known starting-session delivery</span>
-        <strong id="initialReachMetric">N/A</strong>
-        <small id="initialDeliveryMetric">On time: 0 / 0 known starting pairs</small>
-      </article>
-      <article title="Lower and upper bounds for the share of known starting sessions that remained subscribed through the deadline.">
-        <span>Continuous-session coverage</span>
-        <strong id="coverageMetric">N/A</strong>
-        <small id="coverageDetail">Stable: 0 / 0 known starting pairs · Departed: 0</small>
-      </article>
-      <article>
-        <span>Observation quality</span>
-        <strong class="observation-counts" id="observationMetric">0 receipt unknown · 0 continuity unknown · 0 start unknown</strong>
-        <small id="outcomesMetric">Known missed: 0 · Observed late: 0</small>
-      </article>
+    <section class="metrics-section" aria-labelledby="metricsHeading">
+      <header class="metrics-header">
+        <div class="metrics-heading">
+          <h2 id="metricsHeading">Metrics</h2>
+          <p class="metrics-scope" id="messageMetricsScope" title="Message and bandwidth metrics refer to this run. Agent and Peer counts describe the cluster.">Run metrics: No run selected</p>
+        </div>
+        <div class="metrics-navigation" role="group" aria-label="Metrics navigation">
+          <span class="metrics-hint" id="metricsHint">Hover or select to explore</span>
+          <button class="metric-nav" id="metricsPrevious" type="button" aria-label="Previous metrics" aria-controls="metricCarousel" disabled><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12 5-5 5 5 5"/></svg></button>
+          <button class="metric-nav" id="metricsNext" type="button" aria-label="Next metrics" aria-controls="metricCarousel"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m8 5 5 5-5 5"/></svg></button>
+        </div>
+      </header>
+      <div class="metric-carousel" id="metricCarousel" role="group" aria-label="Live metrics" aria-roledescription="carousel" aria-describedby="metricsHint">
+        <article class="metric-card accent-cyan" data-metric="agents">
+          <button class="metric-toggle" type="button" aria-expanded="false" aria-controls="metric-agents-details" aria-labelledby="metric-agents-label agentMetric">
+            <span class="metric-category">Cluster<span class="metric-index" aria-hidden="true">01</span></span>
+            <span class="metric-label" id="metric-agents-label">Online Agents</span>
+            <strong id="agentMetric">0 / 0</strong>
+            <span class="metric-caption">Cluster capacity</span>
+            <span class="metric-expand" aria-hidden="true">↗</span>
+          </button>
+          <div class="metric-detail" id="metric-agents-details" tabindex="0" role="region" aria-label="Online Agents details" hidden>
+            <p class="metric-stat" id="capacityMetric">Available slots: 0</p>
+            <p class="metric-description">Online Agents out of all registered Agents. Available slots count only online Agents.</p>
+          </div>
+        </article>
+        <article class="metric-card accent-green" data-metric="peers">
+          <button class="metric-toggle" type="button" aria-expanded="false" aria-controls="metric-peers-details" aria-labelledby="metric-peers-label peerMetric">
+            <span class="metric-category">Cluster<span class="metric-index" aria-hidden="true">02</span></span>
+            <span class="metric-label" id="metric-peers-label">Ready Peers</span>
+            <strong id="peerMetric">0</strong>
+            <span class="metric-caption">Active network</span>
+            <span class="metric-expand" aria-hidden="true">↗</span>
+          </button>
+          <div class="metric-detail" id="metric-peers-details" tabindex="0" role="region" aria-label="Ready Peers details" hidden>
+            <p class="metric-stat" id="connectionMetric">Transport links: 0</p>
+            <p class="metric-description">Ready Peers and observed transport links across the cluster, independent of the selected run.</p>
+          </div>
+        </article>
+        <article class="metric-card accent-amber" data-metric="latency">
+          <button class="metric-toggle" type="button" aria-expanded="false" aria-controls="metric-latency-details" aria-labelledby="metric-latency-label latencyMetric">
+            <span class="metric-category">Delivery<span class="metric-index" aria-hidden="true">03</span></span>
+            <span class="metric-label" id="metric-latency-label">Propagation latency P95</span>
+            <strong id="latencyMetric">N/A</strong>
+            <span class="metric-caption">On-time receipts</span>
+            <span class="metric-expand" aria-hidden="true">↗</span>
+          </button>
+          <div class="metric-detail" id="metric-latency-details" tabindex="0" role="region" aria-label="Propagation latency P95 details" hidden>
+            <p class="metric-stat" id="averageLatencyMetric">No eligible latency samples</p>
+            <p class="metric-description">First on-time application delivery at a continuously subscribed remote session. Raw messages have no latency sample.</p>
+          </div>
+        </article>
+        <article class="metric-card accent-violet" data-metric="delivery">
+          <button class="metric-toggle" type="button" aria-expanded="false" aria-controls="metric-delivery-details" aria-labelledby="reachLabel reachMetric">
+            <span class="metric-category">Delivery<span class="metric-index" aria-hidden="true">04</span></span>
+            <span class="metric-label" id="reachLabel">Continuous-session delivery</span>
+            <strong id="reachMetric">N/A</strong>
+            <span class="metric-caption">Stable receiver sessions</span>
+            <span class="metric-expand" aria-hidden="true">↗</span>
+          </button>
+          <div class="metric-detail" id="metric-delivery-details" tabindex="0" role="region" aria-label="Continuous-session delivery details" hidden>
+            <p class="metric-stat" id="deliveryMetric">On time: 0 / 0 stable pairs</p>
+            <p class="metric-stat" id="measurementProgress">Windows: N/A · Mature: 0 · Pending: 0</p>
+            <p class="metric-stat" id="eventTotalsMetric">Published: 0 · Delivered: 0</p>
+            <p class="metric-description">On-time deliveries / receiver sessions subscribed throughout the configured window. Departures are excluded from both counts, even after an early receipt.</p>
+          </div>
+        </article>
+        <article class="metric-card accent-cyan" data-metric="duplicates">
+          <button class="metric-toggle" type="button" aria-expanded="false" aria-controls="metric-duplicates-details" aria-labelledby="metric-duplicates-label duplicateMetric">
+            <span class="metric-category">Delivery<span class="metric-index" aria-hidden="true">05</span></span>
+            <span class="metric-label" id="metric-duplicates-label">Avg duplicates / delivery</span>
+            <strong id="duplicateMetric">N/A</strong>
+            <span class="metric-caption">Observed extra copies</span>
+            <span class="metric-expand" aria-hidden="true">↗</span>
+          </button>
+          <div class="metric-detail" id="metric-duplicates-details" tabindex="0" role="region" aria-label="Avg duplicates / delivery details" hidden>
+            <p class="metric-stat" id="duplicateSamplesMetric">Eligible duplicates: 0 · Delivered pairs: 0</p>
+            <p class="metric-stat" id="duplicateTotalMetric">All duplicate events: 0</p>
+            <p class="metric-description">Additional PubSub copies within the delivery window / on-time deliveries at continuously subscribed remote sessions. Missing telemetry may undercount duplicates.</p>
+          </div>
+        </article>
+        <article class="metric-card accent-cyan" data-metric="send">
+          <button class="metric-toggle" type="button" aria-expanded="false" aria-controls="metric-send-details" aria-labelledby="metric-send-label bandwidthSendMetric">
+            <span class="metric-category">Bandwidth<span class="metric-index" aria-hidden="true">06</span></span>
+            <span class="metric-label" id="metric-send-label">P2P B/W · Send</span>
+            <strong id="bandwidthSendMetric">N/A</strong>
+            <span class="metric-caption">Recent interval rate</span>
+            <span class="metric-expand" aria-hidden="true">↗</span>
+          </button>
+          <div class="metric-detail" id="metric-send-details" tabindex="0" role="region" aria-label="P2P B/W · Send details" hidden>
+            <p class="metric-stat" id="bandwidthSendTotal">Total sent: N/A</p>
+            <p class="metric-description" id="bandwidthScope">P2P stream usage for the run above. Rates use recent source intervals; totals retain all accepted samples. Missing rates are N/A. Link capacity, transport overhead and HTTP management traffic are excluded.</p>
+          </div>
+        </article>
+        <article class="metric-card accent-green" data-metric="receive">
+          <button class="metric-toggle" type="button" aria-expanded="false" aria-controls="metric-receive-details" aria-labelledby="metric-receive-label bandwidthReceiveMetric">
+            <span class="metric-category">Bandwidth<span class="metric-index" aria-hidden="true">07</span></span>
+            <span class="metric-label" id="metric-receive-label">P2P B/W · Receive</span>
+            <strong id="bandwidthReceiveMetric">N/A</strong>
+            <span class="metric-caption">Recent interval rate</span>
+            <span class="metric-expand" aria-hidden="true">↗</span>
+          </button>
+          <div class="metric-detail" id="metric-receive-details" tabindex="0" role="region" aria-label="P2P B/W · Receive details" hidden>
+            <p class="metric-stat" id="bandwidthReceiveTotal">Total received: N/A</p>
+            <p class="metric-description">Sum of recent source interval-average receive rates for this run. Send and receive count opposite endpoints separately. Transport overhead and HTTP management traffic are excluded.</p>
+          </div>
+        </article>
+        <article class="metric-card accent-amber metric-card--status" data-metric="bandwidth">
+          <button class="metric-toggle" type="button" aria-expanded="false" aria-controls="metric-bandwidth-details" aria-labelledby="metric-bandwidth-label bandwidthQualityMetric">
+            <span class="metric-category">Bandwidth<span class="metric-index" aria-hidden="true">08</span></span>
+            <span class="metric-label" id="metric-bandwidth-label">B/W measurement</span>
+            <strong id="bandwidthQualityMetric">N/A</strong>
+            <span class="metric-caption">Reported sessions</span>
+            <span class="metric-expand" aria-hidden="true">↗</span>
+          </button>
+          <div class="metric-detail" id="metric-bandwidth-details" tabindex="0" role="region" aria-label="B/W measurement details" hidden>
+            <p class="metric-stat" id="bandwidthSessionsMetric">No bandwidth samples</p>
+            <p class="metric-stat" id="bandwidthSampleMetric">Last sample: N/A</p>
+            <p class="metric-stat" id="bandwidthRejectedMetric">Rejected samples: 0</p>
+            <p class="metric-description">Only sessions that reported bandwidth can be counted. Missing final samples leave an unknown tail; absent Peers are not included in these counts.</p>
+          </div>
+        </article>
+        <article class="metric-card accent-violet" data-metric="starting">
+          <button class="metric-toggle" type="button" aria-expanded="false" aria-controls="metric-starting-details" aria-labelledby="metric-starting-label initialReachMetric">
+            <span class="metric-category">Observation<span class="metric-index" aria-hidden="true">09</span></span>
+            <span class="metric-label" id="metric-starting-label">Known starting-session delivery</span>
+            <strong id="initialReachMetric">N/A</strong>
+            <span class="metric-caption">At publication time</span>
+            <span class="metric-expand" aria-hidden="true">↗</span>
+          </button>
+          <div class="metric-detail" id="metric-starting-details" tabindex="0" role="region" aria-label="Known starting-session delivery details" hidden>
+            <p class="metric-stat" id="initialDeliveryMetric">On time: 0 / 0 known starting pairs</p>
+            <p class="metric-description">On-time delivery bounds among receiver sessions proved alive when publication began, including sessions that departed before the deadline.</p>
+          </div>
+        </article>
+        <article class="metric-card accent-green" data-metric="coverage">
+          <button class="metric-toggle" type="button" aria-expanded="false" aria-controls="metric-coverage-details" aria-labelledby="metric-coverage-label coverageMetric">
+            <span class="metric-category">Observation<span class="metric-index" aria-hidden="true">10</span></span>
+            <span class="metric-label" id="metric-coverage-label">Continuous-session coverage</span>
+            <strong id="coverageMetric">N/A</strong>
+            <span class="metric-caption">Through the deadline</span>
+            <span class="metric-expand" aria-hidden="true">↗</span>
+          </button>
+          <div class="metric-detail" id="metric-coverage-details" tabindex="0" role="region" aria-label="Continuous-session coverage details" hidden>
+            <p class="metric-stat" id="coverageDetail">Stable: 0 / 0 known starting pairs · Departed: 0</p>
+            <p class="metric-description">Lower and upper bounds for the share of known starting sessions that remained subscribed through the deadline.</p>
+          </div>
+        </article>
+        <article class="metric-card accent-amber" data-metric="observation">
+          <button class="metric-toggle" type="button" aria-expanded="false" aria-controls="metric-observation-details" aria-labelledby="metric-observation-label observationSummaryMetric">
+            <span class="metric-category">Observation<span class="metric-index" aria-hidden="true">11</span></span>
+            <span class="metric-label" id="metric-observation-label">Observation quality</span>
+            <strong id="observationSummaryMetric">0 / 0 / 0</strong>
+            <span class="metric-caption">Receipt · Continuity · Start</span>
+            <span class="metric-expand" aria-hidden="true">↗</span>
+          </button>
+          <div class="metric-detail" id="metric-observation-details" tabindex="0" role="region" aria-label="Observation quality details" hidden>
+            <p class="metric-stat" id="observationMetric">0 receipt unknown · 0 continuity unknown · 0 start unknown</p>
+            <p class="metric-stat" id="outcomesMetric">Known missed: 0 · Observed late: 0</p>
+            <p class="metric-description">Unknown evidence counts for receipt, subscription continuity and publication-time availability. These categories can overlap; they are not added together.</p>
+          </div>
+        </article>
+      </div>
     </section>
     <details class="measurement-help" id="measurementHelp">
       <summary>How delivery is measured</summary>
@@ -338,6 +432,7 @@
   <script src="/research-ui.js" defer></script>
   <script src="/batch-analysis.js" defer></script>
   <script src="/result-images.js" defer></script>
+  <script src="/metrics-carousel.js" defer></script>
   <script src="/app.js" defer></script>
 </body>
 </html>

@@ -43,9 +43,9 @@ received bit/s = 8 × (receivedBytes_now - receivedBytes_previous) / elapsed_sec
 
 ## 내장 Dashboard
 
-메인 Dashboard 상단 Metrics의 **P2P B/W · Send / Receive**에서 현재 실행의 송수신 전송률과 누적 전송량을 확인합니다. 전송률은 각 Peer의 마지막 소스 측정 구간 평균을 합산하며, 단위는 bit/s·kbit/s·Mbit/s 등으로 자동 표시합니다. 누적량은 B·KiB·MiB 등으로 표시합니다. 토폴로지의 topic/layer 필터와 독립적이며 상단 **Run metrics**에 표시된 실행을 따릅니다.
+Dashboard의 **P2P B/W · Send / Receive** 카드는 같은 **Metrics** 행에 포함됩니다. 대표 값은 현재 실행의 송수신 전송률이며, 각 카드를 펼치면 누적 전송량과 설명을 확인합니다. 마우스·키보드·터치 조작은 [Metrics 사용법](monitoring.kr.md#dashboard-내장-시각화)을 참고하십시오. 전송률은 각 Peer의 마지막 소스 측정 구간 평균을 합산하며, 단위는 bit/s·kbit/s·Mbit/s 등으로 자동 표시합니다. 누적량은 B·KiB·MiB 등으로 표시합니다. 토폴로지의 topic/layer 필터와 독립적이며 상단 **Run metrics**에 표시된 실행을 따릅니다.
 
-**B/W measurement**는 신선한 활성 세션 수, 종료 표본 수, 마지막 표본 시각과 거부 표본 수를 보여 줍니다. 일부 활성 세션만 신선하면 `Partial`, 전송률을 알 수 없으면 `Rate unavailable`, 유효 표본이 없으면 `N/A`입니다. 실제 측정한 0은 0으로 표시합니다. 15초 신선도 기준과 정상 종료 후 0 전송률은 Grafana와 같으며 누적량은 유지합니다. SSE는 이벤트가 없어도 15초마다 스냅샷을 보내 만료된 전송률을 갱신합니다. 라이브 스냅샷의 `metrics.bandwidth.currentRates`에 이 집계가 포함되며, 저장 결과 집계에는 현재 시각에 따른 전송률을 추가하지 않습니다.
+**B/W measurement**는 같은 행에서 수집 품질을 표시하며, 펼치면 신선한 활성 세션 수, 종료 표본 수, 마지막 표본 시각과 거부 표본 수를 보여 줍니다. 일부 활성 세션만 신선하면 `Partial`, 전송률을 알 수 없으면 `Rate unavailable`, 유효 표본이 없으면 `N/A`입니다. 실제 측정한 0은 0으로 표시합니다. 15초 신선도 기준과 정상 종료 후 0 전송률은 Grafana와 같으며 누적량은 유지합니다. SSE는 이벤트가 없어도 15초마다 스냅샷을 보내 만료된 전송률을 갱신합니다. 라이브 스냅샷의 `metrics.bandwidth.currentRates`에 이 집계가 포함되며, 저장 결과 집계에는 현재 시각에 따른 전송률을 추가하지 않습니다.
 
 **Saved results → Images**는 전체·프로토콜별 송신·수신 전송률(kbit/s)과 누적 전송량(KiB)을 PNG·CSV로 제공하며 전체 차트를 ZIP으로 다운로드할 수 있습니다. 원본 누적 카운터는 결과 API·ZIP과 Grafana에도 있습니다. 차트 조작과 비교 방법은 [시각화](visualization.kr.md)를 참고하십시오.
 

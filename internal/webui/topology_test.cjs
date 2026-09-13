@@ -50,7 +50,7 @@ test('initial markup and empty snapshots use the same current measurement cards'
   }
   assert.equal(empty.label, 'Continuous-session delivery');
   assert.equal(empty.primary, 'N/A');
-  assert.doesNotMatch(markup.match(/<section[^>]*id="measurementSummary"[^>]*>/)[0], /\bhidden\b/);
+  assert.doesNotMatch(markup.match(/<div[^>]*id="metricCarousel"[^>]*>/)[0], /\bhidden\b/);
   assert.doesNotMatch(markup, /Legacy|Historical definition|dispatch pairs/);
   for (const metrics of [undefined, null, {runId:'starting'}, {definition:'dispatch-cohort-v1', published:0}]) {
     assert.deepEqual(plain(api.deliveryMetricView(metrics)), plain(empty));

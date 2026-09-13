@@ -262,6 +262,7 @@ function sessionMetrics(metrics) {
 function deliveryMetricView(metrics) {
   metrics = sessionMetrics(metrics);
   const n = (key) => formatNumber(metrics[key]);
+  const compact = (key) => Number(metrics[key] || 0).toLocaleString("en-US", { notation: "compact", maximumFractionDigits: 1 });
   const coverageUpper = Number.isFinite(Number(metrics.stableCoverageUpperBound)) ? metrics.stableCoverageUpperBound : metrics.stableCoverage;
   return {
     label: "Continuous-session delivery",
@@ -272,6 +273,7 @@ function deliveryMetricView(metrics) {
     initialDetail: `On time: ${n("initialEligibleDeliveries")} / ${n("initialExpectedDeliveries")} known starting pairs`,
     coverage: ratioRange(metrics.stableCoverageAvailable, metrics.stableCoverage, coverageUpper, metrics.continuityUnknownPairs),
     coverageDetail: `Stable: ${n("expectedDeliveries")} / ${n("initialExpectedDeliveries")} known starting pairs · Departed: ${n("departedPairs")}`,
+    observationSummary: `${compact("unknownDeliveries")} / ${compact("continuityUnknownPairs")} / ${compact("publicationAvailabilityUnknownPairs")}`,
     observation: `${n("unknownDeliveries")} receipt unknown · ${n("continuityUnknownPairs")} continuity unknown · ${n("publicationAvailabilityUnknownPairs")} start unknown`,
     outcomes: `Known missed: ${n("missedDeliveries")} · Observed late: ${n("lateDeliveries")}`,
     note: measurementHelp,
@@ -426,6 +428,7 @@ function render(snapshot) {
   setText($("#coverageMetric"), delivery.coverage);
   setText($("#coverageDetail"), delivery.coverageDetail);
   setText($("#observationMetric"), delivery.observation);
+  setText($("#observationSummaryMetric"), delivery.observationSummary);
   setText($("#outcomesMetric"), delivery.outcomes);
   setText($("#measurementNote"), delivery.note);
   setText($("#eventTotalsMetric"), `Published: ${formatNumber(metrics.published)} · Delivered: ${formatNumber(metrics.delivered)}`);

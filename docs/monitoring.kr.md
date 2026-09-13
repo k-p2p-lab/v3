@@ -25,6 +25,14 @@ Swarm은 Prometheus/Grafana 포트를 control 노드에 게시합니다. 각 Age
 
 ## Dashboard 내장 시각화
 
+**Metrics**는 클러스터·전달·대역폭·관측 지표 카드 11개를 가로 한 행에 표시합니다. 가로로 스크롤하거나 **Previous metrics / Next metrics** 화살표 버튼으로 이동하십시오. 카드에 마우스를 올리면 해당 카드 하나만 가로로 넓어지면서 상세 수치와 설명을 보여 줍니다. 긴 상세 내용은 펼친 카드 안에서 세로로 스크롤합니다.
+
+- 카드를 클릭하거나 탭하면 상세를 열고, 다시 선택하면 닫습니다. 터치 화면에서는 가로로 밀어 행을 이동합니다.
+- 키보드 초점을 받으면 상세가 열립니다. Left/Right로 이전·다음 카드, Home/End로 첫·마지막 카드로 이동합니다. Enter/Space는 상세를 열고 닫으며, Escape 또는 행 바깥 클릭·탭으로 닫습니다.
+- **How delivery is measured**는 행 바로 아래에 유지합니다. 설명과 펼침 상태는 실시간 갱신 중에도 유지됩니다.
+
+**Online Agents**와 **Ready Peers**는 전체 클러스터, 메시지·대역폭 카드는 **Run metrics**에 표시된 실행을 대상으로 합니다. **Observation quality**의 대표 값은 `Receipt / Continuity / Start` 순서의 각 unknown 수이며, 서로 겹칠 수 있는 범주를 합산하지 않습니다. 펼치면 전체 레이블과 outcome 수를 확인할 수 있습니다.
+
 **Available slots**는 online Agent가 보고한 여유 Peer 수를 합산하며 offline Agent는 포함하지 않습니다. Capacity는 CPU·메모리 예약이 아닌 생성 허용 개수입니다. 값을 늘리기 전 [Peer 배치와 capacity](swarm.kr.md#분배와-용량)를 확인하십시오.
 
 **Saved results → Images**에서 서버 백그라운드 분석을 접수하고 개요·메시지·반복 비교 그림을 PNG/CSV/ZIP으로 다운로드합니다. 저장 기록을 사용하며 Prometheus 보존과 독립적입니다. 조작 방법은 [결과 이미지](visualization.kr.md), 계산 정의는 [실험 지표](experiment-metrics.kr.md#저장-결과-연구-지표)를 참고하십시오.
@@ -186,7 +194,7 @@ sh scripts/swarm.sh logs grafana
 
 Controller target도 브라우저에서 열 수 있는 주소를 사용합니다. `GET /api/v1/prometheus/controller-targets`는 control 노드의 Swarm 주소와 게시된 `KPL_HTTP_PORT`를 반환합니다. 배포 helper는 매 배포에서 `KPL_CONTROLLER_METRICS_URL`과 `KPL_PROMETHEUS_EXTERNAL_URL`을 생성하며 사용자 지정 포트와 IPv6를 반영합니다. Prometheus 자체 링크에는 후자를 [`--web.external-url`](https://prometheus.io/docs/prometheus/latest/command-line/prometheus/)로 전달합니다. 탐색 요청과 Grafana datasource는 내부 DNS를 사용합니다. Prometheus 컨테이너에서 control 노드의 게시된 HTTP 포트에 접근할 수 있어야 합니다. Controller metrics URL이 미설정이면 target 목록은 비어 있습니다.
 
-Dashboard는 몰려오는 telemetry를 초당 최대 4회 화면 갱신으로 병합하고, 동일한 텍스트·목록·토폴로지 요소를 유지합니다. **How delivery is measured**에 고정된 측정 설명을 담았으며 펼침 상태도 갱신 중 유지됩니다. 관측 품질 카드에는 변화하는 집계값을 계속 표시합니다.
+Dashboard는 몰려오는 telemetry를 초당 최대 4회 화면 갱신으로 병합하고, 동일한 텍스트·목록·토폴로지 요소를 유지합니다. 지표 갱신은 펼친 카드와 가로 스크롤 위치를 유지하면서 수치를 업데이트합니다.
 
 Swarm stack은 `GET /api/v1/prometheus/agent-targets`에서 등록된 target을 탐색합니다. `sh scripts/swarm.sh access`로 광고 주소를 확인하고, 설정한 포트가 선택된 모든 Agent 노드에서 비어 있으며 control 노드에서 TCP 접근이 허용되는지 확인하십시오. 운영자가 Agent metrics 링크를 직접 열 때에는 브라우저가 속한 신뢰 관리망에서도 접근을 허용하고 신뢰하지 않는 출발지는 차단하십시오. `up{job="kpl-agent"}`를 보면 등록되었지만 방화벽이나 잘못된 Swarm `NodeAddr` 때문에 접근할 수 없는 target을 성공한 scrape와 구분할 수 있습니다.
 

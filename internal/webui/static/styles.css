@@ -99,42 +99,77 @@ h1 { font-size: 1.1rem; letter-spacing: -0.025em; }
 button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid rgba(57, 214, 208, 0.32); outline-offset: 2px; }
 
 main { width: min(1600px, 100%); margin: 0 auto; padding: 1.4rem clamp(1rem, 3vw, 2.5rem) 3rem; }
-.metrics-scope { margin-bottom: 0.55rem; color: var(--muted); font-size: 0.78rem; overflow-wrap: anywhere; }
-.metric-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.65rem; }
+.metrics-section { min-width: 0; }
+.metrics-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.7rem; }
+.metrics-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.3rem 0.85rem; min-width: 0; }
+.metrics-heading h2 { font-size: 0.95rem; font-weight: 650; letter-spacing: -0.025em; }
+.metrics-scope { color: var(--muted); font-size: 0.75rem; overflow-wrap: anywhere; }
+.metrics-navigation { display: flex; align-items: center; flex-shrink: 0; gap: 0.35rem; }
+.metrics-hint { color: var(--muted); font-size: 0.7rem; margin-right: 0.5rem; }
+.metric-nav { display: grid; place-items: center; width: 2rem; height: 2rem; padding: 0; border: 1px solid var(--line); border-radius: 50%; color: var(--text); background: var(--surface); }
+.metric-nav svg { width: 1rem; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.metric-nav:hover:not(:disabled) { color: var(--cyan); border-color: var(--cyan); background: var(--surface-raised); }
+.metric-nav:disabled { opacity: 0.28; }
+.metric-carousel {
+  --metric-width: 10.75rem;
+  --metric-expanded: 27rem;
+  display: flex;
+  align-items: stretch;
+  gap: 0.55rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.2rem 0.2rem 0.6rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+  overscroll-behavior-x: contain;
+  overflow-anchor: none;
+}
 .metric-card {
   position: relative;
-  min-height: 6.6rem;
+  flex: 0 0 var(--metric-width);
+  height: 10rem;
+  min-width: 0;
   overflow: hidden;
-  padding: 0.9rem 1rem;
   border: 1px solid var(--line-soft);
-  border-radius: 0.8rem;
-  background: linear-gradient(145deg, rgba(17, 36, 49, 0.94), rgba(11, 25, 35, 0.94));
-  box-shadow: var(--shadow);
+  border-radius: 0.75rem;
+  background: linear-gradient(135deg, rgba(17, 36, 49, 0.94), rgba(11, 25, 35, 0.94));
+  transition: flex-basis 240ms cubic-bezier(0.22, 1, 0.36, 1), border-color 180ms ease, background 180ms ease;
 }
-.metric-card::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 0.2rem; background: var(--metric-color); }
-.metric-card span { display: block; color: var(--muted); font-size: 0.8rem; }
-.metric-card strong { display: block; margin-top: 0.4rem; font-size: clamp(1.6rem, 2.5vw, 2rem); line-height: 1; letter-spacing: -0.045em; font-variant-numeric: tabular-nums; }
-.metric-card small { display: block; margin-top: 0.42rem; color: var(--muted); font-size: 0.75rem; line-height: 1.35; }
-.metric-card #reachMetric { font-size: clamp(1.3rem, 2vw, 1.75rem); overflow-wrap: anywhere; }
-.bandwidth-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.65rem; margin-top: 0.65rem; }
-.bandwidth-grid .metric-card { min-width: 0; }
-.bandwidth-grid .metric-card strong { font-size: clamp(1.35rem, 2vw, 1.8rem); overflow-wrap: anywhere; }
-.bandwidth-scope { margin-top: 0.55rem; }
-.measurement-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.65rem; margin-top: 0.65rem; }
-.measurement-summary article { min-width: 0; padding: 0.8rem 1rem; border: 1px solid var(--line-soft); border-radius: 0.8rem; background: rgba(13, 28, 39, 0.88); }
-.measurement-summary span, .measurement-summary small { display: block; color: var(--muted); font-size: 0.75rem; line-height: 1.4; }
-.measurement-summary strong { display: block; margin: 0.35rem 0; font-size: 1.3rem; font-variant-numeric: tabular-nums; }
-.measurement-summary .observation-counts { font-size: 1rem; line-height: 1.5; }
+.metric-card::before { content: ""; position: absolute; z-index: 1; inset: 1rem auto 1rem 0; width: 2px; border-radius: 2px; background: var(--metric-color); opacity: 0.65; transition: opacity 180ms ease; }
+.metric-card.is-expanded { flex-basis: var(--metric-expanded); border-color: color-mix(in srgb, var(--metric-color) 45%, var(--line)); background: linear-gradient(135deg, var(--surface-raised), var(--surface)); }
+.metric-card.is-expanded::before { opacity: 1; }
+.metric-toggle { position: relative; display: flex; flex-direction: column; align-items: stretch; width: calc(var(--metric-width) - 2px); height: 100%; padding: 0.85rem 1rem; border: 0; border-radius: inherit; color: var(--text); background: transparent; text-align: left; }
+.metric-toggle:focus-visible { outline: 2px solid var(--metric-color); outline-offset: -4px; }
+.metric-category { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; color: var(--metric-color); font-size: 0.58rem; line-height: 1; font-weight: 650; letter-spacing: 0.11em; text-transform: uppercase; }
+.metric-index { color: var(--muted); opacity: 0.5; font-variant-numeric: tabular-nums; }
+.metric-label { display: block; min-height: 2.55em; margin-top: 0.75rem; color: var(--muted); font-size: 0.75rem; line-height: 1.25; }
+.metric-toggle strong { display: block; margin-top: 0.2rem; font-size: 1.65rem; line-height: 1.2; letter-spacing: -0.045em; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.metric-card[data-metric="delivery"] strong, .metric-card[data-metric="starting"] strong, .metric-card[data-metric="coverage"] strong, .metric-card[data-metric="send"] strong, .metric-card[data-metric="receive"] strong { font-size: 1.25rem; line-height: 1.3; }
+.metric-card--status strong { font-size: 1.15rem; line-height: 1.3; letter-spacing: -0.035em; }
+#observationSummaryMetric { font-size: 1rem; line-height: 1.3; letter-spacing: -0.035em; }
+.metric-caption { display: block; margin-top: auto; padding-top: 0.45rem; padding-right: 0.6rem; color: var(--muted); opacity: 0.8; font-size: 0.6rem; line-height: 1.2; }
+.metric-expand { position: absolute; bottom: 0.85rem; right: 0.7rem; color: var(--metric-color); opacity: 0.55; font-size: 0.85rem; transition: transform 180ms ease; }
+.metric-card.is-expanded .metric-expand { transform: rotate(90deg); opacity: 1; }
+.metric-detail { position: absolute; inset: 0.85rem auto 0.85rem var(--metric-width); width: calc(var(--metric-expanded) - var(--metric-width) - 1rem); padding: 0 0.3rem 0 1rem; overflow-y: auto; border-left: 1px solid var(--line); scrollbar-width: thin; scrollbar-color: var(--line) transparent; overscroll-behavior: contain; overflow-wrap: anywhere; }
+.metric-detail:focus-visible { outline: 2px solid var(--metric-color); outline-offset: -2px; }
+.metric-stat { color: var(--text); font-size: 0.76rem; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.metric-stat + .metric-stat { margin-top: 0.35rem; }
+.metric-description { margin-top: 0.65rem; color: var(--muted); font-size: 0.7rem; line-height: 1.5; }
+@media (max-width: 620px) {
+  .metrics-header { align-items: flex-start; gap: 0.6rem; }
+  .metrics-heading { display: block; }
+  .metrics-heading .metrics-scope { margin-top: 0.3rem; }
+  .metrics-hint { display: none; }
+  .metric-carousel { --metric-width: 9.5rem; }
+  .metric-toggle { padding-inline: 0.75rem; }
+  .metric-toggle strong { font-size: 1.35rem; }
+  .metric-card--status strong { font-size: 1.05rem; }
+  .metric-detail { padding-left: 0.65rem; }
+}
 .measurement-help { margin: 0.55rem 0; color: var(--muted); font-size: 0.75rem; }
 .measurement-help summary { width: fit-content; cursor: pointer; padding: 0.3rem 0; }
 .measurement-help summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
 .measurement-note { margin: 0.55rem 0; color: var(--muted); font-size: 0.75rem; line-height: 1.45; }
-@media (max-width: 760px) {
-  .bandwidth-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .bandwidth-grid .metric-card:last-child { grid-column: 1 / -1; }
-  .measurement-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .measurement-summary article:last-child { grid-column: 1 / -1; }
-}
 .accent-cyan { --metric-color: var(--cyan); }
 .accent-green { --metric-color: var(--green); }
 .accent-amber { --metric-color: var(--amber); }
@@ -344,9 +379,6 @@ dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
 .toast.show { opacity: 1; transform: translateY(0); }
 
 @media (max-width: 1050px) {
-  .metric-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
-  .metric-grid > .metric-card { grid-column: span 2; }
-  .metric-grid > .metric-card:nth-last-child(-n + 2) { grid-column: span 3; }
   .workspace-grid, .detail-grid { grid-template-columns: 1fr; }
   .events-panel { height: auto !important; overflow: visible; contain: none; }
   .event-list { overflow: visible; }
@@ -367,11 +399,6 @@ dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
   .top-actions { flex-wrap: wrap; justify-content: flex-end; gap: 0.6rem; }
   .top-actions time { display: none; }
   .connection-state { width: 100%; justify-content: flex-end; }
-  .metric-grid { grid-template-columns: 1fr 1fr; }
-  .metric-grid > .metric-card { grid-column: auto; min-height: 0; padding: 0.85rem; }
-  .metric-grid > .metric-card:nth-last-child(-n + 2) { grid-column: auto; }
-  .metric-grid > .metric-card:last-child { grid-column: 1 / -1; }
-  .metric-card strong { font-size: 1.5rem; }
   .legend { display: none; }
   #topology { height: 30rem; }
   .topology-toolbar { gap: 0.8rem; }
@@ -391,13 +418,6 @@ dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
   .scenario-library-toolbar { width: 100%; }
   .scenario-library-toolbar button { flex: 1; }
   .scenario-save-row .dialog-error { flex-basis: 100%; }
-}
-
-@media (max-width: 460px) {
-  .bandwidth-grid { grid-template-columns: 1fr; }
-  .bandwidth-grid .metric-card:last-child { grid-column: auto; }
-  .measurement-summary { grid-template-columns: 1fr; }
-  .measurement-summary article:last-child { grid-column: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {

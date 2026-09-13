@@ -25,6 +25,14 @@ The Dashboard header links to Prometheus and Grafana in new tabs. It preserves t
 
 ## Built-in Dashboard visualization
 
+**Metrics** places all 11 cluster, delivery, bandwidth and observation cards in one horizontal row. Scroll sideways or use the **Previous metrics / Next metrics** arrow buttons. Hover over a card to expand that card horizontally and reveal its detailed values and explanation; only one card expands at a time. Long details scroll vertically within the expanded card.
+
+- Click or tap a card to open its details, and select it again to close them. On touch screens, swipe horizontally to move through the row.
+- Keyboard focus opens a card. Use Left/Right to move between cards and Home/End for the first/last card. Enter/Space toggles details; Escape or a click/tap outside the row closes them.
+- **How delivery is measured** remains directly below the row. Its explanation and expanded state persist through live updates.
+
+**Online Agents** and **Ready Peers** describe the whole cluster; message and bandwidth cards follow the run shown by **Run metrics**. **Observation quality** shows receipt, continuity and start unknown counts separately as `Receipt / Continuity / Start`; these overlapping categories are not summed. Expand it for the full labels and outcome counts.
+
 **Available slots** totals the free Peer capacity reported by online Agents; offline Agents contribute no available slots. Capacity is an admission count, not a CPU or memory reservation. See [Peer placement and capacity](swarm.md#distribution-and-capacity) before increasing it.
 
 **Saved results → Images** submits server background analysis and provides overview, message and repeated-run charts as PNG/CSV/ZIP. It uses saved records independently of Prometheus retention. See [result images](visualization.md) for operation and [experiment metrics](experiment-metrics.md#saved-result-research-metrics) for definitions.
@@ -186,7 +194,7 @@ sh scripts/swarm.sh logs grafana
 
 The Controller target also uses a browser-reachable address: `GET /api/v1/prometheus/controller-targets` returns the control node's Swarm address and published `KPL_HTTP_PORT`. The deployment helper derives `KPL_CONTROLLER_METRICS_URL` and `KPL_PROMETHEUS_EXTERNAL_URL` on each deployment, including custom ports and IPv6. Prometheus uses the latter as [`--web.external-url`](https://prometheus.io/docs/prometheus/latest/command-line/prometheus/) for its own links. Internal DNS remains in discovery requests and the Grafana datasource. Prometheus containers must be able to reach the control node's published HTTP port. An unset Controller metrics URL returns an empty target list.
 
-The Dashboard coalesces telemetry bursts into at most four renders per second and retains unchanged text, lists, and topology elements. **How delivery is measured** holds the fixed measurement explanation; its expanded state persists across updates. The observation quality cards continue to show changing counts.
+The Dashboard coalesces telemetry bursts into at most four renders per second and retains unchanged text, lists, and topology elements. Live metric updates preserve the open card and the horizontal scroll position while refreshing its values.
 
 The Swarm stack discovers registered targets from `GET /api/v1/prometheus/agent-targets`. Use `sh scripts/swarm.sh access` to inspect the advertised URLs, ensure the configured port is free on every selected Agent node, and permit TCP traffic from the control node. If operators open an Agent metrics link directly, permit their browser's trusted management network as well; block untrusted sources. `up{job="kpl-agent"}` distinguishes successful scrapes from registered targets that are unreachable through a firewall or an incorrect Swarm `NodeAddr`.
 
