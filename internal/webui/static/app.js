@@ -377,11 +377,15 @@ function connectStream() {
   };
 }
 
+function isPanelCollapsed(id) {
+  return $("#panel-" + id + "-body")?.hidden === true;
+}
+
 function syncDetailPanelHeight() {
   const agents = $(".agents-panel");
   const events = $(".events-panel");
   if (!agents || !events) return;
-  if (window.matchMedia?.("(max-width: 1050px)").matches) {
+  if (isPanelCollapsed("agents") || isPanelCollapsed("events") || window.matchMedia?.("(max-width: 1050px)").matches) {
     if (events.style.height) events.style.removeProperty("height");
     return;
   }
@@ -395,6 +399,20 @@ function setupDetailPanelSizing() {
   state.detailPanelObserver?.disconnect();
   state.detailPanelObserver = new ResizeObserver(syncDetailPanelHeight);
   state.detailPanelObserver.observe($(".agents-panel"));
+}
+
+function setupDashboardPanelHandling() {
+  document.addEventListener("dashboard:panel-toggle", (event) => {
+    syncDetailPanelHeight();
+    if (event.detail?.id !== "topology") return;
+    if (isPanelCollapsed("topology")) {
+      state.topology.hovered = null;
+      state.topology.drag = null;
+      stopTopologyMotion();
+    } else if (state.snapshot) {
+      renderTopology(state.snapshot.nodes || [], state.snapshot.edges || []);
+    }
+  });
 }
 
 function render(snapshot) {
@@ -1069,6 +1087,11 @@ function renderTopology(nodes, edges) {
   ({ nodes, edges } = topologyData(nodes, edges));
   const topology = state.topology;
   stopTopologyMotion();
+  if (isPanelCollapsed("topology")) {
+    const links = filterTopologyEdges(nodes, edges, topology.filters).length;
+    setText($("#topologyLinkCount"), `${formatNumber(nodes.length)} Peers · ${formatNumber(links)} visible links`);
+    return;
+  }
   rememberAgents(nodes.map((node) => node.agentId));
   if (!nodes.some((node) => node.id === topology.selected)) topology.selected = null;
   if (!nodes.some((node) => node.id === topology.hovered)) topology.hovered = null;
@@ -1212,14 +1235,14 @@ function stopTopologyMotion() {
 
 function startTopologyMotion() {
   const topology = state.topology, motion = topology.motion;
-  if (!motion.enabled || document.hidden || !topology.graph?.nodes.length || motion.frame !== null) return;
+  if (!motion.enabled || document.hidden || isPanelCollapsed("topology") || !topology.graph?.nodes.length || motion.frame !== null) return;
   motion.frame = requestAnimationFrame(animateTopology);
 }
 
 function animateTopology(timestamp) {
   const topology = state.topology, motion = topology.motion;
   motion.frame = null;
-  if (!motion.enabled || document.hidden || !topology.graph) return;
+  if (!motion.enabled || document.hidden || isPanelCollapsed("topology") || !topology.graph) return;
   // Cap work at 30 frames/s and avoid a jump after a background-tab pause.
   if (topology.drag || timestamp - motion.lastFrame < 1000 / 30) { startTopologyMotion(); return; }
   motion.lastFrame = timestamp;
@@ -1559,6 +1582,7 @@ globalThis.KPLResultImages?.init({ api, saveToken, onJob: job => {
   if (!state.resultsRefreshTimer && !state.resultsLoading) state.resultsRefreshTimer = setTimeout(refreshSavedResults, 3000);
 } });
 setupTopologyControls();
+setupDashboardPanelHandling();
 setupDetailPanelSizing();
 renderSavedScenarios();
 window.addEventListener("resize", () => {

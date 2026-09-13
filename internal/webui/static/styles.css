@@ -187,6 +187,23 @@ main { width: min(1600px, 100%); margin: 0 auto; padding: 1.4rem clamp(1rem, 3vw
   box-shadow: var(--shadow);
 }
 .panel-header { min-height: 4.5rem; justify-content: space-between; gap: 1rem; padding: 1rem 1.2rem; border-bottom: 1px solid var(--line-soft); }
+.panel-header > div:first-child { min-width: 0; margin-right: auto; }
+.panel-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; flex: 0 0 auto; min-height: 2.15rem; padding: 0.4rem 0.55rem; border: 1px solid var(--line); border-radius: 0.5rem; color: var(--muted); background: transparent; font-size: 0.7rem; }
+.panel-toggle svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transition: transform 160ms ease; }
+.panel-toggle:hover { color: var(--cyan); border-color: var(--cyan); background: rgba(57, 214, 208, 0.05); }
+.panel.is-collapsed { align-self: start; }
+.panel.is-collapsed > .panel-header { min-height: 3.5rem; padding-block: 0.6rem; border-bottom: 0; }
+.panel.is-collapsed .panel-toggle { color: var(--cyan); }
+.panel.is-collapsed .panel-toggle svg { transform: rotate(180deg); }
+.panel.is-collapsed > .panel-header .eyebrow, .panel.is-collapsed > .panel-header .panel-note:not(#topologyLinkCount) { display: none; }
+.panel.is-collapsed > .panel-header h2 { margin-top: 0; }
+.panel-body { min-width: 0; }
+.detail-grid[data-panel-layout="single"] { grid-template-columns: minmax(0, 1fr); align-items: start; }
+.detail-grid[data-panel-layout="closed"] { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+.detail-grid[data-panel-layout="single"] .events-panel, .events-panel.is-collapsed { height: auto !important; contain: none; align-self: start; }
+.detail-grid[data-panel-layout="single"] .event-list { max-height: 32rem; overflow: auto; }
+.events-panel > .panel-body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+.events-panel > .panel-header { flex: 0 0 auto; }
 .panel-header h2 { margin-top: 0.18rem; font-size: 1rem; letter-spacing: -0.02em; }
 .panel-note { margin-top: 0.35rem; color: var(--muted); font-size: 0.75rem; }
 .eyebrow { color: var(--cyan); font-size: 0.7rem; font-weight: 750; letter-spacing: 0.15em; }
@@ -297,7 +314,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .agent-name { display: block; color: var(--text); font-weight: 650; }
 .agent-number { color: var(--cyan); font-weight: 750; font-variant-numeric: tabular-nums; }
 .agent-id { display: block; margin-top: 0.18rem; color: var(--muted); font-size: 0.7rem; }
-.agent-metrics-link { color: var(--cyan); font-size: 0.78rem; font-weight: 650; text-decoration: none; text-underline-offset: 0.2em; }
+.agent-metrics-link { position: relative; color: var(--cyan); font-size: 0.78rem; font-weight: 650; text-decoration: none; text-underline-offset: 0.2em; }
 .agent-metrics-link:hover { color: #62e4df; text-decoration: underline; }
 .agent-metrics-link:focus-visible { border-radius: 0.2rem; outline: 2px solid var(--cyan); outline-offset: 0.2rem; }
 .state-dot { display: inline-flex; align-items: center; gap: 0.4rem; }
@@ -379,7 +396,7 @@ dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
 .toast.show { opacity: 1; transform: translateY(0); }
 
 @media (max-width: 1050px) {
-  .workspace-grid, .detail-grid { grid-template-columns: 1fr; }
+  .workspace-grid, .detail-grid, .detail-grid[data-panel-layout="closed"] { grid-template-columns: 1fr; }
   .events-panel { height: auto !important; overflow: visible; contain: none; }
   .event-list { overflow: visible; }
   .run-list { max-height: 20rem; }
@@ -395,6 +412,9 @@ dialog footer { justify-content: flex-end; gap: 0.65rem; margin-top: 0.35rem; }
 }
 
 @media (max-width: 620px) {
+  .panel-header { gap: 0.6rem; padding-inline: 0.85rem; }
+  .panel-toggle { min-width: 2.2rem; padding-inline: 0.4rem; }
+  .panel-toggle-label { display: none; }
   .topbar { align-items: flex-start; }
   .top-actions { flex-wrap: wrap; justify-content: flex-end; gap: 0.6rem; }
   .top-actions time { display: none; }

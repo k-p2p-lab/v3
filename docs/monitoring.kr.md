@@ -37,6 +37,14 @@ Swarm은 Prometheus/Grafana 포트를 control 노드에 게시합니다. 각 Age
 
 **Saved results → Images**에서 서버 백그라운드 분석을 접수하고 개요·메시지·반복 비교 그림을 PNG/CSV/ZIP으로 다운로드합니다. 저장 기록을 사용하며 Prometheus 보존과 독립적입니다. 조작 방법은 [결과 이미지](visualization.kr.md), 계산 정의는 [실험 지표](experiment-metrics.kr.md#저장-결과-연구-지표)를 참고하십시오.
 
+### 패널 접기와 펼치기
+
+**Network overview**, **Experiment progress**, **Agent status**, **Recent network events**, **Saved results** 헤더의 **Collapse / Expand** 버튼으로 패널을 접고 펼칩니다. 좁은 화면에는 화살표 아이콘을 표시합니다. 클릭·탭과 키보드 Enter/Space를 지원합니다. 다섯 패널은 기본으로 열리며, 같은 브라우저의 Dashboard origin에 선택을 저장해 새로고침 뒤에도 유지합니다.
+
+**Network overview**와 **Experiment progress**는 전체 폭의 세로 배치를 유지합니다. 넓은 화면에서 **Agent status** 또는 **Recent network events** 중 하나를 접으면 짧은 제목을 위에 두고 열린 패널을 아래에 전체 폭으로 표시합니다. 둘 다 펼치면 기존 Agent/events 열 배치를 복원합니다. 둘 다 접으면 짧은 제목 둘을 나란히 표시하며, 모바일에서는 세로 배치를 유지합니다.
+
+패널을 숨겨도 실험·백그라운드 분석과 실시간 데이터 갱신은 계속됩니다. **Network overview**를 접으면 배치 애니메이션도 멈추고, 다시 펼치면 최신 상태를 표시하며 기존 **Pause motion** 선택을 유지합니다. 이 버튼은 패널 표시만 바꿉니다.
+
 ## 실행과 분석
 
 1. 대시보드의 **Run experiment**에서 [`examples/monitoring.yaml`](../examples/monitoring.yaml)을 실행합니다. envelope 발행과 raw 발행을 함께 확인하는 작은 실험입니다.

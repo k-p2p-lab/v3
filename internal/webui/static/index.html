@@ -199,112 +199,127 @@
     </details>
 
     <section class="workspace-grid">
-      <article class="panel topology-panel">
+      <article class="panel topology-panel" data-panel="topology">
         <header class="panel-header">
           <div>
             <p class="eyebrow">LIVE TOPOLOGY</p>
             <h2>Network overview</h2>
             <p class="panel-note" id="topologyLinkCount">0 Peers · 0 visible links</p>
           </div>
-          <div class="legend" aria-label="Node state legend">
+          <div data-panel-expanded-only class="legend" aria-label="Node state legend">
             <span><i class="legend-dot boot"></i>Boot</span>
             <span><i class="legend-dot ready"></i>Worker</span>
             <span><i class="legend-dot starting"></i>Starting</span>
             <span><i class="legend-dot issue"></i>Issue</span>
           </div>
+          <button class="panel-toggle" type="button" aria-expanded="true" aria-controls="panel-topology-body" data-panel-toggle="topology"><span class="panel-toggle-label">Collapse</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 12 5-5 5 5"/></svg></button>
         </header>
-        <div class="topology-toolbar">
-          <fieldset class="topology-layers" aria-label="Visible relationship layers">
-            <legend>Layers</legend>
-            <label title="Reported libp2p transport connections. Older Peers may report only this layer."><input type="checkbox" id="showtransport"><i class="link-key transport" aria-hidden="true"></i>Transport</label>
-            <label title="Reported Kademlia routing table membership; this does not require an active transport connection."><input type="checkbox" id="showkademlia"><i class="link-key kademlia" aria-hidden="true"></i>Kademlia</label>
-            <label title="Reported GossipSub GRAFT mesh membership by topic."><input type="checkbox" id="showgossipsub"><i class="link-key gossipsub" aria-hidden="true"></i>GossipSub mesh</label>
-          </fieldset>
-          <label class="topology-topic" for="topologyTopic">GossipSub topic<select id="topologyTopic"><option value="">All topics</option></select></label>
-          <div class="topology-camera" role="group" aria-label="Topology view controls">
-            <button id="topologyMotion" type="button" aria-pressed="false" title="Pause or resume the layout movement inside each Agent's slice.">Pause motion</button>
-            <button id="topologyZoomOut" type="button" aria-label="Zoom out">−</button>
-            <output id="topologyZoomLevel" aria-label="Zoom level">100%</output>
-            <button id="topologyZoomIn" type="button" aria-label="Zoom in">+</button>
-            <button id="topologyFit" type="button">Fit</button>
+        <div class="panel-body" id="panel-topology-body">
+          <div class="topology-toolbar">
+            <fieldset class="topology-layers" aria-label="Visible relationship layers">
+              <legend>Layers</legend>
+              <label title="Reported libp2p transport connections. Older Peers may report only this layer."><input type="checkbox" id="showtransport"><i class="link-key transport" aria-hidden="true"></i>Transport</label>
+              <label title="Reported Kademlia routing table membership; this does not require an active transport connection."><input type="checkbox" id="showkademlia"><i class="link-key kademlia" aria-hidden="true"></i>Kademlia</label>
+              <label title="Reported GossipSub GRAFT mesh membership by topic."><input type="checkbox" id="showgossipsub"><i class="link-key gossipsub" aria-hidden="true"></i>GossipSub mesh</label>
+            </fieldset>
+            <label class="topology-topic" for="topologyTopic">GossipSub topic<select id="topologyTopic"><option value="">All topics</option></select></label>
+            <div class="topology-camera" role="group" aria-label="Topology view controls">
+              <button id="topologyMotion" type="button" aria-pressed="false" title="Pause or resume the layout movement inside each Agent's slice.">Pause motion</button>
+              <button id="topologyZoomOut" type="button" aria-label="Zoom out">−</button>
+              <output id="topologyZoomLevel" aria-label="Zoom level">100%</output>
+              <button id="topologyZoomIn" type="button" aria-label="Zoom in">+</button>
+              <button id="topologyFit" type="button">Fit</button>
+            </div>
           </div>
-        </div>
-        <p class="topology-report-status" id="topologyReportStatus">Waiting for Peer reports.</p>
-        <div class="topology-stage" id="topologyStage">
-          <svg id="topology" role="group" aria-label="Interactive Peer topology, arranged in Agent slices"></svg>
-          <div class="empty-state" id="topologyEmpty">
-            <strong>No Peers to display</strong>
-            <span>Run an experiment to view active Peers. Stopping and stopped Peers are hidden.</span>
+          <p class="topology-report-status" id="topologyReportStatus">Waiting for Peer reports.</p>
+          <div class="topology-stage" id="topologyStage">
+            <svg id="topology" role="group" aria-label="Interactive Peer topology, arranged in Agent slices"></svg>
+            <div class="empty-state" id="topologyEmpty">
+              <strong>No Peers to display</strong>
+              <span>Run an experiment to view active Peers. Stopping and stopped Peers are hidden.</span>
+            </div>
           </div>
+          <section class="topology-inspector" aria-labelledby="topologyDetailsHeading">
+            <header><h3 id="topologyDetailsHeading">Peer details</h3><button id="clearTopologySelection" type="button" disabled>Clear selection</button></header>
+            <div id="topologyDetails"><p class="topology-detail-hint">Hover over or select a Peer to inspect its relationships.</p></div>
+          </section>
         </div>
-        <section class="topology-inspector" aria-labelledby="topologyDetailsHeading">
-          <header><h3 id="topologyDetailsHeading">Peer details</h3><button id="clearTopologySelection" type="button" disabled>Clear selection</button></header>
-          <div id="topologyDetails"><p class="topology-detail-hint">Hover over or select a Peer to inspect its relationships.</p></div>
-        </section>
       </article>
 
-      <aside class="panel run-panel">
+      <aside class="panel run-panel" data-panel="experiments">
         <header class="panel-header">
           <div>
             <p class="eyebrow">EXPERIMENTS</p>
             <h2>Experiment progress</h2>
           </div>
           <span class="count-badge" id="runCount">0</span>
+          <button class="panel-toggle" type="button" aria-expanded="true" aria-controls="panel-experiments-body" data-panel-toggle="experiments"><span class="panel-toggle-label">Collapse</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 12 5-5 5 5"/></svg></button>
         </header>
-        <div class="run-list" id="runList">
-          <div class="empty-copy">No experiments yet.</div>
+        <div class="panel-body" id="panel-experiments-body">
+          <div class="run-list" id="runList">
+            <div class="empty-copy">No experiments yet.</div>
+          </div>
         </div>
       </aside>
     </section>
 
-    <section class="detail-grid">
-      <article class="panel agents-panel">
+    <section class="detail-grid" data-panel-pair="fleet">
+      <article class="panel agents-panel" data-panel="agents">
         <header class="panel-header">
           <div>
             <p class="eyebrow">FLEET</p>
             <h2>Agent status</h2>
             <p class="panel-note">Topology labels use these Agent numbers.</p>
           </div>
+          <button class="panel-toggle" type="button" aria-expanded="true" aria-controls="panel-agents-body" data-panel-toggle="agents"><span class="panel-toggle-label">Collapse</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 12 5-5 5 5"/></svg></button>
         </header>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>No.</th><th>Agent</th><th>State</th><th>Host</th><th>Peers</th><th>Capacity used</th><th>Last seen</th><th>Metrics</th></tr></thead>
-            <tbody id="agentRows"><tr><td colspan="8" class="empty-cell">No Agents registered.</td></tr></tbody>
-          </table>
+        <div class="panel-body" id="panel-agents-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>No.</th><th>Agent</th><th>State</th><th>Host</th><th>Peers</th><th>Capacity used</th><th>Last seen</th><th>Metrics</th></tr></thead>
+              <tbody id="agentRows"><tr><td colspan="8" class="empty-cell">No Agents registered.</td></tr></tbody>
+            </table>
+          </div>
         </div>
       </article>
 
-      <article class="panel events-panel">
+      <article class="panel events-panel" data-panel="events">
         <header class="panel-header">
           <div>
             <p class="eyebrow">EVENT STREAM</p>
             <h2>Recent network events</h2>
           </div>
+          <button class="panel-toggle" type="button" aria-expanded="true" aria-controls="panel-events-body" data-panel-toggle="events"><span class="panel-toggle-label">Collapse</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 12 5-5 5 5"/></svg></button>
         </header>
-        <ol class="event-list" id="eventList">
-          <li class="empty-copy">No events collected.</li>
-        </ol>
+        <div class="panel-body" id="panel-events-body">
+          <ol class="event-list" id="eventList">
+            <li class="empty-copy">No events collected.</li>
+          </ol>
+        </div>
       </article>
     </section>
 
 
 
-    <section class="panel results-panel" aria-labelledby="savedResultsHeading">
+    <section class="panel results-panel" data-panel="results" aria-labelledby="savedResultsHeading">
       <header class="panel-header">
         <div>
           <p class="eyebrow">RESULT ARCHIVE</p>
           <h2 id="savedResultsHeading">Saved results</h2>
         </div>
-        <button class="secondary-button" id="refreshResults" type="button">Refresh</button>
+        <button data-panel-expanded-only class="secondary-button" id="refreshResults" type="button">Refresh</button>
+        <button class="panel-toggle" type="button" aria-expanded="true" aria-controls="panel-results-body" data-panel-toggle="results"><span class="panel-toggle-label">Collapse</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 12 5-5 5 5"/></svg></button>
       </header>
-      <p class="results-help">Results saved on this Controller remain available after a restart. Interrupted runs are not resumed. Downloads from running experiments are snapshots. Source sizes show the uncompressed original files at the last refresh.</p>
-      <p class="results-status" id="savedResultsStatus" role="status" aria-live="polite">Loading saved results…</p>
-      <div id="savedBatchList" class="saved-batches" aria-label="Repeated experiment analysis" hidden></div>
-      <div class="table-wrap" id="savedResultsTable" hidden>
-        <table aria-label="Saved experiment results">
-          <thead><tr><th>Experiment / ID</th><th>State</th><th>Started (local)</th><th>Finished (local)</th><th>Actions</th></tr></thead>
-          <tbody id="savedResultsRows"></tbody>
-        </table>
+      <div class="panel-body" id="panel-results-body">
+        <p class="results-help">Results saved on this Controller remain available after a restart. Interrupted runs are not resumed. Downloads from running experiments are snapshots. Source sizes show the uncompressed original files at the last refresh.</p>
+        <p class="results-status" id="savedResultsStatus" role="status" aria-live="polite">Loading saved results…</p>
+        <div id="savedBatchList" class="saved-batches" aria-label="Repeated experiment analysis" hidden></div>
+        <div class="table-wrap" id="savedResultsTable" hidden>
+          <table aria-label="Saved experiment results">
+            <thead><tr><th>Experiment / ID</th><th>State</th><th>Started (local)</th><th>Finished (local)</th><th>Actions</th></tr></thead>
+            <tbody id="savedResultsRows"></tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -432,6 +447,7 @@
   <script src="/research-ui.js" defer></script>
   <script src="/batch-analysis.js" defer></script>
   <script src="/result-images.js" defer></script>
+  <script src="/dashboard-panels.js" defer></script>
   <script src="/metrics-carousel.js" defer></script>
   <script src="/app.js" defer></script>
 </body>

@@ -138,8 +138,8 @@ func TestTopologyInspectorAndControlsStayInsideTopologyPanel(t *testing.T) {
 		}
 	}
 	visit(document)
-	if inspector == nil || !hasClass(inspector.Parent, "topology-panel") {
-		t.Fatal("Peer inspector must be directly inside the topology panel")
+	if inspector == nil || !hasClass(inspector.Parent, "panel-body") || !hasClass(inspector.Parent.Parent, "topology-panel") {
+		t.Fatal("Peer inspector must be inside the collapsible topology body")
 	}
 	previous := inspector.PrevSibling
 	for previous != nil && previous.Type != html.ElementNode {

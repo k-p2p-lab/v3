@@ -22,6 +22,8 @@ Hover over a Peer to emphasize its visible neighbors and dim unrelated lines. Se
 
 **Pause motion** keeps existing Peer positions while leaving filters, selection, zoom, and pan available. New Peers and changes to Agent sectors still appear immediately. **Resume motion** lets the layout settle again.
 
+The **Network overview** header's **Collapse / Expand** button hides or shows the entire panel. A collapsed panel stops layout animation while live state continues to update. Reopening shows the latest topology and preserves the chosen motion setting. See [panel visibility](monitoring.md#show-and-hide-panels) for saved preferences and the other panel controls.
+
 With the operating system or browser's reduced-motion preference enabled, animated settling is off by default. The initial layout and relationship changes use a bounded settling calculation and display the result without intermediate animation. You can explicitly choose **Resume motion** to enable animation.
 
 Agent sectors have equal angles, and configured capacity does not reserve empty Peer positions. Dense experiments can still look crowded; use topic filtering, layer toggles, and zoom to inspect a selected Agent or Peer.

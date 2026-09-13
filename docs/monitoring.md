@@ -37,6 +37,14 @@ The Dashboard header links to Prometheus and Grafana in new tabs. It preserves t
 
 **Saved results → Images** submits server background analysis and provides overview, message and repeated-run charts as PNG/CSV/ZIP. It uses saved records independently of Prometheus retention. See [result images](visualization.md) for operation and [experiment metrics](experiment-metrics.md#saved-result-research-metrics) for definitions.
 
+### Show and hide panels
+
+Use the header's **Collapse / Expand** button on **Network overview**, **Experiment progress**, **Agent status**, **Recent network events**, or **Saved results**. Narrow screens show an arrow icon. The buttons support click, tap, and keyboard Enter/Space. All five panels start open; this browser remembers your choices for the Dashboard origin after reload.
+
+**Network overview** and **Experiment progress** remain stacked at full width. On wide screens, collapsing either **Agent status** or **Recent network events** puts its compact header above the other panel, which fills the available width. Reopening both restores the Agent/events columns. Collapsing both leaves two compact headers side by side; mobile layouts remain vertical.
+
+Experiments, background analysis and live data updates continue while a panel is hidden. Collapsing **Network overview** also stops its layout animation; reopening displays the latest state and preserves your **Pause motion** choice. These controls change only panel visibility.
+
 ## Run and analyze an experiment
 
 1. Use **Run experiment** in the Dashboard to run [`examples/monitoring.yaml`](../examples/monitoring.yaml). This small experiment includes both envelope and raw publications.

@@ -641,3 +641,45 @@ test('fresh and reconnected snapshots hide completed exits and distinguish start
   reconnect.render(nodes.map(node=>({...node,state:'starting'})),[]);
   check(reconnect);
 });
+
+
+test('collapsed topology stops rendering and motion, then reopens the latest snapshot without overriding pause', () => {
+  const {ids,document,sandbox,state,frames,render}=uiFixture();
+  sandbox.setupTopologyControls();
+  sandbox.setupDashboardPanelHandling();
+  render();
+  state.topology.selected='one';
+  state.topology.filters.transport=true;
+  const svg=ids.get('topology'), graph=state.topology.graph;
+  const body=ids.get('panel-topology-body');
+  const world=svg.children[0];
+  assert.equal(frames.queue.size,1);
+  body.hidden=true;
+  document.emit('dashboard:panel-toggle',{detail:{id:'topology',collapsed:true}});
+  assert.equal(frames.queue.size,0);
+  assert.equal(state.topology.motion.enabled,true);
+  const nodes=[peer('one'),peer('two'),peer('new','b'),peer('latest','b')];
+  render(nodes,[]);
+  assert.equal(state.topology.graph,graph,'hidden panel recalculated its layout');
+  assert.equal(svg.children[0],world,'hidden panel replaced its SVG');
+  assert.match(ids.get('topologyLinkCount').textContent,/4 Peers/);
+  document.emit('visibilitychange');
+  sandbox.startTopologyMotion();
+  sandbox.animateTopology(1000);
+  assert.equal(frames.queue.size,0);
+  body.hidden=false;
+  svg.clientWidth=720;
+  document.emit('dashboard:panel-toggle',{detail:{id:'topology',collapsed:false}});
+  assert.equal(state.topology.graph.nodes.length,4);
+  assert.equal(state.topology.graph.width,720);
+  assert.equal(state.topology.selected,'one');
+  assert.equal(state.topology.filters.transport,true);
+  assert.equal(frames.queue.size,1);
+  ids.get('topologyMotion').emit('click');
+  body.hidden=true;
+  document.emit('dashboard:panel-toggle',{detail:{id:'topology',collapsed:true}});
+  body.hidden=false;
+  document.emit('dashboard:panel-toggle',{detail:{id:'topology',collapsed:false}});
+  assert.equal(state.topology.motion.enabled,false);
+  assert.equal(frames.queue.size,0);
+});
